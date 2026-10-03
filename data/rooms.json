@@ -1,0 +1,842 @@
+{
+  "C_433": {
+    "name": "Аудитория 001",
+    "building": "C",
+    "classroom": "433",
+    "floor": 0
+  },
+  "C_436": {
+    "name": "Аудитория 019",
+    "building": "C",
+    "classroom": "436",
+    "floor": 0
+  },
+  "C_255": {
+    "name": "Аудитория 021а",
+    "building": "C",
+    "classroom": "255",
+    "floor": 0
+  },
+  "C_286": {
+    "name": "Аудитория 021",
+    "building": "C",
+    "classroom": "286",
+    "floor": 0
+  },
+  "C_488": {
+    "name": "Аудитория 038 б",
+    "building": "C",
+    "classroom": "488",
+    "floor": 0
+  },
+  "C_186": {
+    "name": "Аудитория 038а",
+    "building": "C",
+    "classroom": "186",
+    "floor": 0
+  },
+  "C_444": {
+    "name": "Аудитория 038б",
+    "building": "C",
+    "classroom": "444",
+    "floor": 0
+  },
+  "C_456": {
+    "name": "Аудитория 038 а",
+    "building": "C",
+    "classroom": "456",
+    "floor": 0
+  },
+  "C_184": {
+    "name": "Аудитория 42",
+    "building": "C",
+    "classroom": "184",
+    "floor": 0
+  },
+  "C_431": {
+    "name": "Аудитория 46",
+    "building": "C",
+    "classroom": "431",
+    "floor": 0
+  },
+  "C_192": {
+    "name": "Аудитория 50а",
+    "building": "C",
+    "classroom": "192",
+    "floor": 0
+  },
+  "C_190": {
+    "name": "Аудитория 50",
+    "building": "C",
+    "classroom": "190",
+    "floor": 0
+  },
+  "C_229": {
+    "name": "Аудитория 51",
+    "building": "C",
+    "classroom": "229",
+    "floor": 0
+  },
+  "C_486": {
+    "name": "Аудитория 55а",
+    "building": "C",
+    "classroom": "486",
+    "floor": 0
+  },
+  "C_490": {
+    "name": "Аудитория 55",
+    "building": "C",
+    "classroom": "490",
+    "floor": 0
+  },
+  "C_228": {
+    "name": "Аудитория 57",
+    "building": "C",
+    "classroom": "228",
+    "floor": 0
+  },
+  "C_250": {
+    "name": "Аудитория 102л",
+    "building": "C",
+    "classroom": "250",
+    "floor": 1
+  },
+  "C_285": {
+    "name": "Аудитория 102к",
+    "building": "C",
+    "classroom": "285",
+    "floor": 1
+  },
+  "C_291": {
+    "name": "Аудитория 103",
+    "building": "C",
+    "classroom": "291",
+    "floor": 1
+  },
+  "C_227": {
+    "name": "Аудитория 106а",
+    "building": "C",
+    "classroom": "227",
+    "floor": 1
+  },
+  "C_223": {
+    "name": "Аудитория 106",
+    "building": "C",
+    "classroom": "223",
+    "floor": 1
+  },
+  "C_290": {
+    "name": "Аудитория 110",
+    "building": "C",
+    "classroom": "290",
+    "floor": 1
+  },
+  "C_100": {
+    "name": "Аудитория 111а",
+    "building": "C",
+    "classroom": "100",
+    "floor": 1
+  },
+  "C_114": {
+    "name": "Аудитория 111",
+    "building": "C",
+    "classroom": "114",
+    "floor": 1
+  },
+  "C_289": {
+    "name": "Аудитория 116",
+    "building": "C",
+    "classroom": "289",
+    "floor": 1
+  },
+  "C_206": {
+    "name": "Аудитория 117",
+    "building": "C",
+    "classroom": "206",
+    "floor": 1
+  },
+  "C_258": {
+    "name": "Аудитория 117а",
+    "building": "C",
+    "classroom": "258",
+    "floor": 1
+  },
+  "C_203": {
+    "name": "Аудитория 118",
+    "building": "C",
+    "classroom": "203",
+    "floor": 1
+  },
+  "C_240": {
+    "name": "Аудитория 121",
+    "building": "C",
+    "classroom": "240",
+    "floor": 1
+  },
+  "C_212": {
+    "name": "Аудитория 122",
+    "building": "C",
+    "classroom": "212",
+    "floor": 1
+  },
+  "C_204": {
+    "name": "Аудитория 125а",
+    "building": "C",
+    "classroom": "204",
+    "floor": 1
+  },
+  "C_202": {
+    "name": "Аудитория 127",
+    "building": "C",
+    "classroom": "202",
+    "floor": 1
+  },
+  "C_235": {
+    "name": "Аудитория 128",
+    "building": "C",
+    "classroom": "235",
+    "floor": 1
+  },
+  "C_113": {
+    "name": "Аудитория 130",
+    "building": "C",
+    "classroom": "113",
+    "floor": 1
+  },
+  "C_179": {
+    "name": "Аудитория 132",
+    "building": "C",
+    "classroom": "179",
+    "floor": 1
+  },
+  "C_287": {
+    "name": "Аудитория 134а",
+    "building": "C",
+    "classroom": "287",
+    "floor": 1
+  },
+  "C_189": {
+    "name": "Аудитория 155",
+    "building": "C",
+    "classroom": "189",
+    "floor": 1
+  },
+  "C_191": {
+    "name": "Аудитория 157а",
+    "building": "C",
+    "classroom": "191",
+    "floor": 1
+  },
+  "C_254": {
+    "name": "Аудитория 202",
+    "building": "C",
+    "classroom": "254",
+    "floor": 2
+  },
+  "C_144": {
+    "name": "Аудитория 203",
+    "building": "C",
+    "classroom": "144",
+    "floor": 2
+  },
+  "C_438": {
+    "name": "Аудитория 203а",
+    "building": "C",
+    "classroom": "438",
+    "floor": 2
+  },
+  "C_463": {
+    "name": "Аудитория 204а",
+    "building": "C",
+    "classroom": "463",
+    "floor": 2
+  },
+  "C_253": {
+    "name": "Аудитория 204",
+    "building": "C",
+    "classroom": "253",
+    "floor": 2
+  },
+  "C_220": {
+    "name": "Аудитория 206-2",
+    "building": "C",
+    "classroom": "220",
+    "floor": 2
+  },
+  "C_221": {
+    "name": "Аудитория 206-1",
+    "building": "C",
+    "classroom": "221",
+    "floor": 2
+  },
+  "C_264": {
+    "name": "Аудитория 206-4",
+    "building": "C",
+    "classroom": "264",
+    "floor": 2
+  },
+  "C_294": {
+    "name": "Аудитория 206-3",
+    "building": "C",
+    "classroom": "294",
+    "floor": 2
+  },
+  "C_245": {
+    "name": "Аудитория 209",
+    "building": "C",
+    "classroom": "245",
+    "floor": 2
+  },
+  "C_249": {
+    "name": "Аудитория 210",
+    "building": "C",
+    "classroom": "249",
+    "floor": 2
+  },
+  "C_205": {
+    "name": "Аудитория 213а",
+    "building": "C",
+    "classroom": "205",
+    "floor": 2
+  },
+  "C_207": {
+    "name": "Аудитория 215",
+    "building": "C",
+    "classroom": "207",
+    "floor": 2
+  },
+  "C_432": {
+    "name": "Аудитория 218",
+    "building": "C",
+    "classroom": "432",
+    "floor": 2
+  },
+  "C_239": {
+    "name": "Аудитория 252",
+    "building": "C",
+    "classroom": "239",
+    "floor": 2
+  },
+  "C_261": {
+    "name": "Аудитория 254",
+    "building": "C",
+    "classroom": "261",
+    "floor": 2
+  },
+  "C_472": {
+    "name": "Аудитория 256а",
+    "building": "C",
+    "classroom": "472",
+    "floor": 2
+  },
+  "C_170": {
+    "name": "Аудитория 258",
+    "building": "C",
+    "classroom": "170",
+    "floor": 2
+  },
+  "C_296": {
+    "name": "Аудитория 260",
+    "building": "C",
+    "classroom": "296",
+    "floor": 2
+  },
+  "C_105": {
+    "name": "Аудитория 261а",
+    "building": "C",
+    "classroom": "105",
+    "floor": 2
+  },
+  "C_429": {
+    "name": "Аудитория 264",
+    "building": "C",
+    "classroom": "429",
+    "floor": 2
+  },
+  "C_257": {
+    "name": "Аудитория 265",
+    "building": "C",
+    "classroom": "257",
+    "floor": 2
+  },
+  "C_424": {
+    "name": "Аудитория 266а",
+    "building": "C",
+    "classroom": "424",
+    "floor": 2
+  },
+  "C_428": {
+    "name": "Аудитория 266",
+    "building": "C",
+    "classroom": "428",
+    "floor": 2
+  },
+  "C_165": {
+    "name": "Аудитория 267",
+    "building": "C",
+    "classroom": "165",
+    "floor": 2
+  },
+  "C_426": {
+    "name": "Аудитория 268",
+    "building": "C",
+    "classroom": "426",
+    "floor": 2
+  },
+  "C_427": {
+    "name": "Аудитория 270",
+    "building": "C",
+    "classroom": "427",
+    "floor": 2
+  },
+  "C_125": {
+    "name": "Аудитория 301",
+    "building": "C",
+    "classroom": "125",
+    "floor": 3
+  },
+  "C_164": {
+    "name": "Аудитория 302",
+    "building": "C",
+    "classroom": "164",
+    "floor": 3
+  },
+  "C_171": {
+    "name": "Аудитория 304",
+    "building": "C",
+    "classroom": "171",
+    "floor": 3
+  },
+  "C_173": {
+    "name": "Аудитория 306",
+    "building": "C",
+    "classroom": "173",
+    "floor": 3
+  },
+  "C_106": {
+    "name": "Аудитория 307а",
+    "building": "C",
+    "classroom": "106",
+    "floor": 3
+  },
+  "C_132": {
+    "name": "Аудитория 307",
+    "building": "C",
+    "classroom": "132",
+    "floor": 3
+  },
+  "C_425": {
+    "name": "Аудитория 308",
+    "building": "C",
+    "classroom": "425",
+    "floor": 3
+  },
+  "C_151": {
+    "name": "Аудитория 310",
+    "building": "C",
+    "classroom": "151",
+    "floor": 3
+  },
+  "C_215": {
+    "name": "Аудитория 314",
+    "building": "C",
+    "classroom": "215",
+    "floor": 3
+  },
+  "C_243": {
+    "name": "Аудитория 315",
+    "building": "C",
+    "classroom": "243",
+    "floor": 3
+  },
+  "C_110": {
+    "name": "Аудитория 316",
+    "building": "C",
+    "classroom": "110",
+    "floor": 3
+  },
+  "C_140": {
+    "name": "Аудитория 318",
+    "building": "C",
+    "classroom": "140",
+    "floor": 3
+  },
+  "C_174": {
+    "name": "Аудитория 320",
+    "building": "C",
+    "classroom": "174",
+    "floor": 3
+  },
+  "C_241": {
+    "name": "Аудитория 321",
+    "building": "C",
+    "classroom": "241",
+    "floor": 3
+  },
+  "C_122": {
+    "name": "Аудитория 322",
+    "building": "C",
+    "classroom": "122",
+    "floor": 3
+  },
+  "C_198": {
+    "name": "Аудитория 323",
+    "building": "C",
+    "classroom": "198",
+    "floor": 3
+  },
+  "C_99": {
+    "name": "Аудитория 324",
+    "building": "C",
+    "classroom": "99",
+    "floor": 3
+  },
+  "C_201": {
+    "name": "Аудитория 325",
+    "building": "C",
+    "classroom": "201",
+    "floor": 3
+  },
+  "C_247": {
+    "name": "Аудитория 326",
+    "building": "C",
+    "classroom": "247",
+    "floor": 3
+  },
+  "C_209": {
+    "name": "Аудитория 328",
+    "building": "C",
+    "classroom": "209",
+    "floor": 3
+  },
+  "C_200": {
+    "name": "Аудитория 331",
+    "building": "C",
+    "classroom": "200",
+    "floor": 3
+  },
+  "C_149": {
+    "name": "Аудитория 333",
+    "building": "C",
+    "classroom": "149",
+    "floor": 3
+  },
+  "C_288": {
+    "name": "Аудитория 337",
+    "building": "C",
+    "classroom": "288",
+    "floor": 3
+  },
+  "C_199": {
+    "name": "Аудитория 338",
+    "building": "C",
+    "classroom": "199",
+    "floor": 3
+  },
+  "C_263": {
+    "name": "Аудитория 340",
+    "building": "C",
+    "classroom": "263",
+    "floor": 3
+  },
+  "C_262": {
+    "name": "Аудитория 341",
+    "building": "C",
+    "classroom": "262",
+    "floor": 3
+  },
+  "C_118": {
+    "name": "Аудитория 342",
+    "building": "C",
+    "classroom": "118",
+    "floor": 3
+  },
+  "C_120": {
+    "name": "Аудитория 344",
+    "building": "C",
+    "classroom": "120",
+    "floor": 3
+  },
+  "C_101": {
+    "name": "Аудитория 345",
+    "building": "C",
+    "classroom": "101",
+    "floor": 3
+  },
+  "C_134": {
+    "name": "Аудитория 346",
+    "building": "C",
+    "classroom": "134",
+    "floor": 3
+  },
+  "C_169": {
+    "name": "Аудитория 350",
+    "building": "C",
+    "classroom": "169",
+    "floor": 3
+  },
+  "C_119": {
+    "name": "Аудитория 353",
+    "building": "C",
+    "classroom": "119",
+    "floor": 3
+  },
+  "C_297": {
+    "name": "Аудитория 355",
+    "building": "C",
+    "classroom": "297",
+    "floor": 3
+  },
+  "C_103": {
+    "name": "Аудитория 358",
+    "building": "C",
+    "classroom": "103",
+    "floor": 3
+  },
+  "C_298": {
+    "name": "Аудитория 364",
+    "building": "C",
+    "classroom": "298",
+    "floor": 3
+  },
+  "C_139": {
+    "name": "Аудитория 368",
+    "building": "C",
+    "classroom": "139",
+    "floor": 3
+  },
+  "C_109": {
+    "name": "Аудитория 402",
+    "building": "C",
+    "classroom": "109",
+    "floor": 4
+  },
+  "C_167": {
+    "name": "Аудитория 403",
+    "building": "C",
+    "classroom": "167",
+    "floor": 4
+  },
+  "C_146": {
+    "name": "Аудитория 404",
+    "building": "C",
+    "classroom": "146",
+    "floor": 4
+  },
+  "C_115": {
+    "name": "Аудитория 405",
+    "building": "C",
+    "classroom": "115",
+    "floor": 4
+  },
+  "C_131": {
+    "name": "Аудитория 406",
+    "building": "C",
+    "classroom": "131",
+    "floor": 4
+  },
+  "C_166": {
+    "name": "Аудитория 407",
+    "building": "C",
+    "classroom": "166",
+    "floor": 4
+  },
+  "C_292": {
+    "name": "Аудитория 409",
+    "building": "C",
+    "classroom": "292",
+    "floor": 4
+  },
+  "C_178": {
+    "name": "Аудитория 412",
+    "building": "C",
+    "classroom": "178",
+    "floor": 4
+  },
+  "C_237": {
+    "name": "Аудитория 414",
+    "building": "C",
+    "classroom": "237",
+    "floor": 4
+  },
+  "C_142": {
+    "name": "Аудитория 415",
+    "building": "C",
+    "classroom": "142",
+    "floor": 4
+  },
+  "C_156": {
+    "name": "Аудитория 418",
+    "building": "C",
+    "classroom": "156",
+    "floor": 4
+  },
+  "C_172": {
+    "name": "Аудитория 419",
+    "building": "C",
+    "classroom": "172",
+    "floor": 4
+  },
+  "C_127": {
+    "name": "Аудитория 422",
+    "building": "C",
+    "classroom": "127",
+    "floor": 4
+  },
+  "C_130": {
+    "name": "Аудитория 423",
+    "building": "C",
+    "classroom": "130",
+    "floor": 4
+  },
+  "C_116": {
+    "name": "Аудитория 424",
+    "building": "C",
+    "classroom": "116",
+    "floor": 4
+  },
+  "C_244": {
+    "name": "Аудитория 424а",
+    "building": "C",
+    "classroom": "244",
+    "floor": 4
+  },
+  "C_210": {
+    "name": "Аудитория 426",
+    "building": "C",
+    "classroom": "210",
+    "floor": 4
+  },
+  "C_195": {
+    "name": "Аудитория 430",
+    "building": "C",
+    "classroom": "195",
+    "floor": 4
+  },
+  "C_112": {
+    "name": "Аудитория 437",
+    "building": "C",
+    "classroom": "112",
+    "floor": 4
+  },
+  "C_97": {
+    "name": "Аудитория 438",
+    "building": "C",
+    "classroom": "97",
+    "floor": 4
+  },
+  "C_196": {
+    "name": "Аудитория 440",
+    "building": "C",
+    "classroom": "196",
+    "floor": 4
+  },
+  "C_123": {
+    "name": "Аудитория 441",
+    "building": "C",
+    "classroom": "123",
+    "floor": 4
+  },
+  "C_117": {
+    "name": "Аудитория 442",
+    "building": "C",
+    "classroom": "117",
+    "floor": 4
+  },
+  "C_111": {
+    "name": "Аудитория 443",
+    "building": "C",
+    "classroom": "111",
+    "floor": 4
+  },
+  "C_136": {
+    "name": "Аудитория 444",
+    "building": "C",
+    "classroom": "136",
+    "floor": 4
+  },
+  "C_193": {
+    "name": "Аудитория 445",
+    "building": "C",
+    "classroom": "193",
+    "floor": 4
+  },
+  "C_143": {
+    "name": "Аудитория 446",
+    "building": "C",
+    "classroom": "143",
+    "floor": 4
+  },
+  "C_133": {
+    "name": "Аудитория 448",
+    "building": "C",
+    "classroom": "133",
+    "floor": 4
+  },
+  "C_194": {
+    "name": "Аудитория 449",
+    "building": "C",
+    "classroom": "194",
+    "floor": 4
+  },
+  "C_216": {
+    "name": "Аудитория 450",
+    "building": "C",
+    "classroom": "216",
+    "floor": 4
+  },
+  "C_104": {
+    "name": "Аудитория 451",
+    "building": "C",
+    "classroom": "104",
+    "floor": 4
+  },
+  "C_124": {
+    "name": "Аудитория 457",
+    "building": "C",
+    "classroom": "124",
+    "floor": 4
+  },
+  "C_145": {
+    "name": "Аудитория 461",
+    "building": "C",
+    "classroom": "145",
+    "floor": 4
+  },
+  "C_108": {
+    "name": "Аудитория 463",
+    "building": "C",
+    "classroom": "108",
+    "floor": 4
+  },
+  "C_102": {
+    "name": "Аудитория 465",
+    "building": "C",
+    "classroom": "102",
+    "floor": 4
+  },
+  "C_430": {
+    "name": "Аудитория Спортзал",
+    "building": "C",
+    "classroom": "430",
+    "floor": null
+  },
+  "C_437": {
+    "name": "Аудитория Зал тяжелой атлетики",
+    "building": "C",
+    "classroom": "437",
+    "floor": null
+  },
+  "C_434": {
+    "name": "Аудитория Зал самбо",
+    "building": "C",
+    "classroom": "434",
+    "floor": null
+  },
+  "C_98": {
+    "name": "Аудитория Стадион РГРТУ",
+    "building": "C",
+    "classroom": "98",
+    "floor": null
+  }
+}

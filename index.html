@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <script>
+    try {
+      document.documentElement.dataset.theme = localStorage.getItem('theme') || 'dark';
+    } catch (e) {
+      document.documentElement.dataset.theme = 'dark';
+    }
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Карта РГРТУ</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="topbar-brand">
+      <span class="topbar-title">Карта РГРТУ</span>
+    </div>
+
+    <div class="topbar-divider"></div>
+
+    <nav id="buildings" class="topbar-nav"></nav>
+
+    <div class="topbar-actions">
+      <button class="action-btn" id="theme-toggle" title="Переключить тему">
+        <i class="mdi mdi-weather-sunny"></i>
+      </button>
+      <div class="search-wrap">
+        <button class="action-btn" id="search-toggle" title="Поиск аудитории">
+          <i class="mdi mdi-magnify"></i>
+        </button>
+        <div class="search-panel" id="search-panel">
+          <input type="text" id="search-input" placeholder="Поиск аудитории..." autocomplete="off">
+          <ul class="results" id="search-results"></ul>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div id="app">
+    <div id="map-wrap">
+      <div id="map"></div>
+    </div>
+    <aside id="panel"></aside>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
