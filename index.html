@@ -29,12 +29,16 @@
       <button class="action-btn" id="theme-toggle" title="Переключить тему">
         <i class="mdi mdi-weather-sunny"></i>
       </button>
-      <div class="search-wrap">
-        <button class="action-btn" id="search-toggle" title="Поиск аудитории">
+      <div class="search-wrap" id="search-wrap">
+        <button class="action-btn" id="search-toggle" title="Поиск">
           <i class="mdi mdi-magnify"></i>
         </button>
         <div class="search-panel" id="search-panel">
-          <input type="text" id="search-input" placeholder="Поиск аудитории..." autocomplete="off">
+          <input type="text" id="search-input"
+                 placeholder="Аудитория, спортзал, стадион…"
+                 autocomplete="off">
+          <div class="quick-tags" id="quick-tags"></div>
+          <div class="search-history" id="search-history"></div>
           <ul class="results" id="search-results"></ul>
         </div>
       </div>
@@ -47,6 +51,10 @@
     </div>
     <aside id="panel"></aside>
   </div>
+
+  <button id="panel-handle" class="panel-handle hidden" title="Свернуть / развернуть">
+    <i class="mdi mdi-chevron-right"></i>
+  </button>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="js/app.js"></script>
