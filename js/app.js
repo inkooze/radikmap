@@ -60,7 +60,6 @@ function formatRoomName(name) {
   return name.replace(/^Аудитория\s+(Спортзал|Зал|Стадион|Бассейн|Буфет|Столовая|Гардероб|Деканат|Библиотека)/i, '$1');
 }
 
-// Натуральная сортировка по имени: "Аудитория 100" < "Аудитория 21"
 function naturalRoomSort(a, b) {
   const nameA = formatRoomName(a.meta?.name || '').toLowerCase();
   const nameB = formatRoomName(b.meta?.name || '').toLowerCase();
@@ -80,6 +79,7 @@ let roomShapes = {};
 let pendingHighlight = null;
 let selectedRoomId = null;
 let selectedShapes = [];
+let hoveredRoomId = null;
 
 let panelMode = null;
 let currentRoomPanelId = null;
@@ -835,6 +835,7 @@ async function showFloor(buildingCode, floorNum) {
   currentBuilding = buildingCode;
   currentFloor = floorNum;
   clearSelectedRoom();
+  hoveredRoomId = null;
 
   const svgText = await fetch(svgUrl).then(r => r.text());
   const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
@@ -855,33 +856,72 @@ async function showFloor(buildingCode, floorNum) {
   svgEl.style.pointerEvents = 'none';
 
   roomShapes = {};
-  const registerShape = (shape, id) => {
-    if (!roomShapes[id]) roomShapes[id] = [];
-    roomShapes[id].push(shape);
-
-    shape.style.pointerEvents = 'auto';
-    shape.style.cursor = 'pointer';
-    shape.style.transition = 'opacity 0.15s';
-    shape.addEventListener('mouseenter', () => { shape.style.opacity = '0.65'; });
-    shape.addEventListener('mouseleave', () => { shape.style.opacity = ''; });
-    shape.addEventListener('click', (e) => {
-      e.stopPropagation();
-      onRoomClick(id);
-    });
-  };
 
   svgEl.querySelectorAll('rect[id], path[id], polygon[id], circle[id], ellipse[id]').forEach(shape => {
     const id = shape.getAttribute('id');
     if (!roomsMeta[id]) return;
-    registerShape(shape, id);
+    if (!roomShapes[id]) roomShapes[id] = [];
+    roomShapes[id].push(shape);
   });
+
   svgEl.querySelectorAll('g[id]').forEach(g => {
     const id = g.getAttribute('id');
     if (!roomsMeta[id]) return;
+    if (!roomShapes[id]) roomShapes[id] = [];
     g.querySelectorAll('rect, path, polygon, circle, ellipse').forEach(shape => {
-      if (shape.hasAttribute('id')) return;
-      registerShape(shape, id);
+      const ownId = shape.getAttribute('id');
+      if (ownId && roomsMeta[ownId]) return;
+      roomShapes[id].push(shape);
     });
+  });
+
+  Object.values(roomShapes).forEach(shapes => {
+    shapes.forEach(s => {
+      s.style.pointerEvents = 'auto';
+      s.style.cursor = 'pointer';
+      s.style.transition = 'filter 0.15s ease';
+    });
+  });
+
+  const findRoomIdForShape = (el) => {
+    let cur = el;
+    while (cur && cur !== svgEl) {
+      if (cur.nodeType === 1 && cur.hasAttribute && cur.hasAttribute('id')) {
+        const id = cur.getAttribute('id');
+        if (roomsMeta[id] && roomShapes[id]) return id;
+      }
+      cur = cur.parentNode;
+    }
+    return null;
+  };
+
+  svgEl.addEventListener('mouseover', (e) => {
+    const id = findRoomIdForShape(e.target);
+    if (!id || id === hoveredRoomId) return;
+    if (hoveredRoomId) {
+      (roomShapes[hoveredRoomId] || []).forEach(s => { s.style.filter = ''; });
+    }
+    hoveredRoomId = id;
+    (roomShapes[id] || []).forEach(s => {
+      s.style.filter = 'brightness(0.78) saturate(1.35)';
+    });
+  });
+
+  svgEl.addEventListener('mouseout', (e) => {
+    const nextEl = e.relatedTarget;
+    const nextId = nextEl ? findRoomIdForShape(nextEl) : null;
+    if (nextId === hoveredRoomId) return;
+    if (hoveredRoomId) {
+      (roomShapes[hoveredRoomId] || []).forEach(s => { s.style.filter = ''; });
+      hoveredRoomId = null;
+    }
+  });
+
+  svgEl.addEventListener('click', (e) => {
+    const id = findRoomIdForShape(e.target);
+    if (!id) return;
+    e.stopPropagation();
+    onRoomClick(id);
   });
 
   updateTabActive();
@@ -918,6 +958,10 @@ function placeLabels() {
   const mapRect = map.getContainer().getBoundingClientRect();
 
   for (const [id, shapes] of Object.entries(roomShapes)) {
+    const meta = roomsMeta[id];
+    const labelText = meta?.shortName;
+    if (!labelText) continue;
+
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     let anyValid = false;
     for (const shape of shapes) {
@@ -934,10 +978,6 @@ function placeLabels() {
     const cX = (minX + maxX) / 2 - mapRect.left;
     const cY = (minY + maxY) / 2 - mapRect.top;
     const latlng = map.containerPointToLatLng(L.point(cX, cY));
-
-    const meta = roomsMeta[id];
-    const labelText = formatRoomName(meta?.name || id).replace(/^Аудитория\s+/i, '').trim();
-    if (!labelText) continue;
 
     const icon = L.divIcon({
       className: 'room-label-wrap',
@@ -1079,17 +1119,25 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
       <div class="panel-header">
         ${closeBtn}
         ${crumbs ? `<div class="panel-crumbs">${crumbs}</div>` : ''}
-        <h2>${title} ${shareIcon}</h2>
+        <h2>${title}${shareIcon}</h2>
       </div>
     `;
 
+    const descriptionBlock = meta?.description
+      ? `<div class="room-notes">${meta.description}</div>`
+      : '';
+
+    // ===== Помещение без classroom =====
     if (!meta || !meta.building || !meta.classroom) {
-      panel.innerHTML = `${header}<p class="muted-text">Для этой комнаты расписание не настроено.</p>`;
+      const block = descriptionBlock ||
+        `<div class="room-notes empty">У этого помещения нет заметок.</div>`;
+      panel.innerHTML = `${header}${block}`;
       attachShareListener(panel, id);
       return;
     }
 
-    panel.innerHTML = `${header}<p class="muted-text">Загрузка расписания…</p>`;
+    // ===== Аудитория с classroom =====
+    panel.innerHTML = `${header}${descriptionBlock}<p class="muted-text">Загрузка расписания…</p>`;
     attachShareListener(panel, id);
 
     const today = new Date();
@@ -1111,19 +1159,36 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
     if (currentRoomPanelId !== id || panelMode !== 'room') return;
 
     if (data.empty) {
-      panel.innerHTML = `${header}<div class="no-schedule-msg">У этой аудитории нет расписания занятий</div>`;
+      panel.innerHTML = `${header}${descriptionBlock}<div class="no-schedule-msg">У этой аудитории нет расписания занятий</div>`;
       attachShareListener(panel, id);
       return;
     }
-    renderSchedule(panel, title, data, header);
+    renderSchedule(panel, title, data, header, descriptionBlock);
     attachShareListener(panel, id);
   } catch (err) {
     if (currentRoomPanelId !== id || panelMode !== 'room') return;
+
+    // Пересчитываем header и descriptionBlock заново — на случай, если ошибка
+    // приключилась до их объявления
+    const title = formatRoomName(meta?.name || id);
+    const b = meta ? BUILDINGS[meta.building] : null;
+    const crumbs = b ? `${b.name}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}` : '';
+    const shareIcon = `<i class="mdi mdi-link-variant share-icon" title="Скопировать ссылку"></i>`;
     const closeBtn = freeModeOn
       ? `<button class="back-btn" onclick="closeRoomPanel()" title="Вернуться к списку свободных"><i class="mdi mdi-arrow-left"></i></button>`
       : `<button class="close" onclick="closeRoomPanel()">✕</button>`;
-    panel.innerHTML = `
-      <div class="panel-header">${closeBtn}<h2>${formatRoomName(meta?.name || id)}</h2></div>
+    const header = `
+      <div class="panel-header">
+        ${closeBtn}
+        ${crumbs ? `<div class="panel-crumbs">${crumbs}</div>` : ''}
+        <h2>${title}${shareIcon}</h2>
+      </div>
+    `;
+    const descriptionBlock = meta?.description
+      ? `<div class="room-notes">${meta.description}</div>`
+      : '';
+
+    panel.innerHTML = `${header}${descriptionBlock}
       <p style="color:#f87171">Ошибка загрузки: ${err.message}</p>`;
     attachShareListener(panel, id);
     console.error('[onRoomClick]', err);
@@ -1253,7 +1318,7 @@ function parseSchedule(html) {
 
 // ================ РЕНДЕР ПАНЕЛИ ================
 
-function renderSchedule(panel, title, data, header) {
+function renderSchedule(panel, title, data, header, descriptionBlock = '') {
   const nowStatus = computeNowStatus(data);
   const today = new Date();
   const nowMin = today.getHours() * 60 + today.getMinutes();
@@ -1317,7 +1382,7 @@ function renderSchedule(panel, title, data, header) {
       </div>`;
   }).join('');
 
-  panel.innerHTML = `${header}${renderNowStatus(nowStatus)}${daysHtml}`;
+  panel.innerHTML = `${header}${descriptionBlock}${renderNowStatus(nowStatus)}${daysHtml}`;
 }
 
 // ================ ГОРЯЧИЕ КЛАВИШИ ================

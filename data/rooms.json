@@ -1,842 +1,246 @@
 {
-  "C_433": {
-    "name": "Аудитория 001",
-    "building": "C",
-    "classroom": "433",
-    "floor": 0
-  },
-  "C_436": {
-    "name": "Аудитория 019",
-    "building": "C",
-    "classroom": "436",
-    "floor": 0
-  },
-  "C_255": {
-    "name": "Аудитория 021а",
-    "building": "C",
-    "classroom": "255",
-    "floor": 0
-  },
-  "C_286": {
-    "name": "Аудитория 021",
-    "building": "C",
-    "classroom": "286",
-    "floor": 0
-  },
-  "C_488": {
-    "name": "Аудитория 038 б",
-    "building": "C",
-    "classroom": "488",
-    "floor": 0
-  },
-  "C_186": {
-    "name": "Аудитория 038а",
-    "building": "C",
-    "classroom": "186",
-    "floor": 0
-  },
-  "C_444": {
-    "name": "Аудитория 038б",
-    "building": "C",
-    "classroom": "444",
-    "floor": 0
-  },
-  "C_456": {
-    "name": "Аудитория 038 а",
-    "building": "C",
-    "classroom": "456",
-    "floor": 0
-  },
-  "C_184": {
-    "name": "Аудитория 42",
-    "building": "C",
-    "classroom": "184",
-    "floor": 0
-  },
-  "C_431": {
-    "name": "Аудитория 46",
-    "building": "C",
-    "classroom": "431",
-    "floor": 0
-  },
-  "C_192": {
-    "name": "Аудитория 50а",
-    "building": "C",
-    "classroom": "192",
-    "floor": 0
-  },
-  "C_190": {
-    "name": "Аудитория 50",
-    "building": "C",
-    "classroom": "190",
-    "floor": 0
-  },
-  "C_229": {
-    "name": "Аудитория 51",
-    "building": "C",
-    "classroom": "229",
-    "floor": 0
-  },
-  "C_486": {
-    "name": "Аудитория 55а",
-    "building": "C",
-    "classroom": "486",
-    "floor": 0
-  },
-  "C_490": {
-    "name": "Аудитория 55",
-    "building": "C",
-    "classroom": "490",
-    "floor": 0
-  },
-  "C_228": {
-    "name": "Аудитория 57",
-    "building": "C",
-    "classroom": "228",
-    "floor": 0
-  },
-  "C_250": {
-    "name": "Аудитория 102л",
-    "building": "C",
-    "classroom": "250",
-    "floor": 1
-  },
-  "C_285": {
-    "name": "Аудитория 102к",
-    "building": "C",
-    "classroom": "285",
-    "floor": 1
-  },
-  "C_291": {
-    "name": "Аудитория 103",
-    "building": "C",
-    "classroom": "291",
-    "floor": 1
-  },
-  "C_227": {
-    "name": "Аудитория 106а",
-    "building": "C",
-    "classroom": "227",
-    "floor": 1
-  },
-  "C_223": {
-    "name": "Аудитория 106",
-    "building": "C",
-    "classroom": "223",
-    "floor": 1
-  },
-  "C_290": {
-    "name": "Аудитория 110",
-    "building": "C",
-    "classroom": "290",
-    "floor": 1
-  },
-  "C_100": {
-    "name": "Аудитория 111а",
-    "building": "C",
-    "classroom": "100",
-    "floor": 1
-  },
-  "C_114": {
-    "name": "Аудитория 111",
-    "building": "C",
-    "classroom": "114",
-    "floor": 1
-  },
-  "C_289": {
-    "name": "Аудитория 116",
-    "building": "C",
-    "classroom": "289",
-    "floor": 1
-  },
-  "C_206": {
-    "name": "Аудитория 117",
-    "building": "C",
-    "classroom": "206",
-    "floor": 1
-  },
-  "C_258": {
-    "name": "Аудитория 117а",
-    "building": "C",
-    "classroom": "258",
-    "floor": 1
-  },
-  "C_203": {
-    "name": "Аудитория 118",
-    "building": "C",
-    "classroom": "203",
-    "floor": 1
-  },
-  "C_240": {
-    "name": "Аудитория 121",
-    "building": "C",
-    "classroom": "240",
-    "floor": 1
-  },
-  "C_212": {
-    "name": "Аудитория 122",
-    "building": "C",
-    "classroom": "212",
-    "floor": 1
-  },
-  "C_204": {
-    "name": "Аудитория 125а",
-    "building": "C",
-    "classroom": "204",
-    "floor": 1
-  },
-  "C_202": {
-    "name": "Аудитория 127",
-    "building": "C",
-    "classroom": "202",
-    "floor": 1
-  },
-  "C_235": {
-    "name": "Аудитория 128",
-    "building": "C",
-    "classroom": "235",
-    "floor": 1
-  },
-  "C_113": {
-    "name": "Аудитория 130",
-    "building": "C",
-    "classroom": "113",
-    "floor": 1
-  },
-  "C_179": {
-    "name": "Аудитория 132",
-    "building": "C",
-    "classroom": "179",
-    "floor": 1
-  },
-  "C_287": {
-    "name": "Аудитория 134а",
-    "building": "C",
-    "classroom": "287",
-    "floor": 1
-  },
-  "C_189": {
-    "name": "Аудитория 155",
-    "building": "C",
-    "classroom": "189",
-    "floor": 1
-  },
-  "C_191": {
-    "name": "Аудитория 157а",
-    "building": "C",
-    "classroom": "191",
-    "floor": 1
-  },
-  "C_254": {
-    "name": "Аудитория 202",
-    "building": "C",
-    "classroom": "254",
-    "floor": 2
-  },
-  "C_144": {
-    "name": "Аудитория 203",
-    "building": "C",
-    "classroom": "144",
-    "floor": 2
-  },
-  "C_438": {
-    "name": "Аудитория 203а",
-    "building": "C",
-    "classroom": "438",
-    "floor": 2
-  },
-  "C_463": {
-    "name": "Аудитория 204а",
-    "building": "C",
-    "classroom": "463",
-    "floor": 2
-  },
-  "C_253": {
-    "name": "Аудитория 204",
-    "building": "C",
-    "classroom": "253",
-    "floor": 2
-  },
-  "C_220": {
-    "name": "Аудитория 206-2",
-    "building": "C",
-    "classroom": "220",
-    "floor": 2
-  },
-  "C_221": {
-    "name": "Аудитория 206-1",
-    "building": "C",
-    "classroom": "221",
-    "floor": 2
-  },
-  "C_264": {
-    "name": "Аудитория 206-4",
-    "building": "C",
-    "classroom": "264",
-    "floor": 2
-  },
-  "C_294": {
-    "name": "Аудитория 206-3",
-    "building": "C",
-    "classroom": "294",
-    "floor": 2
-  },
-  "C_245": {
-    "name": "Аудитория 209",
-    "building": "C",
-    "classroom": "245",
-    "floor": 2
-  },
-  "C_249": {
-    "name": "Аудитория 210",
-    "building": "C",
-    "classroom": "249",
-    "floor": 2
-  },
-  "C_205": {
-    "name": "Аудитория 213а",
-    "building": "C",
-    "classroom": "205",
-    "floor": 2
-  },
-  "C_207": {
-    "name": "Аудитория 215",
-    "building": "C",
-    "classroom": "207",
-    "floor": 2
-  },
-  "C_432": {
-    "name": "Аудитория 218",
-    "building": "C",
-    "classroom": "432",
-    "floor": 2
-  },
-  "C_239": {
-    "name": "Аудитория 252",
-    "building": "C",
-    "classroom": "239",
-    "floor": 2
-  },
-  "C_261": {
-    "name": "Аудитория 254",
-    "building": "C",
-    "classroom": "261",
-    "floor": 2
-  },
-  "C_472": {
-    "name": "Аудитория 256а",
-    "building": "C",
-    "classroom": "472",
-    "floor": 2
-  },
-  "C_170": {
-    "name": "Аудитория 258",
-    "building": "C",
-    "classroom": "170",
-    "floor": 2
-  },
-  "C_296": {
-    "name": "Аудитория 260",
-    "building": "C",
-    "classroom": "296",
-    "floor": 2
-  },
-  "C_105": {
-    "name": "Аудитория 261а",
-    "building": "C",
-    "classroom": "105",
-    "floor": 2
-  },
-  "C_429": {
-    "name": "Аудитория 264",
-    "building": "C",
-    "classroom": "429",
-    "floor": 2
-  },
-  "C_257": {
-    "name": "Аудитория 265",
-    "building": "C",
-    "classroom": "257",
-    "floor": 2
-  },
-  "C_424": {
-    "name": "Аудитория 266а",
-    "building": "C",
-    "classroom": "424",
-    "floor": 2
-  },
-  "C_428": {
-    "name": "Аудитория 266",
-    "building": "C",
-    "classroom": "428",
-    "floor": 2
-  },
-  "C_165": {
-    "name": "Аудитория 267",
-    "building": "C",
-    "classroom": "165",
-    "floor": 2
-  },
-  "C_426": {
-    "name": "Аудитория 268",
-    "building": "C",
-    "classroom": "426",
-    "floor": 2
-  },
-  "C_427": {
-    "name": "Аудитория 270",
-    "building": "C",
-    "classroom": "427",
-    "floor": 2
-  },
-  "C_125": {
-    "name": "Аудитория 301",
-    "building": "C",
-    "classroom": "125",
-    "floor": 3
-  },
-  "C_164": {
-    "name": "Аудитория 302",
-    "building": "C",
-    "classroom": "164",
-    "floor": 3
-  },
-  "C_171": {
-    "name": "Аудитория 304",
-    "building": "C",
-    "classroom": "171",
-    "floor": 3
-  },
-  "C_173": {
-    "name": "Аудитория 306",
-    "building": "C",
-    "classroom": "173",
-    "floor": 3
-  },
-  "C_106": {
-    "name": "Аудитория 307а",
-    "building": "C",
-    "classroom": "106",
-    "floor": 3
-  },
-  "C_132": {
-    "name": "Аудитория 307",
-    "building": "C",
-    "classroom": "132",
-    "floor": 3
-  },
-  "C_425": {
-    "name": "Аудитория 308",
-    "building": "C",
-    "classroom": "425",
-    "floor": 3
-  },
-  "C_151": {
-    "name": "Аудитория 310",
-    "building": "C",
-    "classroom": "151",
-    "floor": 3
-  },
-  "C_215": {
-    "name": "Аудитория 314",
-    "building": "C",
-    "classroom": "215",
-    "floor": 3
-  },
-  "C_243": {
-    "name": "Аудитория 315",
-    "building": "C",
-    "classroom": "243",
-    "floor": 3
-  },
-  "C_110": {
-    "name": "Аудитория 316",
-    "building": "C",
-    "classroom": "110",
-    "floor": 3
-  },
-  "C_140": {
-    "name": "Аудитория 318",
-    "building": "C",
-    "classroom": "140",
-    "floor": 3
-  },
-  "C_174": {
-    "name": "Аудитория 320",
-    "building": "C",
-    "classroom": "174",
-    "floor": 3
-  },
-  "C_241": {
-    "name": "Аудитория 321",
-    "building": "C",
-    "classroom": "241",
-    "floor": 3
-  },
-  "C_122": {
-    "name": "Аудитория 322",
-    "building": "C",
-    "classroom": "122",
-    "floor": 3
-  },
-  "C_198": {
-    "name": "Аудитория 323",
-    "building": "C",
-    "classroom": "198",
-    "floor": 3
-  },
-  "C_99": {
-    "name": "Аудитория 324",
-    "building": "C",
-    "classroom": "99",
-    "floor": 3
-  },
-  "C_201": {
-    "name": "Аудитория 325",
-    "building": "C",
-    "classroom": "201",
-    "floor": 3
-  },
-  "C_247": {
-    "name": "Аудитория 326",
-    "building": "C",
-    "classroom": "247",
-    "floor": 3
-  },
-  "C_209": {
-    "name": "Аудитория 328",
-    "building": "C",
-    "classroom": "209",
-    "floor": 3
-  },
-  "C_200": {
-    "name": "Аудитория 331",
-    "building": "C",
-    "classroom": "200",
-    "floor": 3
-  },
-  "C_149": {
-    "name": "Аудитория 333",
-    "building": "C",
-    "classroom": "149",
-    "floor": 3
-  },
-  "C_288": {
-    "name": "Аудитория 337",
-    "building": "C",
-    "classroom": "288",
-    "floor": 3
-  },
-  "C_199": {
-    "name": "Аудитория 338",
-    "building": "C",
-    "classroom": "199",
-    "floor": 3
-  },
-  "C_263": {
-    "name": "Аудитория 340",
-    "building": "C",
-    "classroom": "263",
-    "floor": 3
-  },
-  "C_262": {
-    "name": "Аудитория 341",
-    "building": "C",
-    "classroom": "262",
-    "floor": 3
-  },
-  "C_118": {
-    "name": "Аудитория 342",
-    "building": "C",
-    "classroom": "118",
-    "floor": 3
-  },
-  "C_120": {
-    "name": "Аудитория 344",
-    "building": "C",
-    "classroom": "120",
-    "floor": 3
-  },
-  "C_101": {
-    "name": "Аудитория 345",
-    "building": "C",
-    "classroom": "101",
-    "floor": 3
-  },
-  "C_134": {
-    "name": "Аудитория 346",
-    "building": "C",
-    "classroom": "134",
-    "floor": 3
-  },
-  "C_169": {
-    "name": "Аудитория 350",
-    "building": "C",
-    "classroom": "169",
-    "floor": 3
-  },
-  "C_119": {
-    "name": "Аудитория 353",
-    "building": "C",
-    "classroom": "119",
-    "floor": 3
-  },
-  "C_297": {
-    "name": "Аудитория 355",
-    "building": "C",
-    "classroom": "297",
-    "floor": 3
-  },
-  "C_103": {
-    "name": "Аудитория 358",
-    "building": "C",
-    "classroom": "103",
-    "floor": 3
-  },
-  "C_298": {
-    "name": "Аудитория 364",
-    "building": "C",
-    "classroom": "298",
-    "floor": 3
-  },
-  "C_139": {
-    "name": "Аудитория 368",
-    "building": "C",
-    "classroom": "139",
-    "floor": 3
-  },
-  "C_109": {
-    "name": "Аудитория 402",
-    "building": "C",
-    "classroom": "109",
-    "floor": 4
-  },
-  "C_167": {
-    "name": "Аудитория 403",
-    "building": "C",
-    "classroom": "167",
-    "floor": 4
-  },
-  "C_146": {
-    "name": "Аудитория 404",
-    "building": "C",
-    "classroom": "146",
-    "floor": 4
-  },
-  "C_115": {
-    "name": "Аудитория 405",
-    "building": "C",
-    "classroom": "115",
-    "floor": 4
-  },
-  "C_131": {
-    "name": "Аудитория 406",
-    "building": "C",
-    "classroom": "131",
-    "floor": 4
-  },
-  "C_166": {
-    "name": "Аудитория 407",
-    "building": "C",
-    "classroom": "166",
-    "floor": 4
-  },
-  "C_292": {
-    "name": "Аудитория 409",
-    "building": "C",
-    "classroom": "292",
-    "floor": 4
-  },
-  "C_178": {
-    "name": "Аудитория 412",
-    "building": "C",
-    "classroom": "178",
-    "floor": 4
-  },
-  "C_237": {
-    "name": "Аудитория 414",
-    "building": "C",
-    "classroom": "237",
-    "floor": 4
-  },
-  "C_142": {
-    "name": "Аудитория 415",
-    "building": "C",
-    "classroom": "142",
-    "floor": 4
-  },
-  "C_156": {
-    "name": "Аудитория 418",
-    "building": "C",
-    "classroom": "156",
-    "floor": 4
-  },
-  "C_172": {
-    "name": "Аудитория 419",
-    "building": "C",
-    "classroom": "172",
-    "floor": 4
-  },
-  "C_127": {
-    "name": "Аудитория 422",
-    "building": "C",
-    "classroom": "127",
-    "floor": 4
-  },
-  "C_130": {
-    "name": "Аудитория 423",
-    "building": "C",
-    "classroom": "130",
-    "floor": 4
-  },
-  "C_116": {
-    "name": "Аудитория 424",
-    "building": "C",
-    "classroom": "116",
-    "floor": 4
-  },
-  "C_244": {
-    "name": "Аудитория 424а",
-    "building": "C",
-    "classroom": "244",
-    "floor": 4
-  },
-  "C_210": {
-    "name": "Аудитория 426",
-    "building": "C",
-    "classroom": "210",
-    "floor": 4
-  },
-  "C_195": {
-    "name": "Аудитория 430",
-    "building": "C",
-    "classroom": "195",
-    "floor": 4
-  },
-  "C_112": {
-    "name": "Аудитория 437",
-    "building": "C",
-    "classroom": "112",
-    "floor": 4
-  },
-  "C_97": {
-    "name": "Аудитория 438",
-    "building": "C",
-    "classroom": "97",
-    "floor": 4
-  },
-  "C_196": {
-    "name": "Аудитория 440",
-    "building": "C",
-    "classroom": "196",
-    "floor": 4
-  },
-  "C_123": {
-    "name": "Аудитория 441",
-    "building": "C",
-    "classroom": "123",
-    "floor": 4
-  },
-  "C_117": {
-    "name": "Аудитория 442",
-    "building": "C",
-    "classroom": "117",
-    "floor": 4
-  },
-  "C_111": {
-    "name": "Аудитория 443",
-    "building": "C",
-    "classroom": "111",
-    "floor": 4
-  },
-  "C_136": {
-    "name": "Аудитория 444",
-    "building": "C",
-    "classroom": "136",
-    "floor": 4
-  },
-  "C_193": {
-    "name": "Аудитория 445",
-    "building": "C",
-    "classroom": "193",
-    "floor": 4
-  },
-  "C_143": {
-    "name": "Аудитория 446",
-    "building": "C",
-    "classroom": "143",
-    "floor": 4
-  },
-  "C_133": {
-    "name": "Аудитория 448",
-    "building": "C",
-    "classroom": "133",
-    "floor": 4
-  },
-  "C_194": {
-    "name": "Аудитория 449",
-    "building": "C",
-    "classroom": "194",
-    "floor": 4
-  },
-  "C_216": {
-    "name": "Аудитория 450",
-    "building": "C",
-    "classroom": "216",
-    "floor": 4
-  },
-  "C_104": {
-    "name": "Аудитория 451",
-    "building": "C",
-    "classroom": "104",
-    "floor": 4
-  },
-  "C_124": {
-    "name": "Аудитория 457",
-    "building": "C",
-    "classroom": "124",
-    "floor": 4
-  },
-  "C_145": {
-    "name": "Аудитория 461",
-    "building": "C",
-    "classroom": "145",
-    "floor": 4
-  },
-  "C_108": {
-    "name": "Аудитория 463",
-    "building": "C",
-    "classroom": "108",
-    "floor": 4
-  },
-  "C_102": {
-    "name": "Аудитория 465",
-    "building": "C",
-    "classroom": "102",
-    "floor": 4
-  },
-  "C_430": {
-    "name": "Аудитория Спортзал",
-    "building": "C",
-    "classroom": "430",
-    "floor": null
-  },
-  "C_437": {
-    "name": "Аудитория Зал тяжелой атлетики",
-    "building": "C",
-    "classroom": "437",
-    "floor": null
-  },
-  "C_434": {
-    "name": "Аудитория Зал самбо",
-    "building": "C",
-    "classroom": "434",
-    "floor": null
-  },
-  "C_98": {
-    "name": "Аудитория Стадион РГРТУ",
-    "building": "C",
-    "classroom": "98",
-    "floor": null
-  }
+  "C_auditori_001": { "name": "Аудитория 001", "shortName": "001", "type": "room", "building": "C", "floor": 0, "classroom": "433" },
+  "C_auditori_019": { "name": "Аудитория 019", "shortName": "019", "type": "room", "building": "C", "floor": 0, "classroom": "436" },
+  "C_auditori_021a": { "name": "Аудитория 021а", "shortName": "021а", "type": "room", "building": "C", "floor": 0, "classroom": "255" },
+  "C_auditori_021": { "name": "Аудитория 021", "shortName": "021", "type": "room", "building": "C", "floor": 0, "classroom": "286" },
+  "C_auditori_038b": { "name": "Аудитория 038б", "shortName": "038б", "type": "room", "building": "C", "floor": 0, "classroom": "488" },
+  "C_auditori_038a": { "name": "Аудитория 038а", "shortName": "038а", "type": "room", "building": "C", "floor": 0, "classroom": "456" },
+  "C_auditori_42": { "name": "Аудитория 42", "shortName": "42", "type": "room", "building": "C", "floor": 0, "classroom": "184" },
+  "C_auditori_46": { "name": "Аудитория 46", "shortName": "46", "type": "room", "building": "C", "floor": 0, "classroom": "431" },
+  "C_auditori_50a": { "name": "Аудитория 50а", "shortName": "50а", "type": "room", "building": "C", "floor": 0, "classroom": "192" },
+  "C_auditori_50": { "name": "Аудитория 50", "shortName": "50", "type": "room", "building": "C", "floor": 0, "classroom": "190" },
+  "C_auditori_51": { "name": "Аудитория 51", "shortName": "51", "type": "room", "building": "C", "floor": 0, "classroom": "229" },
+  "C_auditori_55a": { "name": "Аудитория 55а", "shortName": "55а", "type": "room", "building": "C", "floor": 0, "classroom": "486" },
+  "C_auditori_55": { "name": "Аудитория 55", "shortName": "55", "type": "room", "building": "C", "floor": 0, "classroom": "490" },
+  "C_auditori_57": { "name": "Аудитория 57", "shortName": "57", "type": "room", "building": "C", "floor": 0, "classroom": "228" },
+  "C_auditori_102l": { "name": "Аудитория 102л", "shortName": "102л", "type": "room", "building": "C", "floor": 1, "classroom": "250" },
+  "C_auditori_102k": { "name": "Аудитория 102к", "shortName": "102к", "type": "room", "building": "C", "floor": 1, "classroom": "285" },
+  "C_auditori_103": { "name": "Аудитория 103", "shortName": "103", "type": "room", "building": "C", "floor": 1, "classroom": "291" },
+  "C_auditori_106a": { "name": "Аудитория 106а", "shortName": "106а", "type": "room", "building": "C", "floor": 1, "classroom": "227" },
+  "C_auditori_106": { "name": "Аудитория 106", "shortName": "106", "type": "room", "building": "C", "floor": 1, "classroom": "223" },
+  "C_auditori_110": { "name": "Аудитория 110", "shortName": "110", "type": "room", "building": "C", "floor": 1, "classroom": "290" },
+  "C_auditori_111a": { "name": "Аудитория 111а", "shortName": "111а", "type": "room", "building": "C", "floor": 1, "classroom": "100" },
+  "C_auditori_111": { "name": "Аудитория 111", "shortName": "111", "type": "room", "building": "C", "floor": 1, "classroom": "114" },
+  "C_auditori_116": { "name": "Аудитория 116", "shortName": "116", "type": "room", "building": "C", "floor": 1, "classroom": "289" },
+  "C_auditori_117": { "name": "Аудитория 117", "shortName": "117", "type": "room", "building": "C", "floor": 1, "classroom": "206" },
+  "C_auditori_117a": { "name": "Аудитория 117а", "shortName": "117а", "type": "room", "building": "C", "floor": 1, "classroom": "258" },
+  "C_auditori_118": { "name": "Аудитория 118", "shortName": "118", "type": "room", "building": "C", "floor": 1, "classroom": "203" },
+  "C_auditori_121": { "name": "Аудитория 121", "shortName": "121", "type": "room", "building": "C", "floor": 1, "classroom": "240" },
+  "C_auditori_122": { "name": "Аудитория 122", "shortName": "122", "type": "room", "building": "C", "floor": 1, "classroom": "212" },
+  "C_auditori_125a": { "name": "Аудитория 125а", "shortName": "125а", "type": "room", "building": "C", "floor": 1, "classroom": "204" },
+  "C_auditori_127": { "name": "Аудитория 127", "shortName": "127", "type": "room", "building": "C", "floor": 1, "classroom": "202" },
+  "C_auditori_128": { "name": "Аудитория 128", "shortName": "128", "type": "room", "building": "C", "floor": 1, "classroom": "235" },
+  "C_auditori_130": { "name": "Аудитория 130", "shortName": "130", "type": "room", "building": "C", "floor": 1, "classroom": "113" },
+  "C_auditori_132": { "name": "Аудитория 132", "shortName": "132", "type": "room", "building": "C", "floor": 1, "classroom": "179" },
+  "C_auditori_134": { "name": "Аудитория 134", "shortName": "134", "type": "room", "building": "C", "floor": 1 },
+  "C_auditori_134a": { "name": "134а - Приёмная комиссия", "shortName": "134а", "type": "room", "building": "C", "floor": 1, "classroom": "287", "description": "Приёмная комиссия РГРТУ." },
+  "C_auditori_155": { "name": "Аудитория 155", "shortName": "155", "type": "room", "building": "C", "floor": 1, "classroom": "189" },
+  "C_auditori_157a": { "name": "Аудитория 157а", "shortName": "157а", "type": "room", "building": "C", "floor": 1, "classroom": "191" },
+  "C_auditori_202": { "name": "Аудитория 202", "shortName": "202", "type": "room", "building": "C", "floor": 2, "classroom": "254" },
+  "C_auditori_203": { "name": "Аудитория 203", "shortName": "203", "type": "room", "building": "C", "floor": 2, "classroom": "144" },
+  "C_auditori_203a": { "name": "Аудитория 203а", "shortName": "203а", "type": "room", "building": "C", "floor": 2, "classroom": "438" },
+  "C_auditori_204a": { "name": "Аудитория 204а", "shortName": "204а", "type": "room", "building": "C", "floor": 2, "classroom": "463" },
+  "C_auditori_204": { "name": "Аудитория 204", "shortName": "204", "type": "room", "building": "C", "floor": 2, "classroom": "253" },
+  "C_auditori_206_2": { "name": "Аудитория 206-2", "shortName": "206-2", "type": "room", "building": "C", "floor": 2, "classroom": "220" },
+  "C_auditori_206_1": { "name": "Аудитория 206-1", "shortName": "206-1", "type": "room", "building": "C", "floor": 2, "classroom": "221" },
+  "C_auditori_206_4": { "name": "Аудитория 206-4", "shortName": "206-4", "type": "room", "building": "C", "floor": 2, "classroom": "264" },
+  "C_auditori_206_3": { "name": "Аудитория 206-3", "shortName": "206-3", "type": "room", "building": "C", "floor": 2, "classroom": "294" },
+  "C_auditori_209": { "name": "Аудитория 209", "shortName": "209", "type": "room", "building": "C", "floor": 2, "classroom": "245" },
+  "C_auditori_210": { "name": "Аудитория 210", "shortName": "210", "type": "room", "building": "C", "floor": 2, "classroom": "249" },
+  "C_auditori_213a": { "name": "Аудитория 213а", "shortName": "213а", "type": "room", "building": "C", "floor": 2, "classroom": "205" },
+  "C_auditori_215": { "name": "Аудитория 215", "shortName": "215", "type": "room", "building": "C", "floor": 2, "classroom": "207" },
+  "C_auditori_218": { "name": "Аудитория 218", "shortName": "218", "type": "room", "building": "C", "floor": 2, "classroom": "432" },
+  "C_auditori_252": { "name": "Аудитория 252", "shortName": "252", "type": "room", "building": "C", "floor": 2, "classroom": "239" },
+  "C_auditori_254": { "name": "Аудитория 254", "shortName": "254", "type": "room", "building": "C", "floor": 2, "classroom": "261" },
+  "C_auditori_256a": { "name": "Аудитория 256а", "shortName": "256а", "type": "room", "building": "C", "floor": 2, "classroom": "472" },
+  "C_auditori_258": { "name": "Аудитория 258", "shortName": "258", "type": "room", "building": "C", "floor": 2, "classroom": "170" },
+  "C_auditori_260": { "name": "Аудитория 260", "shortName": "260", "type": "room", "building": "C", "floor": 2, "classroom": "296" },
+  "C_auditori_261a": { "name": "Аудитория 261а", "shortName": "261а", "type": "room", "building": "C", "floor": 2, "classroom": "105" },
+  "C_auditori_264": { "name": "Аудитория 264", "shortName": "264", "type": "room", "building": "C", "floor": 2, "classroom": "429" },
+  "C_auditori_265": { "name": "Аудитория 265", "shortName": "265", "type": "room", "building": "C", "floor": 2, "classroom": "257" },
+  "C_auditori_266a": { "name": "Аудитория 266а", "shortName": "266а", "type": "room", "building": "C", "floor": 2, "classroom": "424" },
+  "C_auditori_266": { "name": "Аудитория 266", "shortName": "266", "type": "room", "building": "C", "floor": 2, "classroom": "428" },
+  "C_auditori_267": { "name": "Аудитория 267", "shortName": "267", "type": "room", "building": "C", "floor": 2, "classroom": "165" },
+  "C_auditori_268": { "name": "Аудитория 268", "shortName": "268", "type": "room", "building": "C", "floor": 2, "classroom": "426" },
+  "C_auditori_270": { "name": "Аудитория 270", "shortName": "270", "type": "room", "building": "C", "floor": 2, "classroom": "427" },
+  "C_auditori_301": { "name": "Аудитория 301", "shortName": "301", "type": "room", "building": "C", "floor": 3, "classroom": "125" },
+  "C_auditori_302": { "name": "Аудитория 302", "shortName": "302", "type": "room", "building": "C", "floor": 3, "classroom": "164" },
+  "C_auditori_304": { "name": "Аудитория 304", "shortName": "304", "type": "room", "building": "C", "floor": 3, "classroom": "171" },
+  "C_auditori_306": { "name": "Аудитория 306", "shortName": "306", "type": "room", "building": "C", "floor": 3, "classroom": "173" },
+  "C_auditori_307a": { "name": "Аудитория 307а", "shortName": "307а", "type": "room", "building": "C", "floor": 3, "classroom": "106" },
+  "C_auditori_307": { "name": "Аудитория 307", "shortName": "307", "type": "room", "building": "C", "floor": 3, "classroom": "132" },
+  "C_auditori_308": { "name": "Аудитория 308", "shortName": "308", "type": "room", "building": "C", "floor": 3, "classroom": "425" },
+  "C_auditori_310": { "name": "Аудитория 310", "shortName": "310", "type": "room", "building": "C", "floor": 3, "classroom": "151" },
+  "C_auditori_314": { "name": "Аудитория 314", "shortName": "314", "type": "room", "building": "C", "floor": 3, "classroom": "215" },
+  "C_auditori_315": { "name": "Аудитория 315", "shortName": "315", "type": "room", "building": "C", "floor": 3, "classroom": "243" },
+  "C_auditori_316": { "name": "Аудитория 316", "shortName": "316", "type": "room", "building": "C", "floor": 3, "classroom": "110" },
+  "C_auditori_318": { "name": "Аудитория 318", "shortName": "318", "type": "room", "building": "C", "floor": 3, "classroom": "140" },
+  "C_auditori_320": { "name": "Аудитория 320", "shortName": "320", "type": "room", "building": "C", "floor": 3, "classroom": "174" },
+  "C_auditori_321": { "name": "Аудитория 321", "shortName": "321", "type": "room", "building": "C", "floor": 3, "classroom": "241" },
+  "C_auditori_322": { "name": "Аудитория 322", "shortName": "322", "type": "room", "building": "C", "floor": 3, "classroom": "122" },
+  "C_auditori_323": { "name": "Аудитория 323", "shortName": "323", "type": "room", "building": "C", "floor": 3, "classroom": "198" },
+  "C_auditori_324": { "name": "Аудитория 324", "shortName": "324", "type": "room", "building": "C", "floor": 3, "classroom": "99" },
+  "C_auditori_325": { "name": "Аудитория 325", "shortName": "325", "type": "room", "building": "C", "floor": 3, "classroom": "201" },
+  "C_auditori_326": { "name": "Аудитория 326", "shortName": "326", "type": "room", "building": "C", "floor": 3, "classroom": "247" },
+  "C_auditori_328": { "name": "Аудитория 328", "shortName": "328", "type": "room", "building": "C", "floor": 3, "classroom": "209" },
+  "C_auditori_331": { "name": "Аудитория 331", "shortName": "331", "type": "room", "building": "C", "floor": 3, "classroom": "200" },
+  "C_auditori_333": { "name": "Аудитория 333", "shortName": "333", "type": "room", "building": "C", "floor": 3, "classroom": "149" },
+  "C_auditori_337": { "name": "Аудитория 337", "shortName": "337", "type": "room", "building": "C", "floor": 3, "classroom": "288" },
+  "C_auditori_338": { "name": "Аудитория 338", "shortName": "338", "type": "room", "building": "C", "floor": 3, "classroom": "199" },
+  "C_auditori_340": { "name": "Аудитория 340", "shortName": "340", "type": "room", "building": "C", "floor": 3, "classroom": "263" },
+  "C_auditori_341": { "name": "Аудитория 341", "shortName": "341", "type": "room", "building": "C", "floor": 3, "classroom": "262" },
+  "C_auditori_342": { "name": "Аудитория 342", "shortName": "342", "type": "room", "building": "C", "floor": 3, "classroom": "118" },
+  "C_auditori_344": { "name": "Аудитория 344", "shortName": "344", "type": "room", "building": "C", "floor": 3, "classroom": "120" },
+  "C_auditori_345": { "name": "Аудитория 345", "shortName": "345", "type": "room", "building": "C", "floor": 3, "classroom": "101" },
+  "C_auditori_346": { "name": "Аудитория 346", "shortName": "346", "type": "room", "building": "C", "floor": 3, "classroom": "134" },
+  "C_auditori_350": { "name": "Аудитория 350", "shortName": "350", "type": "room", "building": "C", "floor": 3, "classroom": "169" },
+  "C_auditori_353": { "name": "Аудитория 353", "shortName": "353", "type": "room", "building": "C", "floor": 3, "classroom": "119" },
+  "C_auditori_355": { "name": "Аудитория 355", "shortName": "355", "type": "room", "building": "C", "floor": 3, "classroom": "297" },
+  "C_auditori_358": { "name": "Аудитория 358", "shortName": "358", "type": "room", "building": "C", "floor": 3, "classroom": "103" },
+  "C_auditori_364": { "name": "Аудитория 364", "shortName": "364", "type": "room", "building": "C", "floor": 3, "classroom": "298" },
+  "C_auditori_368": { "name": "Аудитория 368", "shortName": "368", "type": "room", "building": "C", "floor": 3, "classroom": "139" },
+  "C_auditori_402": { "name": "Аудитория 402", "shortName": "402", "type": "room", "building": "C", "floor": 4, "classroom": "109" },
+  "C_auditori_403": { "name": "Аудитория 403", "shortName": "403", "type": "room", "building": "C", "floor": 4, "classroom": "167" },
+  "C_auditori_404": { "name": "Аудитория 404", "shortName": "404", "type": "room", "building": "C", "floor": 4, "classroom": "146" },
+  "C_auditori_405": { "name": "Аудитория 405", "shortName": "405", "type": "room", "building": "C", "floor": 4, "classroom": "115" },
+  "C_auditori_406": { "name": "Аудитория 406", "shortName": "406", "type": "room", "building": "C", "floor": 4, "classroom": "131" },
+  "C_auditori_407": { "name": "Аудитория 407", "shortName": "407", "type": "room", "building": "C", "floor": 4, "classroom": "166" },
+  "C_auditori_409": { "name": "Аудитория 409", "shortName": "409", "type": "room", "building": "C", "floor": 4, "classroom": "292" },
+  "C_auditori_412": { "name": "Аудитория 412", "shortName": "412", "type": "room", "building": "C", "floor": 4, "classroom": "178" },
+  "C_auditori_414": { "name": "Аудитория 414", "shortName": "414", "type": "room", "building": "C", "floor": 4, "classroom": "237" },
+  "C_auditori_415": { "name": "Аудитория 415", "shortName": "415", "type": "room", "building": "C", "floor": 4, "classroom": "142" },
+  "C_auditori_418": { "name": "Аудитория 418", "shortName": "418", "type": "room", "building": "C", "floor": 4, "classroom": "156" },
+  "C_auditori_419": { "name": "Аудитория 419", "shortName": "419", "type": "room", "building": "C", "floor": 4, "classroom": "172" },
+  "C_auditori_422": { "name": "Аудитория 422", "shortName": "422", "type": "room", "building": "C", "floor": 4, "classroom": "127" },
+  "C_auditori_423": { "name": "Аудитория 423", "shortName": "423", "type": "room", "building": "C", "floor": 4, "classroom": "130" },
+  "C_auditori_424": { "name": "Аудитория 424", "shortName": "424", "type": "room", "building": "C", "floor": 4, "classroom": "116" },
+  "C_auditori_424a": { "name": "Аудитория 424а", "shortName": "424а", "type": "room", "building": "C", "floor": 4, "classroom": "244" },
+  "C_auditori_426": { "name": "Аудитория 426", "shortName": "426", "type": "room", "building": "C", "floor": 4, "classroom": "210" },
+  "C_auditori_430": { "name": "Аудитория 430", "shortName": "430", "type": "room", "building": "C", "floor": 4, "classroom": "195" },
+  "C_auditori_437": { "name": "Аудитория 437", "shortName": "437", "type": "room", "building": "C", "floor": 4, "classroom": "112" },
+  "C_auditori_438": { "name": "Аудитория 438", "shortName": "438", "type": "room", "building": "C", "floor": 4, "classroom": "97" },
+  "C_auditori_440": { "name": "Аудитория 440", "shortName": "440", "type": "room", "building": "C", "floor": 4, "classroom": "196" },
+  "C_auditori_441": { "name": "Аудитория 441", "shortName": "441", "type": "room", "building": "C", "floor": 4, "classroom": "123" },
+  "C_auditori_442": { "name": "Аудитория 442", "shortName": "442", "type": "room", "building": "C", "floor": 4, "classroom": "117" },
+  "C_auditori_443": { "name": "Аудитория 443", "shortName": "443", "type": "room", "building": "C", "floor": 4, "classroom": "111" },
+  "C_auditori_444": { "name": "Аудитория 444", "shortName": "444", "type": "room", "building": "C", "floor": 4, "classroom": "136" },
+  "C_auditori_445": { "name": "Аудитория 445", "shortName": "445", "type": "room", "building": "C", "floor": 4, "classroom": "193" },
+  "C_auditori_446": { "name": "Аудитория 446", "shortName": "446", "type": "room", "building": "C", "floor": 4, "classroom": "143" },
+  "C_auditori_448": { "name": "Аудитория 448", "shortName": "448", "type": "room", "building": "C", "floor": 4, "classroom": "133" },
+  "C_auditori_449": { "name": "Аудитория 449", "shortName": "449", "type": "room", "building": "C", "floor": 4, "classroom": "194" },
+  "C_auditori_450": { "name": "Аудитория 450", "shortName": "450", "type": "room", "building": "C", "floor": 4, "classroom": "216" },
+  "C_auditori_451": { "name": "Аудитория 451", "shortName": "451", "type": "room", "building": "C", "floor": 4, "classroom": "104" },
+  "C_auditori_457": { "name": "Аудитория 457", "shortName": "457", "type": "room", "building": "C", "floor": 4, "classroom": "124" },
+  "C_auditori_461": { "name": "Аудитория 461", "shortName": "461", "type": "room", "building": "C", "floor": 4, "classroom": "145" },
+  "C_auditori_463": { "name": "Аудитория 463", "shortName": "463", "type": "room", "building": "C", "floor": 4, "classroom": "108" },
+  "C_auditori_465": { "name": "Аудитория 465", "shortName": "465", "type": "room", "building": "C", "floor": 4, "classroom": "102" },
+
+  "C_museum": { "name": "Музей", "shortName": null, "type": "museum", "building": "C", "floor": 3, "description": "Музей истории РГРТУ." },
+  "C_gym_main": { "name": "Спортивный зал", "shortName": null, "type": "gym", "building": "C", "floor": 1 },
+  "C_gym_basement": { "name": "Спортивный зал (подвал)", "shortName": null, "type": "gym", "building": "C", "floor": 0 },
+  "C_gym_athletics": { "name": "Зал тяжелой атлетики", "shortName": null, "type": "gym", "building": "C", "floor": null },
+  "C_gym_sambo": { "name": "Зал самбо", "shortName": null, "type": "gym", "building": "C", "floor": null },
+  "C_stadium": { "name": "Стадион РГРТУ", "shortName": null, "type": "gym", "building": "C", "floor": null },
+
+  "C_dekanat_faitu": { "name": "Деканат ФАИТУ (224)", "shortName": "224", "type": "dekanat", "building": "C", "floor": 2, "classroom": null },
+  "C_dekanat_fe":   { "name": "Деканат ФЭ (224)",    "shortName": "224", "type": "dekanat", "building": "C", "floor": 2, "classroom": null },
+  "C_dekanat_vechern": { "name": "Деканат вечернего факультета (257)", "shortName": "257", "type": "dekanat", "building": "C", "floor": 2, "classroom": null },
+
+  "C_kafedra_iibmt": { "name": "Кафедра ИИБМТ (329)", "shortName": "329", "type": "kafedra", "building": "C", "floor": 3, "classroom": null },
+  "C_kafedra_ht":    { "name": "Кафедра ХТ (313)",    "shortName": "313", "type": "kafedra", "building": "C", "floor": 3, "classroom": null },
+  "C_kafedra_in_yaz":{ "name": "Кафедра иностранного языка (309)", "shortName": "309", "type": "kafedra", "building": "C", "floor": 3, "classroom": null },
+  "C_kafedra_kt":    { "name": "Кафедра КТ (147)",    "shortName": "147", "type": "kafedra", "building": "C", "floor": 1, "classroom": null },
+  "C_kafedra_vm":    { "name": "Кафедра ВМ (435)",    "shortName": "435", "type": "kafedra", "building": "C", "floor": 4, "classroom": null },
+  "C_kafedra_eimm":  { "name": "Кафедра ЭиММ (455)",  "shortName": "455", "type": "kafedra", "building": "C", "floor": 4, "classroom": null },
+  "C_kafedra_aitu":  { "name": "Кафедра АИТУ (449а)", "shortName": "449а", "type": "kafedra", "building": "C", "floor": 4, "classroom": null },
+  "C_kafedra_oief":  { "name": "Кафедра ОиЭФ (354)",  "shortName": "354", "type": "kafedra", "building": "C", "floor": 3, "classroom": null },
+  "C_kafedra_mnel":  { "name": "Кафедра МНЭЛ (343)",  "shortName": "343", "type": "kafedra", "building": "C", "floor": 3, "classroom": null },
+  "C_kafedra_tpm":   { "name": "Кафедра ТПМ (265)",   "shortName": "265", "type": "kafedra", "building": "C", "floor": 2, "classroom": null },
+  "C_kafedra_asu":   { "name": "Кафедра АСУ (116б)",  "shortName": "116б", "type": "kafedra", "building": "C", "floor": 1, "classroom": null },
+  "C_kafedra_evm":   { "name": "Кафедра ЭВМ (209a)",  "shortName": "209a", "type": "kafedra", "building": "C", "floor": 2, "classroom": null },
+  "C_kafedra_fiz":   { "name": "Кафедра физвоспитания (136)", "shortName": "136", "type": "kafedra", "building": "C", "floor": 1, "classroom": null },
+  "C_kafedra_saprvs":{ "name": "Кафедра САПР ВС",     "shortName": null, "type": "kafedra", "building": "C", "floor": 1, "classroom": null },
+  "C_kafedra_gmku":  { "name": "Кафедра ГМКУ",        "shortName": null, "type": "kafedra", "building": "C", "floor": 3, "classroom": null },
+
+  "C_wc_f1_l": { "name": "Туалет (Ж)", "shortName": "🚾 (Ж)", "type": "wc", "building": "C", "floor": 1 },
+
+  "C_buffet_f1_l": { "name": "Столовая (Левая)", "shortName": "🍔", "type": "buffet", "building": "C", "floor": 1 },
+  "C_buffet_f1_c": { "name": "Столовая (Центр)", "shortName": null, "type": "buffet", "building": "C", "floor": 1 },
+  "C_buffet_f1_r": { "name": "Буфет (Правый)",   "shortName": null, "type": "buffet", "building": "C", "floor": 1 },
+
+  "C_wardrobe_f1_l": { "name": "Гардероб", "shortName": null, "type": "wardrobe", "building": "C", "floor": 1 },
+  "C_wardrobe_m":    { "name": "Раздевалка (М)", "shortName": null, "type": "wardrobe", "building": "C", "floor": 1 },
+  "C_wardrobe_f":    { "name": "Раздевалка (Ж)", "shortName": null, "type": "wardrobe", "building": "C", "floor": 1 },
+  "C_shower_m":      { "name": "Душ (М)", "shortName": null, "type": "wardrobe", "building": "C", "floor": 1 },
+  "C_shower_f":      { "name": "Душ (Ж)", "shortName": null, "type": "wardrobe", "building": "C", "floor": 1 },
+
+  "C_medical_f1": { "name": "Медпункт", "shortName": "🩺", "type": "medical", "building": "C", "floor": 1 },
+
+  "C_stairs_f0_l1":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 0 },
+  "C_stairs_f0_l2":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 0 },
+  "C_stairs_f0_l3":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 0 },
+  "C_stairs_f0_c":   { "name": "Главная лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 0 },
+  "C_stairs_f0_r1":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 0 },
+  "C_stairs_f0_r2":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 0 },
+  "C_stairs_f1_l1":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 1 },
+  "C_stairs_f1_l2":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 1 },
+  "C_stairs_f1_c":   { "name": "Главная лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 1 },
+  "C_stairs_f1_r1":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 1 },
+  "C_stairs_f1_r2":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 1 },
+  "C_stairs_f2_l1":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 2 },
+  "C_stairs_f2_l2":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 2 },
+  "C_stairs_f2_c":   { "name": "Главная лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 2 },
+  "C_stairs_f2_r1":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 2 },
+  "C_stairs_f2_r2":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 2 },
+  "C_stairs_f3_l1":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 3 },
+  "C_stairs_f3_l2":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 3 },
+  "C_stairs_f3_c":   { "name": "Главная лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 3 },
+  "C_stairs_f3_r1":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 3 },
+  "C_stairs_f3_r2":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 3 },
+  "C_stairs_f4_l1":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 4 },
+  "C_stairs_f4_l2":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 4 },
+  "C_stairs_f4_c":   { "name": "Главная лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 4 },
+  "C_stairs_f4_r1":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 4 },
+  "C_stairs_f4_r2":  { "name": "Лестница", "shortName": null, "type": "stairs", "building": "C", "floor": 4 },
+
+  "C_entrance_l": { "name": "Вход (Левый)",  "shortName": null, "type": "entrance", "building": "C", "floor": 1 },
+  "C_entrance_c": { "name": "Вход (Центр)",  "shortName": null, "type": "entrance", "building": "C", "floor": 1 },
+  "C_entrance_r": { "name": "Вход (Правый)", "shortName": null, "type": "entrance", "building": "C", "floor": 1 },
+
+  "C_transition": { "name": "Переход в лабораторный корпус (Кишка)", "shortName": null, "type": "entrance", "building": "C", "floor": 1 },
+
+  "C_hall_f1_main": { "name": "Холл (главный)", "shortName": null, "type": "corridor", "building": "C", "floor": 1 },
+  "C_hall_f2_main": { "name": "Холл", "shortName": null, "type": "corridor", "building": "C", "floor": 2 },
+  "C_foyer_act":    { "name": "Фойе актового зала", "shortName": null, "type": "corridor", "building": "C", "floor": 3 },
+
+  "C_utility_f0_1": { "name": "Электрощитовая", "shortName": null, "type": "utility", "building": "C", "floor": 0 },
+  "C_utility_f0_2": { "name": "Элеваторный узел", "shortName": null, "type": "utility", "building": "C", "floor": 0 },
+  "C_utility_f1_1": { "name": "Электрощитовая", "shortName": null, "type": "utility", "building": "C", "floor": 1 },
+  "C_utility_f1_2": { "name": "Бойлерная", "shortName": null, "type": "utility", "building": "C", "floor": 1 },
+  "C_utility_f3_1": { "name": "Электрощитовая", "shortName": null, "type": "utility", "building": "C", "floor": 3 },
+  "C_utility_f4_1": { "name": "Электрощитовая", "shortName": null, "type": "utility", "building": "C", "floor": 4 },
+  "C_utility_f1_gym_l": { "name": "Служебное помещение", "shortName": null, "type": "utility", "building": "C", "floor": 1 },
+  "C_utility_f1_gym_r": { "name": "Коморка Дедулечки", "shortName": null, "type": "utility", "building": "C", "floor": 1 },
+
+  "C_archive_f1_161": { "name": "Архив (161)", "shortName": "161", "type": "archive", "building": "C", "floor": 1 },
+  "C_archive_f1_161a": { "name": "Архив (161а)", "shortName": "161а", "type": "archive", "building": "C", "floor": 1 },
+  "C_archive_f0_2": { "name": "Кладовая", "shortName": null, "type": "archive", "building": "C", "floor": 0 },
+  "C_archive_f3_1": { "name": "Склад", "shortName": null, "type": "archive", "building": "C", "floor": 3 },
+  "C_archive_f3_2": { "name": "Кладовая", "shortName": null, "type": "archive", "building": "C", "floor": 3 },
+
+  "C_admin_rektorat":  { "name": "Секретарь совета ректоров (113б)", "shortName": "113б", "type": "admin", "building": "C", "floor": 1 },
+  "C_admin_priemnaya": { "name": "Приёмная комиссия (228)", "shortName": "228", "type": "admin", "building": "C", "floor": 2 },
+  "C_admin_uch_otdel": { "name": "Учебный отдел (231)", "shortName": "231", "type": "admin", "building": "C", "floor": 2 },
+  "C_admin_buhgalteriya": { "name": "Бухгалтерия (225)", "shortName": "225", "type": "admin", "building": "C", "floor": 2 },
+  "C_admin_ok_students": { "name": "ОК студентов (251)", "shortName": "251", "type": "admin", "building": "C", "floor": 2 },
+  "C_admin_ok_sotr":  { "name": "ОК сотрудников (249)", "shortName": "249", "type": "admin", "building": "C", "floor": 2 },
+  "C_admin_pravovoe": { "name": "Правовое управление (249а)", "shortName": "249а", "type": "admin", "building": "C", "floor": 2 },
+  "C_admin_profkom":  { "name": "Профком студентов (262а)", "shortName": "262а", "type": "admin", "building": "C", "floor": 2 },
+  "C_admin_director": { "name": "Директор ИЦПО (104)", "shortName": "104", "type": "admin", "building": "C", "floor": 1 },
+
+  "C_computing_f1_122": { "name": "Компьютерный класс (122)", "shortName": "122", "type": "computing", "building": "C", "floor": 1, "classroom": "212" },
+  "C_computing_f1_118": { "name": "Компьютерный класс (118)", "shortName": "118", "type": "computing", "building": "C", "floor": 1, "classroom": "203" },
+  "C_computing_f2_215": { "name": "Центр компьютерных технологий (215)", "shortName": "215", "type": "computing", "building": "C", "floor": 2, "classroom": "207" },
+  "C_computing_f2_220": { "name": "Информационно-вычислительный центр (220)", "shortName": "220", "type": "computing", "building": "C", "floor": 2 },
+  "C_computing_f1_center": { "name": "Учебный центр (110)", "shortName": "110", "type": "computing", "building": "C", "floor": 1 }
 }

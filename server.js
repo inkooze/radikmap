@@ -41,7 +41,7 @@ let cacheStatus = { ready: false, warming: false, progress: '0/0', lastUpdate: n
 try {
   const roomsPath = path.join(ROOT, 'data', 'rooms.json');
   roomsMeta = JSON.parse(fs.readFileSync(roomsPath, 'utf8'));
-  console.log(`[init] Загружено ${Object.keys(roomsMeta).length} аудиторий`);
+  console.log(`[init] Загружено ${Object.keys(roomsMeta).length} помещений`);
 } catch (e) {
   console.error('[init] Не удалось загрузить rooms.json:', e.message);
 }
@@ -164,7 +164,8 @@ async function warmUpCache() {
   if (warmUpRunning) return;
   warmUpRunning = true;
 
-  const entries = Object.entries(roomsMeta);
+  // Обходим только те объекты, у которых есть classroom
+  const entries = Object.entries(roomsMeta).filter(([, meta]) => !!meta.classroom);
   const total = entries.length;
   let done = 0;
 
@@ -186,8 +187,6 @@ async function warmUpCache() {
         const parsed = parseScheduleWithCheerio(html, mondayISO);
         newCache[id] = { empty: parsed.empty, days: parsed.days, fetchedAt: Date.now() };
       } catch (e) {
-        // Фолбэк: если запрос упал и нет старых данных — считаем,
-        // что расписания нет → аудитория всегда свободна
         if (scheduleCache[id]) {
           newCache[id] = scheduleCache[id];
         } else {
@@ -217,14 +216,12 @@ async function warmUpCache() {
 function computeFreeStatus(roomId) {
   const entry = scheduleCache[roomId];
 
-  // Нет данных вовсе — считаем свободной без расписания
   if (!entry) return { status: 'free', untilText: 'нет пар', noSchedule: true };
 
   const hasAnyLesson = !entry.empty &&
                        Array.isArray(entry.days) &&
                        entry.days.some(d => d.lessons.length > 0);
 
-  // Расписания нет или все дни пустые — «нет пар»
   if (!hasAnyLesson) return { status: 'free', untilText: 'нет пар', noSchedule: true };
 
   const now = new Date();
@@ -304,6 +301,7 @@ const server = http.createServer(async (req, res) => {
     const free = [];
     for (const [id, meta] of Object.entries(roomsMeta)) {
       if (buildingFilter && meta.building !== buildingFilter) continue;
+      if (!meta.classroom) continue;   // только объекты с расписанием
       const st = computeFreeStatus(id);
       if (!st) continue;
       free.push({
