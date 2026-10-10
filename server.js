@@ -4,9 +4,10 @@ const path = require('path');
 const { URL } = require('url');
 const cheerio = require('cheerio');
 
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
 const ROOT = __dirname;
 const CACHE_FILE = path.join(ROOT, 'data', 'cache.json');
+const GRAPH_FILE = path.join(ROOT, 'data', 'graph.json');
 const REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 
 const DAY_NAMES_GENITIVE = {
@@ -164,7 +165,6 @@ async function warmUpCache() {
   if (warmUpRunning) return;
   warmUpRunning = true;
 
-  // Обходим только те объекты, у которых есть classroom
   const entries = Object.entries(roomsMeta).filter(([, meta]) => !!meta.classroom);
   const total = entries.length;
   let done = 0;
@@ -213,9 +213,14 @@ async function warmUpCache() {
   warmUpRunning = false;
 }
 
+function parseLessonTime(time) {
+  const m = time.match(/(\d{1,2}):(\d{2})[–-](\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return { start: +m[1] * 60 + +m[2], end: +m[3] * 60 + +m[4] };
+}
+
 function computeFreeStatus(roomId) {
   const entry = scheduleCache[roomId];
-
   if (!entry) return { status: 'free', untilText: 'нет пар', noSchedule: true };
 
   const hasAnyLesson = !entry.empty &&
@@ -246,9 +251,9 @@ function computeFreeStatus(roomId) {
   }
 
   const lessons = today.lessons.map(l => {
-    const m = l.time.match(/(\d{1,2}):(\d{2})[–-](\d{1,2}):(\d{2})/);
-    if (!m) return null;
-    return { start: +m[1] * 60 + +m[2], end: +m[3] * 60 + +m[4], raw: l };
+    const t = parseLessonTime(l.time);
+    if (!t) return null;
+    return { ...t, raw: l };
   }).filter(Boolean).sort((a, b) => a.start - b.start);
 
   const current = lessons.find(l => nowMin >= l.start && nowMin <= l.end);
@@ -262,8 +267,62 @@ function computeFreeStatus(roomId) {
   return { status: 'free', untilText: 'до конца дня' };
 }
 
+function computeBusyStatus(roomId) {
+  const entry = scheduleCache[roomId];
+  if (!entry || entry.empty) return null;
+
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const todayISO = `${yyyy}-${mm}-${dd}`;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+
+  const today = entry.days.find(d => d.date === todayISO);
+  if (!today) return null;
+
+  const current = today.lessons.find(l => {
+    const t = parseLessonTime(l.time);
+    if (!t) return false;
+    return nowMin >= t.start && nowMin <= t.end;
+  });
+  if (!current) return null;
+
+  const endMatch = current.time.match(/[–-](\d{1,2}:\d{2})/);
+  return { subject: current.subject, untilText: endMatch ? endMatch[1] : '' };
+}
+
+// ============ HTTP-СЕРВЕР ============
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 10_000_000) reject(new Error('too big')); });
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  // --- API: сохранение graph.json ---
+  if (url.pathname === '/api/graph/save' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body);
+      if (!parsed.nodes || !parsed.edges) throw new Error('invalid graph structure');
+      fs.writeFileSync(GRAPH_FILE, JSON.stringify(parsed, null, 2));
+      console.log(`[graph] сохранён: ${Object.keys(parsed.nodes).length} узлов, ${parsed.edges.length} рёбер`);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (e) {
+      console.error('[graph/save]', e.message);
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Save error: ' + e.message);
+    }
+    return;
+  }
 
   if (url.pathname === '/api/schedule') {
     const building = url.searchParams.get('building');
@@ -299,19 +358,37 @@ const server = http.createServer(async (req, res) => {
     }
     const buildingFilter = url.searchParams.get('building');
     const free = [];
+    const busy = [];
     for (const [id, meta] of Object.entries(roomsMeta)) {
       if (buildingFilter && meta.building !== buildingFilter) continue;
-      if (!meta.classroom) continue;   // только объекты с расписанием
+      if (!meta.classroom) continue;
       const st = computeFreeStatus(id);
-      if (!st) continue;
-      free.push({
-        id, name: meta.name, building: meta.building, floor: meta.floor,
-        untilText: st.untilText,
-        noSchedule: !!st.noSchedule
-      });
+      if (st) {
+        free.push({
+          id, name: meta.name, building: meta.building, floor: meta.floor,
+          untilText: st.untilText,
+          noSchedule: !!st.noSchedule
+        });
+      } else {
+        const bs = computeBusyStatus(id);
+        if (bs) {
+          busy.push({
+            id, name: meta.name, building: meta.building, floor: meta.floor,
+            subject: bs.subject,
+            untilText: bs.untilText
+          });
+        }
+      }
     }
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ status: 'ok', updatedAt: cacheStatus.lastUpdate, total: free.length, free }));
+    res.end(JSON.stringify({
+      status: 'ok',
+      updatedAt: cacheStatus.lastUpdate,
+      total: free.length,
+      busyTotal: busy.length,
+      free,
+      busy
+    }));
     return;
   }
 
@@ -343,6 +420,7 @@ server.listen(PORT, () => {
   console.log('');
   console.log('  ✅  Сервер запущен');
   console.log('  🌐  http://localhost:' + PORT);
+  console.log('  🛠  Редактор графа: http://localhost:' + PORT + '/editor.html');
   console.log('  🛑  Остановить: Ctrl + C');
   console.log('');
 

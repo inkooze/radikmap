@@ -24,64 +24,72 @@
 /* ============ Тема: тёмная ============ */
 
 :root {
-  --topbar-bg: #0f172a;
-  --topbar-border: #1e293b;
-  --panel-bg: #0f172a;
-  --map-bg: #0f172a;
+  --topbar-bg: #27272a;
+  --topbar-border: #3f3f46;
+  --panel-bg: #27272a;
+  --map-bg: #18181b;
 
-  --btn-bg: #1e293b;
-  --btn-hover: #334155;
+  --btn-bg: #3f3f46;
+  --btn-hover: #52525b;
   --btn-bld-active: #2563eb;
   --btn-flr-active: #3b82f6;
 
-  --lesson-bg: #1e293b;
-  --dropdown-bg: #1e293b;
-  --dropdown-item-bg: #334155;
-  --dropdown-item-hover: #475569;
-  --input-bg: #0f172a;
+  --lesson-bg: #3f3f46;
+  --dropdown-bg: #27272a;
+  --dropdown-item-bg: #3f3f46;
+  --dropdown-item-hover: #52525b;
+  --input-bg: #18181b;
 
-  --text: #e2e8f0;
-  --text-bright: #ffffff;
-  --text-muted: #94a3b8;
-  --text-dim: #64748b;
+  --text: #e4e4e7;
+  --text-bright: #fafafa;
+  --text-muted: #a1a1aa;
+  --text-dim: #71717a;
   --text-accent: #60a5fa;
 
-  --border: #334155;
-  --panel-border: #1e293b;
-  --input-border: #334155;
+  --border: #3f3f46;
+  --panel-border: #3f3f46;
+  --input-border: #52525b;
 
-  --label-bg: rgba(15, 23, 42, 0.78);
-  --label-text: #cbd5e1;
-  --label-border: rgba(100, 116, 139, 0.35);
+  --label-bg: rgba(24, 24, 27, 0.85);
+  --label-text: #e4e4e7;
+  --label-border: rgba(113, 113, 122, 0.55);
 
-  --action-btn-hover: #1e293b;
-  --action-btn-text: #cbd5e1;
+  --action-btn-hover: #3f3f46;
+  --action-btn-text: #a1a1aa;
 
-  --close-color: #94a3b8;
-  --close-hover: #ffffff;
+  --close-color: #a1a1aa;
+  --close-hover: #fafafa;
 
-  --ctrl-bg: #1e293b;
-  --ctrl-hover: #334155;
-  --ctrl-text: #cbd5e1;
-  --ctrl-text-hover: #ffffff;
-  --ctrl-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  --ctrl-bg: #27272a;
+  --ctrl-hover: #3f3f46;
+  --ctrl-text: #e4e4e7;
+  --ctrl-text-hover: #fafafa;
+  --ctrl-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
 
-  --status-busy-bg: rgba(239, 68, 68, 0.12);
+  --status-busy-bg: rgba(239, 68, 68, 0.14);
   --status-busy-border: #ef4444;
-  --status-busy-text: #f87171;
+  --status-busy-text: #fca5a5;
 
-  --status-free-bg: rgba(34, 197, 94, 0.12);
+  --status-free-bg: rgba(34, 197, 94, 0.14);
   --status-free-border: #22c55e;
-  --status-free-text: #4ade80;
+  --status-free-text: #86efac;
 
-  --scrollbar-thumb: #334155;
-  --scrollbar-thumb-hover: #475569;
+  --scrollbar-thumb: #3f3f46;
+  --scrollbar-thumb-hover: #52525b;
 
-  --free-accent: #16a34a;
-  --free-accent-soft: rgba(34, 197, 94, 0.15);
-  --free-accent-hover: rgba(34, 197, 94, 0.28);
+  --free-accent: #22c55e;
+  --free-accent-soft: rgba(34, 197, 94, 0.22);
+  --free-accent-hover: rgba(34, 197, 94, 0.35);
 
-  --selected-room: #3b82f6;
+  --busy-accent: #ef4444;
+  --busy-accent-soft: rgba(239, 68, 68, 0.22);
+  --busy-accent-hover: rgba(239, 68, 68, 0.35);
+
+  --selected-room: #60a5fa;
+  --route-color: #22c55e;
+  --route-color-soft: rgba(34, 197, 94, 0.25);
+  --route-start: #22c55e;
+  --route-end: #ef4444;
 }
 
 /* ============ Тема: светлая ============ */
@@ -144,7 +152,15 @@
   --free-accent-soft: rgba(34, 197, 94, 0.12);
   --free-accent-hover: rgba(34, 197, 94, 0.2);
 
+  --busy-accent: #dc2626;
+  --busy-accent-soft: rgba(220, 38, 38, 0.12);
+  --busy-accent-hover: rgba(220, 38, 38, 0.2);
+
   --selected-room: #3b82f6;
+  --route-color: #16a34a;
+  --route-color-soft: rgba(34, 197, 94, 0.15);
+  --route-start: #16a34a;
+  --route-end: #dc2626;
 }
 
 /* ============ База ============ */
@@ -253,6 +269,10 @@ body,
   font-size: 20px; padding: 0;
 }
 .action-btn:hover { background: var(--action-btn-hover); color: var(--text-bright); }
+.action-btn.active {
+  background: var(--route-color-soft);
+  color: var(--route-color);
+}
 .search-wrap.open .action-btn { background: var(--action-btn-hover); color: var(--text-bright); }
 
 /* Поиск */
@@ -461,15 +481,17 @@ body,
   position: absolute; left: 0; top: 0; transform: translate(-50%, -50%);
   background: var(--label-bg); color: var(--label-text);
   font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px;
-  white-space: nowrap; pointer-events: none; user-select: none;
+  white-space: nowrap;
+  text-align: center;
+  pointer-events: none; user-select: none;
   border: 1px solid var(--label-border); letter-spacing: 0.2px; line-height: 1.3;
 }
 
 /* Подсветка выбранной */
 
 @keyframes room-pulse {
-  0%, 100% { stroke-opacity: 0.55; fill-opacity: 0.10; }
-  50%      { stroke-opacity: 1;    fill-opacity: 0.35; }
+  0%, 100% { stroke-opacity: 0.75; fill-opacity: 0.22; }
+  50%      { stroke-opacity: 1;    fill-opacity: 0.55; }
 }
 .room-selected {
   stroke: var(--selected-room) !important;
@@ -481,17 +503,52 @@ body,
 /* Подсветка свободных */
 
 @keyframes room-free-pulse {
-  0%, 100% { stroke-opacity: 0.45; fill-opacity: 0.06; }
-  50%      { stroke-opacity: 0.95; fill-opacity: 0.24; }
+  0%, 100% { stroke-opacity: 0.6; fill-opacity: 0.15; }
+  50%      { stroke-opacity: 1;   fill-opacity: 0.42; }
 }
 .room-free {
-  stroke: #16a34a !important; stroke-width: 2.5 !important; fill: #22c55e !important;
+  stroke: #22c55e !important; stroke-width: 2.5 !important; fill: #22c55e !important;
   animation: room-free-pulse 2.2s ease-in-out infinite;
 }
 .room-free.room-selected {
   animation: room-pulse 1.8s ease-in-out infinite;
   stroke: var(--selected-room) !important;
   fill: var(--selected-room) !important;
+}
+
+/* Подсветка занятых */
+
+@keyframes room-busy-pulse {
+  0%, 100% { stroke-opacity: 0.6; fill-opacity: 0.15; }
+  50%      { stroke-opacity: 1;   fill-opacity: 0.42; }
+}
+.room-busy {
+  stroke: #ef4444 !important; stroke-width: 2.5 !important; fill: #ef4444 !important;
+  animation: room-busy-pulse 2.2s ease-in-out infinite;
+}
+.room-busy.room-selected {
+  animation: room-pulse 1.8s ease-in-out infinite;
+  stroke: var(--selected-room) !important;
+  fill: var(--selected-room) !important;
+}
+
+/* ============ Подсветка точек маршрута на карте ============ */
+
+@keyframes route-pick-pulse {
+  0%, 100% { stroke-opacity: 0.75; fill-opacity: 0.2; }
+  50%      { stroke-opacity: 1;    fill-opacity: 0.55; }
+}
+.room-route-from {
+  stroke: var(--route-start) !important;
+  stroke-width: 3 !important;
+  fill: var(--route-start) !important;
+  animation: route-pick-pulse 1.6s ease-in-out infinite;
+}
+.room-route-to {
+  stroke: var(--route-end) !important;
+  stroke-width: 3 !important;
+  fill: var(--route-end) !important;
+  animation: route-pick-pulse 1.6s ease-in-out infinite;
 }
 
 /* Правая панель */
@@ -502,24 +559,40 @@ body,
   width: 0;
   background: var(--panel-bg);
   color: var(--text);
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   transition: width 0.25s ease, background 0.25s ease;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+#panel.open { width: 380px; padding: 0; }
+
+.panel-fixed {
+  flex-shrink: 0;
+  padding: 20px 20px 12px;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--panel-border);
+  position: relative;
+  z-index: 1;
+}
+
+.panel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 20px 20px;
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
-#panel.open { width: 380px; padding: 20px; }
-
-#panel::-webkit-scrollbar { width: 8px; }
-#panel::-webkit-scrollbar-track { background: transparent; }
-#panel::-webkit-scrollbar-thumb {
+.panel-scroll::-webkit-scrollbar { width: 8px; }
+.panel-scroll::-webkit-scrollbar-track { background: transparent; }
+.panel-scroll::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb); border-radius: 4px;
   border: 2px solid var(--panel-bg);
 }
-#panel::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+.panel-scroll::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
 
-.panel-header { position: relative; margin-bottom: 16px; padding-right: 30px; }
+.panel-header { position: relative; margin-bottom: 14px; padding-right: 30px; }
 .panel-crumbs {
   font-size: 10px; font-weight: 700; letter-spacing: 0.6px;
   text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px;
@@ -532,6 +605,18 @@ body,
   margin: 0;
   line-height: 1.4;
   word-break: break-word;
+}
+
+.week-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  background: var(--btn-bg);
+  color: var(--text-muted);
+  border-radius: 6px;
+  text-transform: uppercase;
 }
 
 #panel .close {
@@ -562,15 +647,13 @@ body,
 }
 .share-icon:hover { color: var(--text-accent); }
 
-/* ============ Заметка / описание помещения ============ */
-/* Просто серый текст под названием, без плашки */
+/* Заметки помещения */
 
 .room-notes {
   color: var(--text-muted);
   font-size: 13.5px;
   line-height: 1.5;
   margin-bottom: 16px;
-  white-space: pre-line;
 }
 .room-notes.empty {
   font-style: italic;
@@ -580,12 +663,13 @@ body,
 /* Панель свободных */
 
 .free-summary {
-  display: flex; align-items: baseline; gap: 6px; margin-bottom: 14px;
+  display: flex; align-items: baseline; gap: 6px; margin-bottom: 0;
   font-size: 13px; color: var(--text-muted);
 }
 .free-summary strong {
   font-size: 22px; font-weight: 700; color: var(--free-accent); line-height: 1;
 }
+.free-summary.busy-summary strong { color: var(--busy-accent); }
 .free-summary .free-summary-label { font-size: 12.5px; }
 
 .free-list { display: flex; flex-direction: column; gap: 6px; }
@@ -599,11 +683,19 @@ body,
 .free-item:hover { background: var(--btn-hover); border-color: var(--free-accent-hover); }
 .free-item:active { transform: scale(0.99); }
 
+.free-item.busy-item:hover { border-color: var(--busy-accent-hover); }
+
 .free-item .free-dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--free-accent); flex-shrink: 0;
   box-shadow: 0 0 0 3px var(--free-accent-soft);
 }
+.free-item .busy-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--busy-accent); flex-shrink: 0;
+  box-shadow: 0 0 0 3px var(--busy-accent-soft);
+}
+
 .free-item .free-body { flex: 1; min-width: 0; }
 .free-item .free-name {
   font-weight: 600; font-size: 14px; color: var(--text-bright);
@@ -611,6 +703,7 @@ body,
 }
 .free-item .free-until { font-size: 12px; color: var(--text-muted); }
 .free-item .free-until .accent { color: var(--free-accent); font-weight: 500; }
+.free-item .free-until .accent-busy { color: var(--busy-accent); font-weight: 500; }
 
 .free-panel-empty {
   background: var(--lesson-bg); border-radius: 10px; padding: 20px 16px;
@@ -630,7 +723,203 @@ body,
   font-weight: 700; color: var(--text-bright); font-size: 16px; margin-top: 6px;
 }
 
-/* ============ Плашки статуса в расписании ============ */
+/* ============ Панель маршрута ============ */
+
+.route-field {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 10px;
+}
+.route-field label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.route-field .label-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.2px;
+  margin-left: 6px;
+}
+.route-input-wrap { position: relative; }
+.route-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+.route-input:focus { border-color: var(--btn-flr-active); }
+.route-input.filled { border-color: var(--route-color); }
+.route-input::placeholder { color: var(--text-dim); }
+
+.route-results {
+  list-style: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0; right: 0;
+  background: var(--dropdown-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 10;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  display: none;
+}
+.route-results.open { display: block; }
+.route-results li {
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.route-results li:hover { background: var(--dropdown-item-hover); }
+.route-results .res-name { font-weight: 600; color: var(--text-bright); }
+.route-results .res-meta { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.route-results .res-empty {
+  font-size: 12px; color: var(--text-dim); text-align: center;
+  padding: 8px 0; cursor: default;
+}
+
+.route-build-btn {
+  width: 100%;
+  padding: 10px 14px;
+  margin-top: 6px;
+  background: var(--route-color);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  transition: opacity 0.15s, background 0.15s;
+}
+.route-build-btn:hover { opacity: 0.9; }
+.route-build-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.route-clear-btn {
+  width: 100%;
+  padding: 8px 14px;
+  margin-top: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+.route-clear-btn:hover {
+  background: var(--btn-hover);
+  color: var(--text-bright);
+}
+
+.route-summary {
+  background: var(--lesson-bg);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  gap: 16px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.route-summary .metric {
+  display: flex;
+  flex-direction: column;
+}
+.route-summary .metric-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--route-color);
+  line-height: 1.1;
+}
+.route-summary .metric-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-top: 2px;
+}
+
+.route-steps {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.route-step {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--lesson-bg);
+  border-radius: 8px;
+  align-items: flex-start;
+}
+.route-step .step-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--route-color);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.route-step .step-body {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+}
+.route-step .step-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.route-warning {
+  background: rgba(239, 68, 68, 0.14);
+  border-left: 3px solid #ef4444;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: var(--status-busy-text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.route-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--lesson-bg);
+  border-radius: 8px;
+  border-left: 2px solid var(--route-color);
+}
+
+/* ============ Плашки статуса ============ */
 
 .now-status {
   display: flex;
@@ -638,47 +927,36 @@ body,
   gap: 10px;
   padding: 12px 14px;
   border-radius: 10px;
-  margin-bottom: 18px;
+  margin-bottom: 0;
   font-size: 13px;
   line-height: 1.4;
   border: 1px solid transparent;
 }
 .now-status .now-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  align-self: center;
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0; align-self: center;
 }
 .now-status .now-body { flex: 1; min-width: 0; }
-.now-status .now-title {
-  font-weight: 600;
-  font-size: 13.5px;
-  margin-bottom: 2px;
-}
-.now-status .now-details {
-  font-size: 12.5px;
-  color: var(--text-muted);
-  line-height: 1.45;
-}
+.now-status .now-title { font-weight: 600; font-size: 13.5px; margin-bottom: 2px; }
+.now-status .now-details { font-size: 12.5px; color: var(--text-muted); line-height: 1.45; }
 
 .now-status.busy {
   background: var(--status-busy-bg);
-  border-color: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.3);
 }
 .now-status.busy .now-dot {
   background: var(--status-busy-border);
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22);
 }
 .now-status.busy .now-title { color: var(--status-busy-text); }
 
 .now-status.free {
   background: var(--status-free-bg);
-  border-color: rgba(34, 197, 94, 0.25);
+  border-color: rgba(34, 197, 94, 0.3);
 }
 .now-status.free .now-dot {
   background: var(--status-free-border);
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.22);
 }
 .now-status.free .now-title { color: var(--status-free-text); }
 
@@ -695,6 +973,7 @@ body,
 /* Дни и карточки пар */
 
 .day-block { margin-bottom: 16px; }
+.day-block:last-child { margin-bottom: 0; }
 .day-header {
   font-size: 11px; font-weight: 700; letter-spacing: 0.6px;
   text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px;
@@ -779,7 +1058,6 @@ body,
 }
 .badge .mdi { font-size: 13px; line-height: 1; }
 
-/* Цвета один в один как на rasp.rsreu.ru */
 .badge.lec { background: #e4ffe8; color: #1b952d; }
 .badge.pr  { background: #eff7fd; color: #4386bb; }
 .badge.lab { background: #fbf0fe; color: #c05fdd; }

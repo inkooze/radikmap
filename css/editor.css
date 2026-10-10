@@ -1,0 +1,164 @@
+/* ============ Редактор графа — специфичные стили ============ */
+
+/* Сайдбар справа */
+#editor-sidebar {
+  width: 300px;
+  background: var(--panel-bg);
+  color: var(--text);
+  overflow-y: auto;
+  flex-shrink: 0;
+  border-left: 1px solid var(--panel-border);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.editor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor-section h3 {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--btn-bg);
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.tool-btn:hover {
+  background: var(--btn-hover);
+  color: var(--text-bright);
+}
+.tool-btn.active {
+  background: var(--btn-flr-active);
+  color: #fff;
+  border-color: var(--btn-flr-active);
+}
+.tool-btn .mdi { font-size: 18px; }
+
+#node-info p {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+#node-info .muted {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 12.5px;
+}
+#node-info strong {
+  color: var(--text-bright);
+}
+#node-info code {
+  background: var(--btn-bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+#stats p {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+#stats strong {
+  color: var(--text-bright);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.hotkeys {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.hotkeys kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  background: var(--btn-bg);
+  color: var(--text);
+  border-radius: 4px;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  border: 1px solid var(--border);
+}
+
+.editor-section .muted.small {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.editor-section code {
+  background: var(--btn-bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* ============ Маркеры узлов на карте ============ */
+/* Важно: НИКАКИХ transform / scale — иначе SVG-маркер дрожит при наведении */
+
+.graph-node-marker {
+  cursor: pointer;
+  transition: stroke-width 0.15s ease, fill 0.15s ease, stroke 0.15s ease;
+}
+.graph-node-marker:hover {
+  stroke-width: 4;      /* вместо увеличения размера — толще обводка */
+  stroke: #fde047;
+}
+.graph-node-marker.selected {
+  stroke-width: 4;
+  stroke: #f59e0b;
+}
+.graph-node-marker.stairs {
+  /* цвета задаём через fill в JS, здесь только подсказка */
+}
+.graph-node-marker.entrance {
+  /* аналогично */
+}
+
+/* Кнопка "Сохранить" подсветится, когда есть несохранённые изменения */
+#editor-save.dirty {
+  color: #f59e0b;
+}
+
+/* Адаптив под мобильный */
+@media (max-width: 800px) {
+  #editor-sidebar {
+    position: fixed;
+    right: 0;
+    top: 60px;
+    bottom: 0;
+    z-index: 1500;
+    width: 280px;
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
+  }
+  #editor-sidebar.open {
+    transform: translateX(0);
+  }
+}

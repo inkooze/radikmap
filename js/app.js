@@ -53,6 +53,39 @@ const QUICK_TAGS = [
   { label: '📚 Библиотека', query: 'библиотека' }
 ];
 
+// ================ TELEGRAM ================
+
+const tg = window.Telegram?.WebApp;
+let telegramUser = null;
+
+function initTelegram() {
+  if (!tg) return;
+  try {
+    tg.ready();
+    tg.expand();
+    telegramUser = tg.initDataUnsafe?.user || null;
+    if (!localStorage.getItem('theme')) {
+      document.documentElement.dataset.theme = tg.colorScheme === 'light' ? 'light' : 'dark';
+    }
+    tg.onEvent?.('themeChanged', () => {
+      if (localStorage.getItem('theme')) return;
+      document.documentElement.dataset.theme = tg.colorScheme === 'light' ? 'light' : 'dark';
+    });
+  } catch (e) {
+    console.warn('[telegram] init failed', e);
+  }
+}
+
+function haptic(type = 'light') {
+  if (tg?.HapticFeedback) {
+    try {
+      if (type === 'light') tg.HapticFeedback.impactOccurred('light');
+      else if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+      else if (type === 'error') tg.HapticFeedback.notificationOccurred('error');
+    } catch (e) { /* no-op */ }
+  }
+}
+
 // ================ УТИЛИТЫ ================
 
 function formatRoomName(name) {
@@ -65,6 +98,18 @@ function naturalRoomSort(a, b) {
   const nameB = formatRoomName(b.meta?.name || '').toLowerCase();
   const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
   return collator.compare(nameA, nameB);
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function renderMultiline(s) {
+  return escapeHtml(s).replace(/\n/g, '<br>');
 }
 
 // ================ СОСТОЯНИЕ ================
@@ -81,16 +126,31 @@ let selectedRoomId = null;
 let selectedShapes = [];
 let hoveredRoomId = null;
 
+let currentSvgViewBox = { W: 1000, H: 1000 };
+
 let panelMode = null;
 let currentRoomPanelId = null;
 
 let freeModeOn = false;
 let freePanelCollapsed = false;
 let freeRoomIds = new Set();
+let busyRoomIds = new Set();
 let freeRoomData = new Map();
+let busyRoomData = new Map();
 
 let isPoppingState = false;
-let roomClickInProgress = false;
+let roomRequestToken = 0;
+
+// Маршруты
+let graph = { nodes: {}, edges: [] };
+let routeLayer = null;
+let routePickLayer = null;
+let routeState = {
+  fromRoomId: null,
+  toRoomId: null,
+  path: null
+};
+let routePickSide = 'from';    // 'from' | 'to' — в какое поле попадёт следующий клик по карте
 
 // ================ КАРТА ================
 
@@ -105,6 +165,9 @@ const map = L.map('map', {
   zoomAnimation: true,
   attributionControl: false
 });
+
+routeLayer = L.layerGroup().addTo(map);
+routePickLayer = L.layerGroup().addTo(map);
 
 // ================ ПАНЕЛЬ ================
 
@@ -182,7 +245,7 @@ function updatePanelHandle() {
   const h = document.getElementById('panel-handle');
   if (!h) return;
 
-  if (!freeModeOn || panelMode === 'room') {
+  if (!freeModeOn || panelMode === 'room' || panelMode === 'route') {
     h.classList.add('hidden');
     h.classList.remove('open-panel');
     return;
@@ -204,6 +267,10 @@ function updatePanelHandle() {
   }
 }
 
+function buildPanelLayout(fixedHtml, scrollHtml) {
+  return `<div class="panel-fixed">${fixedHtml}</div><div class="panel-scroll">${scrollHtml}</div>`;
+}
+
 // ================ ВЫДЕЛЕНИЕ ================
 
 function clearSelectedRoom() {
@@ -220,20 +287,53 @@ function selectRoom(id) {
   selectedRoomId = id;
 }
 
-// ================ СВОБОДНЫЕ АУДИТОРИИ ================
+// ================ ПОДСВЕТКА ТОЧЕК МАРШРУТА ================
+
+function refreshRoutePickHighlight() {
+  // Убираем все предыдущие метки
+  Object.values(roomShapes).forEach(shapes => {
+    shapes.forEach(s => {
+      s.classList.remove('room-route-from');
+      s.classList.remove('room-route-to');
+    });
+  });
+
+  if (panelMode !== 'route') return;
+
+  if (routeState.fromRoomId && roomShapes[routeState.fromRoomId]) {
+    roomShapes[routeState.fromRoomId].forEach(s => s.classList.add('room-route-from'));
+  }
+  if (routeState.toRoomId && roomShapes[routeState.toRoomId]) {
+    roomShapes[routeState.toRoomId].forEach(s => s.classList.add('room-route-to'));
+  }
+}
+
+// ================ СВОБОДНЫЕ / ЗАНЯТЫЕ ================
+
+function roomMatchesCurrentView(id) {
+  const meta = roomsMeta[id];
+  if (!meta) return false;
+  if (meta.building !== currentBuilding) return false;
+  if (meta.floor != null && meta.floor !== currentFloor) return false;
+  return true;
+}
 
 function applyFreeHighlight() {
   Object.values(roomShapes).forEach(shapes => {
-    shapes.forEach(s => s.classList.remove('room-free'));
+    shapes.forEach(s => {
+      s.classList.remove('room-free');
+      s.classList.remove('room-busy');
+    });
   });
   if (!freeModeOn) return;
+
   for (const id of freeRoomIds) {
-    const meta = roomsMeta[id];
-    if (!meta) continue;
-    if (meta.building !== currentBuilding) continue;
-    if (meta.floor != null && meta.floor !== currentFloor) continue;
-    const shapes = roomShapes[id] || [];
-    shapes.forEach(s => s.classList.add('room-free'));
+    if (!roomMatchesCurrentView(id)) continue;
+    (roomShapes[id] || []).forEach(s => s.classList.add('room-free'));
+  }
+  for (const id of busyRoomIds) {
+    if (!roomMatchesCurrentView(id)) continue;
+    (roomShapes[id] || []).forEach(s => s.classList.add('room-busy'));
   }
 }
 
@@ -246,12 +346,21 @@ async function fetchFreeRooms() {
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+
     freeRoomIds = new Set();
     freeRoomData = new Map();
+    busyRoomIds = new Set();
+    busyRoomData = new Map();
+
     data.free.forEach(r => {
       freeRoomIds.add(r.id);
       freeRoomData.set(r.id, { untilText: r.untilText, noSchedule: r.noSchedule });
     });
+    (data.busy || []).forEach(r => {
+      busyRoomIds.add(r.id);
+      busyRoomData.set(r.id, { untilText: r.untilText, subject: r.subject });
+    });
+
     return { ok: true, updatedAt: data.updatedAt };
   } catch (e) {
     console.error('[free-now]', e);
@@ -353,7 +462,7 @@ function setupPanelHandle() {
   const h = document.getElementById('panel-handle');
   if (!h) return;
   h.addEventListener('click', () => {
-    if (!freeModeOn || panelMode === 'room') return;
+    if (!freeModeOn || panelMode === 'room' || panelMode === 'route') return;
     const panel = document.getElementById('panel');
     if (panel.classList.contains('open')) {
       collapseFreePanel();
@@ -367,47 +476,47 @@ function setupPanelHandle() {
 
 function renderFreePanelLoading() {
   const panel = document.getElementById('panel');
-  panel.innerHTML = `
+  const header = `
     <div class="panel-header">
       <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
       <h2>Свободны сейчас</h2>
     </div>
-    <div class="free-warming">
-      <div class="spinner"></div>
-      <div>Загружаю расписание…</div>
-    </div>
   `;
+  const scroll = `<div class="free-warming"><div class="spinner"></div><div>Загружаю расписание…</div></div>`;
+  panel.innerHTML = buildPanelLayout(header, scroll);
   updatePanelHandle();
 }
 
 function renderFreePanelWarming(progress) {
   const panel = document.getElementById('panel');
   if (!panel.classList.contains('open')) return;
-  panel.innerHTML = `
+  const header = `
     <div class="panel-header">
       <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
       <h2>Свободны сейчас</h2>
     </div>
+  `;
+  const scroll = `
     <div class="free-warming">
       <div class="spinner"></div>
       <div>Идёт первый прогрев кэша</div>
       <div class="progress">${progress || '0/0'}</div>
-      <div style="margin-top:8px;font-size:12px;color:var(--text-dim)">
-        Это займёт 1–3 минуты. Дальше будет мгновенно.
-      </div>
+      <div style="margin-top:8px;font-size:12px;color:var(--text-dim)">Это займёт 1–3 минуты. Дальше будет мгновенно.</div>
     </div>
   `;
+  panel.innerHTML = buildPanelLayout(header, scroll);
 }
 
 function renderFreePanelError(msg) {
   const panel = document.getElementById('panel');
-  panel.innerHTML = `
+  const header = `
     <div class="panel-header">
       <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
       <h2>Свободны сейчас</h2>
     </div>
-    <div class="free-panel-empty" style="color:#f87171">Ошибка загрузки: ${msg}</div>
   `;
+  const scroll = `<div class="free-panel-empty" style="color:#f87171">Ошибка загрузки: ${escapeHtml(msg)}</div>`;
+  panel.innerHTML = buildPanelLayout(header, scroll);
 }
 
 function renderFreePanel() {
@@ -415,8 +524,14 @@ function renderFreePanel() {
   panel.classList.add('open');
   freePanelCollapsed = false;
 
-  const relevant = [...freeRoomIds]
+  const relevantFree = [...freeRoomIds]
     .map(id => ({ id, meta: roomsMeta[id], data: freeRoomData.get(id) }))
+    .filter(x => x.meta && x.meta.building === currentBuilding)
+    .filter(x => x.meta.floor == null || x.meta.floor === currentFloor)
+    .sort(naturalRoomSort);
+
+  const relevantBusy = [...busyRoomIds]
+    .map(id => ({ id, meta: roomsMeta[id], data: busyRoomData.get(id) }))
     .filter(x => x.meta && x.meta.building === currentBuilding)
     .filter(x => x.meta.floor == null || x.meta.floor === currentFloor)
     .sort(naturalRoomSort);
@@ -428,34 +543,59 @@ function renderFreePanel() {
     </div>
   `;
 
-  if (relevant.length === 0) {
-    panel.innerHTML = `${header}
-      <div class="free-panel-empty">На этом этаже все аудитории заняты</div>`;
+  if (relevantFree.length === 0 && relevantBusy.length === 0) {
+    panel.innerHTML = buildPanelLayout(header, `<div class="free-panel-empty">На этом этаже нет аудиторий с расписанием</div>`);
     updatePanelHandle();
     return;
   }
 
-  const listHtml = relevant.map(x => {
-    const untilHtml = x.data.noSchedule
-      ? 'свободна'
-      : `свободна <span class="accent">${x.data.untilText}</span>`;
+  const summaryHtml = `
+    ${relevantFree.length > 0 ? `
+      <div class="free-summary">
+        <strong>${relevantFree.length}</strong>
+        <span class="free-summary-label">свободных</span>
+      </div>
+    ` : ''}
+    ${relevantBusy.length > 0 ? `
+      <div class="free-summary busy-summary" style="margin-top:${relevantFree.length > 0 ? '8px' : '0'}">
+        <strong>${relevantBusy.length}</strong>
+        <span class="free-summary-label">занятых</span>
+      </div>
+    ` : ''}
+  `;
+
+  const freeListHtml = relevantFree.map(x => {
+    const untilHtml = x.data.noSchedule ? 'свободна' : `свободна <span class="accent">${x.data.untilText}</span>`;
     return `
       <div class="free-item" data-room-id="${x.id}">
         <span class="free-dot"></span>
         <div class="free-body">
-          <div class="free-name">${formatRoomName(x.meta.name)}</div>
+          <div class="free-name">${renderMultiline(formatRoomName(x.meta.name))}</div>
           <div class="free-until">${untilHtml}</div>
         </div>
       </div>`;
   }).join('');
 
-  panel.innerHTML = `${header}
-    <div class="free-summary">
-      <strong>${relevant.length}</strong>
-      <span class="free-summary-label">свободных аудиторий</span>
-    </div>
-    <div class="free-list">${listHtml}</div>
+  const busyListHtml = relevantBusy.map(x => {
+    const untilHtml = x.data.untilText
+      ? `занята <span class="accent-busy">до ${x.data.untilText}</span>`
+      : 'занята';
+    return `
+      <div class="free-item busy-item" data-room-id="${x.id}">
+        <span class="busy-dot"></span>
+        <div class="free-body">
+          <div class="free-name">${renderMultiline(formatRoomName(x.meta.name))}</div>
+          <div class="free-until">${untilHtml}</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const scroll = `
+    ${relevantFree.length > 0 ? `<div class="free-list">${freeListHtml}</div>` : ''}
+    ${relevantBusy.length > 0 ? `<div class="free-list" style="margin-top:${relevantFree.length > 0 ? '12px' : '0'}">${busyListHtml}</div>` : ''}
   `;
+
+  panel.innerHTML = buildPanelLayout(`${header}${summaryHtml}`, scroll);
 
   panel.querySelectorAll('.free-item').forEach(el => {
     el.addEventListener('click', () => onRoomClick(el.dataset.roomId));
@@ -495,17 +635,12 @@ window.addEventListener('popstate', () => {
   try {
     const params = new URLSearchParams(location.search);
     const roomId = params.get('room');
-
     if (roomId && roomsMeta[roomId]) {
       onRoomClick(roomId, { pushHistory: false });
     } else {
-      if (panelMode === 'room') {
-        closeRoomPanel();
-      } else if (panelMode === 'free') {
-        // остаёмся в списке свободных
-      } else {
-        closePanel();
-      }
+      if (panelMode === 'room') closeRoomPanel();
+      else if (panelMode === 'free' || panelMode === 'route') { /* оставляем */ }
+      else closePanel();
     }
   } finally {
     isPoppingState = false;
@@ -636,6 +771,31 @@ function expandQuery(query) {
   return [q];
 }
 
+function searchRooms(query, limit = 20) {
+  const q = query.toLowerCase().trim();
+  if (!q) return [];
+  const expanded = expandQuery(q);
+  const exact = [], fuzzy = [], seen = new Set();
+
+  for (const [id, meta] of Object.entries(roomsMeta)) {
+    const name = (meta.name || '').toLowerCase();
+    const haystack = name + ' ' + id.toLowerCase() + ' ' + (meta.shortName || '').toLowerCase();
+    if (expanded.some(v => haystack.includes(v))) {
+      exact.push({ id, meta }); seen.add(id); continue;
+    }
+    if (q.length >= 4) {
+      const parts = name.split(/\s+/).filter(p => p.length >= 3);
+      for (const part of parts) {
+        if (levenshtein(q, part) <= 2) {
+          if (!seen.has(id)) { fuzzy.push({ id, meta }); seen.add(id); }
+          break;
+        }
+      }
+    }
+  }
+  return [...exact, ...fuzzy].slice(0, limit);
+}
+
 function setupSearch() {
   const wrap    = document.getElementById('search-wrap');
   const toggle  = document.getElementById('search-toggle');
@@ -686,32 +846,10 @@ function setupSearch() {
 
   function renderResults() {
     const raw = input.value.trim();
-    const q = raw.toLowerCase();
     results.innerHTML = '';
-    if (!q) { renderHistory(); return; }
+    if (!raw) { renderHistory(); return; }
     historyEl.innerHTML = '';
-
-    const expanded = expandQuery(q);
-    const exact = [], fuzzy = [], seen = new Set();
-
-    for (const [id, meta] of Object.entries(roomsMeta)) {
-      const name = (meta.name || '').toLowerCase();
-      const haystack = name + ' ' + id.toLowerCase();
-      if (expanded.some(v => haystack.includes(v))) {
-        exact.push({ id, meta }); seen.add(id); continue;
-      }
-      if (q.length >= 4) {
-        const parts = name.split(/\s+/).filter(p => p.length >= 3);
-        for (const part of parts) {
-          if (levenshtein(q, part) <= 2) {
-            if (!seen.has(id)) { fuzzy.push({ id, meta }); seen.add(id); }
-            break;
-          }
-        }
-      }
-    }
-
-    const found = [...exact, ...fuzzy].slice(0, 20);
+    const found = searchRooms(raw, 20);
     if (!found.length) {
       const li = document.createElement('li');
       li.className = 'res-empty';
@@ -723,8 +861,8 @@ function setupSearch() {
       const bName = BUILDINGS[meta.building]?.name || meta.building || '?';
       const li = document.createElement('li');
       li.innerHTML = `
-        <div class="res-name">${formatRoomName(meta.name)}</div>
-        <div class="res-meta">${bName}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}</div>
+        <div class="res-name">${escapeHtml(formatRoomName(meta.name))}</div>
+        <div class="res-meta">${escapeHtml(bName)}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}</div>
       `;
       li.addEventListener('click', () => {
         saveHistory(raw);
@@ -752,6 +890,14 @@ function setupSearch() {
   document.addEventListener('click', (e) => {
     if (!wrap.contains(e.target)) wrap.classList.remove('open');
   });
+
+  const params = new URLSearchParams(location.search);
+  const searchQuery = params.get('search');
+  if (searchQuery) {
+    input.value = searchQuery;
+    wrap.classList.add('open');
+    renderResults();
+  }
 }
 
 // ================ ТЕМА ================
@@ -844,6 +990,7 @@ async function showFloor(buildingCode, floorNum) {
 
   const vb = svgEl.getAttribute('viewBox').split(/\s+/).map(Number);
   const W = vb[2], H = vb[3];
+  currentSvgViewBox = { W, H };
 
   if (currentOverlay) map.removeLayer(currentOverlay);
   if (currentLabels) map.removeLayer(currentLabels);
@@ -921,22 +1068,30 @@ async function showFloor(buildingCode, floorNum) {
     const id = findRoomIdForShape(e.target);
     if (!id) return;
     e.stopPropagation();
-    onRoomClick(id);
+    haptic('light');
+
+    if (panelMode === 'route') {
+      handleRouteMapPick(id);
+    } else {
+      onRoomClick(id);
+    }
   });
 
   updateTabActive();
   updateFloorSwitcher();
   applyFreeHighlight();
+  refreshRoutePickHighlight();
   scheduleLabelRefresh();
 
   if (selectedRoomId && roomShapes[selectedRoomId]) selectRoom(selectedRoomId);
-
   if (pendingHighlight && roomShapes[pendingHighlight]) {
     const shapes = roomShapes[pendingHighlight];
     shapes.forEach(s => s.style.opacity = '0.65');
     setTimeout(() => shapes.forEach(s => s.style.opacity = ''), 1500);
     pendingHighlight = null;
   }
+
+  if (routeState.path) redrawRoute();
 
   if (freeModeOn && panelMode === 'free' && !freePanelCollapsed &&
       document.getElementById('panel').classList.contains('open')) {
@@ -979,9 +1134,11 @@ function placeLabels() {
     const cY = (minY + maxY) / 2 - mapRect.top;
     const latlng = map.containerPointToLatLng(L.point(cX, cY));
 
+    const labelHtml = renderMultiline(labelText);
+
     const icon = L.divIcon({
       className: 'room-label-wrap',
-      html: `<span class="room-label">${labelText}</span>`,
+      html: `<span class="room-label">${labelHtml}</span>`,
       iconSize: [0, 0],
       iconAnchor: [0, 0]
     });
@@ -1052,40 +1209,17 @@ function computeNowStatus(data) {
 
 function renderNowStatus(status) {
   if (status.type === 'none') {
-    return `
-      <div class="now-status none">
-        <div class="now-dot"></div>
-        <div class="now-body">
-          <div class="now-title">Пар на этой неделе нет</div>
-          <div class="now-details">Аудитория всегда свободна</div>
-        </div>
-      </div>`;
+    return `<div class="now-status none"><div class="now-dot"></div><div class="now-body"><div class="now-title">Пар на этой неделе нет</div><div class="now-details">Аудитория всегда свободна</div></div></div>`;
   }
   if (status.type === 'busy') {
-    return `
-      <div class="now-status busy">
-        <div class="now-dot"></div>
-        <div class="now-body">
-          <div class="now-title">Сейчас идёт пара</div>
-          <div class="now-details">${status.subject}${status.untilText ? ' · до ' + status.untilText : ''}</div>
-        </div>
-      </div>`;
+    return `<div class="now-status busy"><div class="now-dot"></div><div class="now-body"><div class="now-title">Сейчас идёт пара</div><div class="now-details">${escapeHtml(status.subject)}${status.untilText ? ' · до ' + status.untilText : ''}</div></div></div>`;
   }
-  return `
-    <div class="now-status free">
-      <div class="now-dot"></div>
-      <div class="now-body">
-        <div class="now-title">Аудитория свободна</div>
-        <div class="now-details">${status.untilText ? 'до ' + status.untilText : 'до конца дня'}</div>
-      </div>
-    </div>`;
+  return `<div class="now-status free"><div class="now-dot"></div><div class="now-body"><div class="now-title">Аудитория свободна</div><div class="now-details">${status.untilText ? 'до ' + status.untilText : 'до конца дня'}</div></div></div>`;
 }
 
 // ================ КЛИК ПО АУДИТОРИИ ================
 
 async function onRoomClick(id, { pushHistory = true } = {}) {
-  if (roomClickInProgress) return;
-
   const meta = roomsMeta[id];
   const panel = document.getElementById('panel');
 
@@ -1094,106 +1228,93 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
     return;
   }
 
-  roomClickInProgress = true;
+  const token = ++roomRequestToken;
+
+  openPanel();
+  panelMode = 'room';
+  currentRoomPanelId = id;
+
+  selectRoom(id);
+  updateURL(id, { push: pushHistory });
+  updatePanelHandle();
+
+  const title = formatRoomName(meta?.name || id);
+  const b = meta ? BUILDINGS[meta.building] : null;
+
+  const crumbs = b ? `${b.name}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}` : '';
+  const shareIcon = `<i class="mdi mdi-link-variant share-icon" title="Скопировать ссылку"></i>`;
+  const closeBtn = freeModeOn
+    ? `<button class="back-btn" onclick="closeRoomPanel()" title="Вернуться к списку свободных"><i class="mdi mdi-arrow-left"></i></button>`
+    : `<button class="close" onclick="closeRoomPanel()">✕</button>`;
+
+  const header = `
+    <div class="panel-header">
+      ${closeBtn}
+      ${crumbs ? `<div class="panel-crumbs">${escapeHtml(crumbs)}</div>` : ''}
+      <h2>${escapeHtml(title)}${shareIcon}</h2>
+    </div>
+  `;
+
+  const descriptionBlock = meta?.description
+    ? `<div class="room-notes">${renderMultiline(meta.description)}</div>`
+    : '';
+
+  if (!meta || !meta.building || !meta.classroom) {
+    const block = descriptionBlock ||
+      `<div class="room-notes empty">У этого помещения нет заметок.</div>`;
+    panel.innerHTML = buildPanelLayout(`${header}${block}`, '');
+    attachShareListener(panel, id);
+    return;
+  }
+
+  panel.innerHTML = buildPanelLayout(
+    `${header}${descriptionBlock}`,
+    `<p class="muted-text">Загрузка расписания…</p>`
+  );
+  attachShareListener(panel, id);
+
+  const today = new Date();
+  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const shift = today.getDay() === 0 ? 1 : 1 - today.getDay();
+  monday.setDate(today.getDate() + shift);
+  const yyyy = monday.getFullYear();
+  const mm = String(monday.getMonth() + 1).padStart(2, '0');
+  const dd = String(monday.getDate()).padStart(2, '0');
+  const isoDate = `${yyyy}-${mm}-${dd}`;
+
+  const url = `/api/schedule?building=${encodeURIComponent(meta.building)}&classroom=${encodeURIComponent(meta.classroom)}&date=${isoDate}`;
 
   try {
-    openPanel();
-    panelMode = 'room';
-    currentRoomPanelId = id;
-
-    selectRoom(id);
-    updateURL(id, { push: pushHistory });
-    updatePanelHandle();
-
-    const title = formatRoomName(meta?.name || id);
-    const b = meta ? BUILDINGS[meta.building] : null;
-
-    const crumbs = b ? `${b.name}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}` : '';
-    const shareIcon = `<i class="mdi mdi-link-variant share-icon" title="Скопировать ссылку"></i>`;
-
-    const closeBtn = freeModeOn
-      ? `<button class="back-btn" onclick="closeRoomPanel()" title="Вернуться к списку свободных"><i class="mdi mdi-arrow-left"></i></button>`
-      : `<button class="close" onclick="closeRoomPanel()">✕</button>`;
-
-    const header = `
-      <div class="panel-header">
-        ${closeBtn}
-        ${crumbs ? `<div class="panel-crumbs">${crumbs}</div>` : ''}
-        <h2>${title}${shareIcon}</h2>
-      </div>
-    `;
-
-    const descriptionBlock = meta?.description
-      ? `<div class="room-notes">${meta.description}</div>`
-      : '';
-
-    // ===== Помещение без classroom =====
-    if (!meta || !meta.building || !meta.classroom) {
-      const block = descriptionBlock ||
-        `<div class="room-notes empty">У этого помещения нет заметок.</div>`;
-      panel.innerHTML = `${header}${block}`;
-      attachShareListener(panel, id);
-      return;
-    }
-
-    // ===== Аудитория с classroom =====
-    panel.innerHTML = `${header}${descriptionBlock}<p class="muted-text">Загрузка расписания…</p>`;
-    attachShareListener(panel, id);
-
-    const today = new Date();
-    const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const shift = today.getDay() === 0 ? 1 : 1 - today.getDay();
-    monday.setDate(today.getDate() + shift);
-    const yyyy = monday.getFullYear();
-    const mm = String(monday.getMonth() + 1).padStart(2, '0');
-    const dd = String(monday.getDate()).padStart(2, '0');
-    const isoDate = `${yyyy}-${mm}-${dd}`;
-
-    const url = `/api/schedule?building=${encodeURIComponent(meta.building)}&classroom=${encodeURIComponent(meta.classroom)}&date=${isoDate}`;
-
     const res = await fetch(url);
+    if (token !== roomRequestToken) return;
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const html = await res.text();
     const data = parseSchedule(html);
 
+    if (token !== roomRequestToken) return;
     if (currentRoomPanelId !== id || panelMode !== 'room') return;
 
     if (data.empty) {
-      panel.innerHTML = `${header}${descriptionBlock}<div class="no-schedule-msg">У этой аудитории нет расписания занятий</div>`;
+      panel.innerHTML = buildPanelLayout(
+        `${header}${descriptionBlock}`,
+        `<div class="no-schedule-msg">У этой аудитории нет расписания занятий</div>`
+      );
       attachShareListener(panel, id);
       return;
     }
     renderSchedule(panel, title, data, header, descriptionBlock);
     attachShareListener(panel, id);
+    haptic('success');
   } catch (err) {
+    if (token !== roomRequestToken) return;
     if (currentRoomPanelId !== id || panelMode !== 'room') return;
 
-    // Пересчитываем header и descriptionBlock заново — на случай, если ошибка
-    // приключилась до их объявления
-    const title = formatRoomName(meta?.name || id);
-    const b = meta ? BUILDINGS[meta.building] : null;
-    const crumbs = b ? `${b.name}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}` : '';
-    const shareIcon = `<i class="mdi mdi-link-variant share-icon" title="Скопировать ссылку"></i>`;
-    const closeBtn = freeModeOn
-      ? `<button class="back-btn" onclick="closeRoomPanel()" title="Вернуться к списку свободных"><i class="mdi mdi-arrow-left"></i></button>`
-      : `<button class="close" onclick="closeRoomPanel()">✕</button>`;
-    const header = `
-      <div class="panel-header">
-        ${closeBtn}
-        ${crumbs ? `<div class="panel-crumbs">${crumbs}</div>` : ''}
-        <h2>${title}${shareIcon}</h2>
-      </div>
-    `;
-    const descriptionBlock = meta?.description
-      ? `<div class="room-notes">${meta.description}</div>`
-      : '';
-
-    panel.innerHTML = `${header}${descriptionBlock}
-      <p style="color:#f87171">Ошибка загрузки: ${err.message}</p>`;
+    panel.innerHTML = buildPanelLayout(
+      `${header}${descriptionBlock}`,
+      `<p style="color:#f87171">Ошибка загрузки: ${escapeHtml(err.message)}</p>`
+    );
     attachShareListener(panel, id);
-    console.error('[onRoomClick]', err);
-  } finally {
-    roomClickInProgress = false;
+    haptic('error');
   }
 }
 
@@ -1212,6 +1333,7 @@ function attachShareListener(panel, id) {
     try {
       await navigator.clipboard.writeText(url.toString());
       showToast('Ссылка скопирована');
+      haptic('success');
     } catch (e) {
       const ta = document.createElement('textarea');
       ta.value = url.toString();
@@ -1238,19 +1360,32 @@ function showToast(text) {
   }, 2000);
 }
 
-// ================ ПАРСЕР ================
+// ================ ПАРСЕР РАСПИСАНИЯ ================
+
+function parseWeekType(doc) {
+  const dateSelect = doc.querySelector('select[name="date"]');
+  if (!dateSelect) return null;
+  const selected = dateSelect.querySelector('option[selected]') ||
+                   dateSelect.options[dateSelect.selectedIndex];
+  if (!selected) return null;
+  const text = (selected.textContent || '').toLowerCase();
+  if (text.includes('числ')) return 'числитель';
+  if (text.includes('знам')) return 'знаменатель';
+  return null;
+}
 
 function parseSchedule(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
+  const weekType = parseWeekType(doc);
   const dateSelect = doc.querySelector('select[name="date"]');
   const dateOptions = dateSelect ? [...dateSelect.options].filter(o => o.value) : [];
-  if (dateOptions.length === 0) return { empty: true, days: [] };
+  if (dateOptions.length === 0) return { empty: true, days: [], weekType };
 
   const table = doc.querySelector('table.table');
-  if (!table) return { empty: false, days: [] };
+  if (!table) return { empty: false, days: [], weekType };
 
   const rows = [...table.rows];
-  if (rows.length < 2) return { empty: false, days: [] };
+  if (rows.length < 2) return { empty: false, days: [], weekType };
 
   const headerCells = [...rows[0].cells].slice(1);
   const days = headerCells.map(th => {
@@ -1313,15 +1448,24 @@ function parseSchedule(html) {
     day.lessons.sort((a, b) => a.time.localeCompare(b.time));
   });
 
-  return { empty: false, days };
+  return { empty: false, days, weekType };
 }
 
-// ================ РЕНДЕР ПАНЕЛИ ================
+// ================ РЕНДЕР РАСПИСАНИЯ ================
 
 function renderSchedule(panel, title, data, header, descriptionBlock = '') {
   const nowStatus = computeNowStatus(data);
   const today = new Date();
   const nowMin = today.getHours() * 60 + today.getMinutes();
+
+  const weekChip = data.weekType ? `<span class="week-chip">${data.weekType}</span>` : '';
+
+  const fixedHtml = `
+    ${header}
+    ${weekChip ? `<div style="margin-top:6px;margin-bottom:14px">${weekChip}</div>` : ''}
+    ${descriptionBlock}
+    ${renderNowStatus(nowStatus)}
+  `;
 
   const daysHtml = data.days.map(day => {
     const isToday = day.date
@@ -1345,7 +1489,7 @@ function renderSchedule(panel, title, data, header, descriptionBlock = '') {
             const t = LESSON_TYPES[l.type];
             badgeHtml = `<span class="badge ${t.cls}"><i class="mdi ${t.icon}"></i>${l.type}</span>`;
           } else if (l.type) {
-            badgeHtml = `<span class="badge pr">${l.type}</span>`;
+            badgeHtml = `<span class="badge pr">${escapeHtml(l.type)}</span>`;
           }
 
           let breakText = '';
@@ -1358,31 +1502,537 @@ function renderSchedule(panel, title, data, header, descriptionBlock = '') {
           if (l.subgroups && l.subgroups.length > 1) {
             metaHtml = l.subgroups.map(sg => `
               <div class="subgroup">
-                ${sg.group ? 'гр. ' + sg.group : ''}${sg.group && sg.lecturer ? ' · ' : ''}${sg.lecturer || ''}
+                ${sg.group ? 'гр. ' + escapeHtml(sg.group) : ''}${sg.group && sg.lecturer ? ' · ' : ''}${escapeHtml(sg.lecturer || '')}
               </div>
             `).join('');
           } else {
-            metaHtml = `<div class="meta">${l.group ? 'гр. ' + l.group : ''}${l.group && l.lecturer ? ' · ' : ''}${l.lecturer || ''}</div>`;
+            metaHtml = `<div class="meta">${l.group ? 'гр. ' + escapeHtml(l.group) : ''}${l.group && l.lecturer ? ' · ' : ''}${escapeHtml(l.lecturer || '')}</div>`;
           }
 
           return `
             <div class="${cls}">
               <div class="time">${l.time}${breakText}</div>
-              <div class="subject">${badgeHtml}${l.subject}</div>
+              <div class="subject">${badgeHtml}${escapeHtml(l.subject)}</div>
               ${metaHtml}
             </div>`;
         }).join('');
 
     return `
       <div class="day-block${isToday ? ' today' : ''}">
-        <div class="day-header">
-          ${day.dayName}${day.dateText ? ', ' + day.dateText : ''}${isToday ? ' · сегодня' : ''}
-        </div>
+        <div class="day-header">${day.dayName}${day.dateText ? ', ' + day.dateText : ''}${isToday ? ' · сегодня' : ''}</div>
         ${lessonsHtml}
       </div>`;
   }).join('');
 
-  panel.innerHTML = `${header}${descriptionBlock}${renderNowStatus(nowStatus)}${daysHtml}`;
+  panel.innerHTML = buildPanelLayout(fixedHtml, daysHtml);
+}
+
+// ================ ГРАФ И МАРШРУТЫ ================
+
+async function loadGraph() {
+  try {
+    const res = await fetch('data/graph.json');
+    if (!res.ok) throw new Error('graph.json не найден');
+    const data = await res.json();
+    graph = {
+      nodes: data.nodes || {},
+      edges: data.edges || []
+    };
+    console.log(`[route] graph загружен: ${Object.keys(graph.nodes).length} узлов, ${graph.edges.length} рёбер`);
+  } catch (e) {
+    console.warn('[route] не удалось загрузить граф:', e.message);
+    graph = { nodes: {}, edges: [] };
+  }
+}
+
+// Дейкстра. Возвращает массив id узлов от startId до endId или null.
+function dijkstra(startId, endId) {
+  if (!graph.nodes[startId] || !graph.nodes[endId]) return null;
+  if (startId === endId) return [startId];
+
+  const adj = {};
+  for (const id of Object.keys(graph.nodes)) adj[id] = [];
+  for (const e of graph.edges) {
+    if (adj[e.from] && adj[e.to]) {
+      adj[e.from].push({ to: e.to, weight: e.weight });
+      adj[e.to].push({ to: e.from, weight: e.weight });
+    }
+  }
+
+  const dist = {};
+  const prev = {};
+  const visited = new Set();
+  for (const id of Object.keys(graph.nodes)) dist[id] = Infinity;
+  dist[startId] = 0;
+
+  while (true) {
+    let u = null, minD = Infinity;
+    for (const id of Object.keys(graph.nodes)) {
+      if (!visited.has(id) && dist[id] < minD) {
+        minD = dist[id];
+        u = id;
+      }
+    }
+    if (u === null) break;
+    if (u === endId) break;
+    visited.add(u);
+
+    for (const { to, weight } of adj[u]) {
+      if (visited.has(to)) continue;
+      const nd = dist[u] + weight;
+      if (nd < dist[to]) {
+        dist[to] = nd;
+        prev[to] = u;
+      }
+    }
+  }
+
+  if (dist[endId] === Infinity) return null;
+
+  const path = [];
+  let cur = endId;
+  while (cur !== undefined) {
+    path.unshift(cur);
+    cur = prev[cur];
+  }
+  return path;
+}
+
+// Центроид фигуры в SVG-координатах
+function getShapeCentroidSvg(id) {
+  const shapes = roomShapes[id];
+  if (!shapes || !shapes.length) return null;
+  const mapRect = map.getContainer().getBoundingClientRect();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let anyValid = false;
+  for (const shape of shapes) {
+    const r = shape.getBoundingClientRect();
+    if (!r || (r.width === 0 && r.height === 0)) continue;
+    anyValid = true;
+    if (r.left   < minX) minX = r.left;
+    if (r.top    < minY) minY = r.top;
+    if (r.right  > maxX) maxX = r.right;
+    if (r.bottom > maxY) maxY = r.bottom;
+  }
+  if (!anyValid) return null;
+
+  const cX = (minX + maxX) / 2 - mapRect.left;
+  const cY = (minY + maxY) / 2 - mapRect.top;
+  const latlng = map.containerPointToLatLng(L.point(cX, cY));
+  const { H } = currentSvgViewBox;
+  return { x: latlng.lng, y: H - latlng.lat };
+}
+
+// Ближайший узел графа на том же корпусе и этаже
+function findNearestNode(point, building, floor) {
+  let best = null, bestDist = Infinity;
+  for (const [id, node] of Object.entries(graph.nodes)) {
+    if (node.building !== building) continue;
+    if (node.floor !== floor) continue;
+    const d = Math.hypot(node.x - point.x, node.y - point.y);
+    if (d < bestDist) {
+      bestDist = d;
+      best = id;
+    }
+  }
+  return best;
+}
+
+// Длина маршрута (сумма весов рёбер)
+function computeRouteLength(path) {
+  if (!path || path.length < 2) return 0;
+  let total = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i], b = path[i + 1];
+    const edge = graph.edges.find(e =>
+      (e.from === a && e.to === b) || (e.from === b && e.to === a)
+    );
+    if (edge) total += edge.weight;
+  }
+  return Math.round(total);
+}
+
+// Сглаживание пути алгоритмом Чайкина (corner cutting)
+function smoothPath(latlngs, iterations = 2) {
+  if (!latlngs || latlngs.length < 3) return latlngs;
+  let pts = latlngs.map(p => ({ lat: p[0], lng: p[1] }));
+  for (let it = 0; it < iterations; it++) {
+    const newPts = [pts[0]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      newPts.push(
+        { lat: a.lat + 0.25 * (b.lat - a.lat), lng: a.lng + 0.25 * (b.lng - a.lng) },
+        { lat: a.lat + 0.75 * (b.lat - a.lat), lng: a.lng + 0.75 * (b.lng - a.lng) }
+      );
+    }
+    newPts.push(pts[pts.length - 1]);
+    pts = newPts;
+  }
+  return pts.map(p => [p.lat, p.lng]);
+}
+
+// Отрисовка маршрута
+function drawRoute(path) {
+  if (!routeLayer) return;
+  routeLayer.clearLayers();
+  if (!path || path.length === 0) return;
+
+  const { H } = currentSvgViewBox;
+  const latlngs = [];
+  const visibleNodes = [];
+
+  for (const id of path) {
+    const n = graph.nodes[id];
+    if (!n) continue;
+    if (n.building !== currentBuilding || n.floor !== currentFloor) continue;
+    latlngs.push([H - n.y, n.x]);
+    visibleNodes.push(id);
+  }
+
+  if (latlngs.length < 2) return;
+
+  // Сглаженная линия
+  const smooth = smoothPath(latlngs, 2);
+
+  L.polyline(smooth, {
+    color: getComputedStyle(document.documentElement).getPropertyValue('--route-color').trim() || '#22c55e',
+    weight: 5,
+    opacity: 0.9,
+    lineCap: 'round',
+    lineJoin: 'round'
+  }).addTo(routeLayer);
+
+  // Старт
+  const startId = visibleNodes[0];
+  const startNode = graph.nodes[startId];
+  L.circleMarker([H - startNode.y, startNode.x], {
+    radius: 9,
+    color: '#ffffff',
+    weight: 3,
+    fillColor: getComputedStyle(document.documentElement).getPropertyValue('--route-start').trim() || '#22c55e',
+    fillOpacity: 1
+  }).addTo(routeLayer);
+
+  // Финиш
+  const endId = visibleNodes[visibleNodes.length - 1];
+  const endNode = graph.nodes[endId];
+  L.circleMarker([H - endNode.y, endNode.x], {
+    radius: 9,
+    color: '#ffffff',
+    weight: 3,
+    fillColor: getComputedStyle(document.documentElement).getPropertyValue('--route-end').trim() || '#ef4444',
+    fillOpacity: 1
+  }).addTo(routeLayer);
+}
+
+function redrawRoute() {
+  if (routeState.path) drawRoute(routeState.path);
+}
+
+function clearRoute() {
+  routeState = { fromRoomId: null, toRoomId: null, path: null };
+  if (routeLayer) routeLayer.clearLayers();
+  refreshRoutePickHighlight();
+}
+
+// ================ ПАНЕЛЬ МАРШРУТА ================
+
+function openRoutePanel() {
+  if (panelMode === 'route') {
+    // Закрыть
+    closeRoutePanel();
+    return;
+  }
+  if (freeModeOn) disableFreeMode();
+
+  panelMode = 'route';
+  routePickSide = 'from';
+  clearSelectedRoom();
+  document.getElementById('route-toggle').classList.add('active');
+  openPanel();
+  renderRoutePanel();
+  refreshRoutePickHighlight();
+}
+
+function closeRoutePanel() {
+  panelMode = null;
+  closePanel();
+  clearRoute();
+  document.getElementById('route-toggle').classList.remove('active');
+}
+
+// Обработка клика по помещению в режиме маршрута
+function handleRouteMapPick(id) {
+  const meta = roomsMeta[id];
+  if (!meta) return;
+  if (meta.building !== currentBuilding || meta.floor !== currentFloor) {
+    showToast('Можно выбирать только помещения текущего этажа');
+    return;
+  }
+  setRoutePoint(routePickSide, id, formatRoomName(meta.name));
+  // Переключаем активное поле
+  routePickSide = routePickSide === 'from' ? 'to' : 'from';
+}
+
+function renderRoutePanel() {
+  const panel = document.getElementById('panel');
+
+  const fromMeta = routeState.fromRoomId ? roomsMeta[routeState.fromRoomId] : null;
+  const toMeta = routeState.toRoomId ? roomsMeta[routeState.toRoomId] : null;
+
+  const fromValue = fromMeta ? formatRoomName(fromMeta.name) : '';
+  const toValue = toMeta ? formatRoomName(toMeta.name) : '';
+
+  const header = `
+    <div class="panel-header">
+      <button class="close" onclick="closeRoutePanel()">✕</button>
+      <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
+      <h2>Маршрут</h2>
+    </div>
+  `;
+
+  const fixed = `
+    ${header}
+    <div class="route-field">
+      <label>Откуда <span class="label-hint">${routePickSide === 'from' ? '← или ткните на карте' : ''}</span></label>
+      <div class="route-input-wrap">
+        <input class="route-input ${fromValue ? 'filled' : ''}" id="route-from" placeholder="Аудитория, вход…" value="${escapeHtml(fromValue)}" autocomplete="off">
+        <ul class="route-results" id="route-from-results"></ul>
+      </div>
+    </div>
+    <div class="route-field">
+      <label>Куда <span class="label-hint">${routePickSide === 'to' ? '← или ткните на карте' : ''}</span></label>
+      <div class="route-input-wrap">
+        <input class="route-input ${toValue ? 'filled' : ''}" id="route-to" placeholder="Аудитория, вход…" value="${escapeHtml(toValue)}" autocomplete="off">
+        <ul class="route-results" id="route-to-results"></ul>
+      </div>
+    </div>
+    <button class="route-build-btn" id="route-build-btn" ${routeState.fromRoomId && routeState.toRoomId ? '' : 'disabled'}>
+      <i class="mdi mdi-directions"></i> Построить маршрут
+    </button>
+    ${routeState.path ? `<button class="route-clear-btn" id="route-clear-btn">Очистить маршрут</button>` : ''}
+  `;
+
+  let scroll = '';
+  if (routeState.path) {
+    scroll = renderRouteResult(routeState.path);
+  } else {
+    scroll = `
+      <div class="route-hint">
+        Введи начальную и конечную точки в поля выше, либо кликни по ним на карте. Активное поле подсвечено зелёным.
+      </div>
+    `;
+  }
+
+  panel.innerHTML = buildPanelLayout(fixed, scroll);
+
+  setupRouteInput('from');
+  setupRouteInput('to');
+
+  document.getElementById('route-build-btn').addEventListener('click', onBuildRouteClick);
+
+  const clearBtn = document.getElementById('route-clear-btn');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      clearRoute();
+      renderRoutePanel();
+    });
+  }
+
+  updatePanelHandle();
+}
+
+function setupRouteInput(side) {
+  const inputId = side === 'from' ? 'route-from' : 'route-to';
+  const resultsId = side === 'from' ? 'route-from-results' : 'route-to-results';
+  const input = document.getElementById(inputId);
+  const results = document.getElementById(resultsId);
+  if (!input || !results) return;
+
+  input.addEventListener('focus', () => {
+    routePickSide = side;
+    // Обновляем подсказки в label
+    const labelFrom = document.querySelector('#route-from')?.closest('.route-field')?.querySelector('.label-hint');
+    const labelTo = document.querySelector('#route-to')?.closest('.route-field')?.querySelector('.label-hint');
+    if (labelFrom) labelFrom.textContent = side === 'from' ? '← или ткните на карте' : '';
+    if (labelTo) labelTo.textContent = side === 'to' ? '← или ткните на карте' : '';
+  });
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (!q) {
+      results.classList.remove('open');
+      results.innerHTML = '';
+      return;
+    }
+    const found = searchRooms(q, 10);
+    results.innerHTML = '';
+    if (!found.length) {
+      const li = document.createElement('li');
+      li.className = 'res-empty';
+      li.textContent = 'ничего не найдено';
+      results.appendChild(li);
+    } else {
+      found.forEach(({ id, meta }) => {
+        const bName = BUILDINGS[meta.building]?.name || meta.building || '?';
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <div class="res-name">${escapeHtml(formatRoomName(meta.name))}</div>
+          <div class="res-meta">${escapeHtml(bName)}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}</div>
+        `;
+        li.addEventListener('click', () => {
+          setRoutePoint(side, id, formatRoomName(meta.name));
+        });
+        results.appendChild(li);
+      });
+    }
+    results.classList.add('open');
+  });
+
+  input.addEventListener('blur', () => {
+    setTimeout(() => results.classList.remove('open'), 150);
+  });
+}
+
+function setRoutePoint(side, roomId, name) {
+  if (side === 'from') {
+    routeState.fromRoomId = roomId;
+  } else {
+    routeState.toRoomId = roomId;
+  }
+  routeState.path = null;
+  if (routeLayer) routeLayer.clearLayers();
+
+  const inputId = side === 'from' ? 'route-from' : 'route-to';
+  const input = document.getElementById(inputId);
+  if (input) {
+    input.value = name;
+    input.classList.add('filled');
+  }
+
+  const resultsId = side === 'from' ? 'route-from-results' : 'route-to-results';
+  const results = document.getElementById(resultsId);
+  if (results) results.classList.remove('open');
+
+  const buildBtn = document.getElementById('route-build-btn');
+  if (buildBtn) buildBtn.disabled = !(routeState.fromRoomId && routeState.toRoomId);
+
+  refreshRoutePickHighlight();
+}
+
+function onBuildRouteClick() {
+  const panel = document.getElementById('panel');
+
+  if (!routeState.fromRoomId || !routeState.toRoomId) {
+    showToast('Выберите обе точки маршрута');
+    return;
+  }
+
+  const fromMeta = roomsMeta[routeState.fromRoomId];
+  const toMeta = roomsMeta[routeState.toRoomId];
+
+  if (fromMeta.building !== currentBuilding || fromMeta.floor !== currentFloor ||
+      toMeta.building !== currentBuilding || toMeta.floor !== currentFloor) {
+    panel.querySelector('.panel-scroll').innerHTML = `
+      <div class="route-warning">
+        Одна из точек находится на другом этаже или в другом корпусе.
+        Перейди на нужный этаж и выбери точки снова.
+      </div>
+    `;
+    return;
+  }
+
+  const fromCentroid = getShapeCentroidSvg(routeState.fromRoomId);
+  const toCentroid = getShapeCentroidSvg(routeState.toRoomId);
+
+  if (!fromCentroid || !toCentroid) {
+    panel.querySelector('.panel-scroll').innerHTML = `
+      <div class="route-warning">Не удалось определить положение выбранных помещений на карте.</div>
+    `;
+    return;
+  }
+
+  const fromNode = findNearestNode(fromCentroid, currentBuilding, currentFloor);
+  const toNode = findNearestNode(toCentroid, currentBuilding, currentFloor);
+
+  if (!fromNode || !toNode) {
+    panel.querySelector('.panel-scroll').innerHTML = `
+      <div class="route-warning">Рядом с этими помещениями нет узлов графа. Возможно, граф для этого этажа ещё не размечен.</div>
+    `;
+    return;
+  }
+
+  const path = dijkstra(fromNode, toNode);
+
+  if (!path) {
+    panel.querySelector('.panel-scroll').innerHTML = `
+      <div class="route-warning">Между этими точками нет пути по графу. Проверь, что все нужные рёбра размечены.</div>
+    `;
+    return;
+  }
+
+  routeState.path = path;
+  drawRoute(path);
+  renderRoutePanel();
+  haptic('success');
+}
+
+function renderRouteResult(path) {
+  const length = computeRouteLength(path);
+  const steps = path.length - 1;
+
+  const stepsHtml = path.slice(1).map((nodeId, idx) => {
+    const prevId = path[idx];
+    const a = graph.nodes[prevId];
+    const b = graph.nodes[nodeId];
+    if (!a || !b) return '';
+    const dist = Math.round(Math.hypot(a.x - b.x, a.y - b.y));
+    const angle = computeTurn(prevId, nodeId, path[idx + 2]);
+    const turnText = angle ? ` · ${angle}` : '';
+
+    return `
+      <li class="route-step">
+        <span class="step-num">${idx + 1}</span>
+        <div class="step-body">
+          Пройдите <strong>${dist}</strong> ед.${turnText}
+        </div>
+      </li>
+    `;
+  }).join('');
+
+  return `
+    <div class="route-summary">
+      <div class="metric">
+        <span class="metric-value">${steps}</span>
+        <span class="metric-label">шагов</span>
+      </div>
+      <div class="metric">
+        <span class="metric-value">${length}</span>
+        <span class="metric-label">ед. длины</span>
+      </div>
+    </div>
+    <ol class="route-steps">${stepsHtml}</ol>
+  `;
+}
+
+// Угол поворота от prev→cur к cur→next
+function computeTurn(prevId, curId, nextId) {
+  if (!nextId) return null;
+  const p = graph.nodes[prevId], c = graph.nodes[curId], n = graph.nodes[nextId];
+  if (!p || !c || !n) return null;
+
+  const v1 = { x: c.x - p.x, y: c.y - p.y };
+  const v2 = { x: n.x - c.x, y: n.y - c.y };
+  const a1 = Math.atan2(v1.y, v1.x);
+  const a2 = Math.atan2(v2.y, v2.x);
+  let diff = (a2 - a1) * 180 / Math.PI;
+  while (diff > 180) diff -= 360;
+  while (diff < -180) diff += 360;
+
+  const abs = Math.abs(diff);
+  if (abs < 20) return 'прямо';
+  if (abs > 150) return 'разворот';
+  return diff > 0 ? 'поверните налево' : 'поверните направо';
 }
 
 // ================ ГОРЯЧИЕ КЛАВИШИ ================
@@ -1402,6 +2052,7 @@ function setupHotkeys() {
       if (document.getElementById('panel').classList.contains('open')) {
         if (panelMode === 'room') closeRoomPanel();
         else if (panelMode === 'free') collapseFreePanel();
+        else if (panelMode === 'route') closeRoutePanel();
         else closePanel();
       }
       return;
@@ -1424,7 +2075,10 @@ function setupHotkeys() {
 // ================ СТАРТ ================
 
 (async function init() {
+  initTelegram();
   roomsMeta = await fetch('data/rooms.json').then(r => r.json());
+  await loadGraph();
+
   buildBuildingsUI();
   setupSearch();
   setupThemeToggle();
@@ -1433,6 +2087,8 @@ function setupHotkeys() {
   setupFreeToggle().addTo(map);
   setupPanelHandle();
   setupHotkeys();
+
+  document.getElementById('route-toggle').addEventListener('click', openRoutePanel);
 
   const params = new URLSearchParams(location.search);
   const roomId = params.get('room');

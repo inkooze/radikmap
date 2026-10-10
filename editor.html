@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Редактор графа маршрутов</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/editor.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="topbar-brand">
+      <span class="topbar-title">🛠 Редактор графа</span>
+    </div>
+    <div class="topbar-divider"></div>
+    <nav id="buildings" class="topbar-nav"></nav>
+    <div class="topbar-actions">
+      <button class="action-btn" id="editor-save" title="Сохранить graph.json">
+        <i class="mdi mdi-content-save"></i>
+      </button>
+      <button class="action-btn" id="editor-clear" title="Очистить всё">
+        <i class="mdi mdi-delete"></i>
+      </button>
+      <a class="action-btn" href="index.html" title="Вернуться на карту">
+        <i class="mdi mdi-map"></i>
+      </a>
+    </div>
+  </header>
+
+  <div id="app">
+    <div id="map-wrap">
+      <div id="map"></div>
+    </div>
+    <aside id="editor-sidebar">
+      <div class="editor-section">
+        <h3>Инструменты</h3>
+        <button class="tool-btn active" data-tool="add-node">
+          <i class="mdi mdi-plus-circle"></i> Добавить узел
+        </button>
+        <button class="tool-btn" data-tool="add-edge">
+          <i class="mdi mdi-vector-line"></i> Добавить ребро
+        </button>
+        <button class="tool-btn" data-tool="select">
+          <i class="mdi mdi-cursor-default"></i> Выделение / удаление
+        </button>
+      </div>
+
+      <div class="editor-section">
+        <h3>Выбранный узел</h3>
+        <div id="node-info">
+          <p class="muted">Кликните по узлу для выбора</p>
+        </div>
+      </div>
+
+      <div class="editor-section">
+        <h3>Статистика</h3>
+        <div id="stats">
+          <p>Узлов: <strong id="stat-nodes">0</strong></p>
+          <p>Рёбер: <strong id="stat-edges">0</strong></p>
+        </div>
+      </div>
+
+      <div class="editor-section">
+        <h3>Горячие клавиши</h3>
+        <ul class="hotkeys">
+          <li><kbd>1</kbd> — добавить узел</li>
+          <li><kbd>2</kbd> — добавить ребро</li>
+          <li><kbd>3</kbd> — выделение</li>
+          <li><kbd>Esc</kbd> — снять выделение</li>
+          <li><kbd>Del</kbd> — удалить выбранное</li>
+        </ul>
+      </div>
+
+      <div class="editor-section">
+        <h3>Экспорт</h3>
+        <p class="muted small">
+          После сохранения файл попадёт в <code>data/graph.json</code> на сервере.
+        </p>
+      </div>
+    </aside>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="js/editor.js"></script>
+</body>
+</html>
