@@ -1153,6 +1153,55 @@
       "building": "C",
       "floor": 1,
       "type": "corridor"
+    },
+    "n66_c_f1": {
+      "x": 1658,
+      "y": 624,
+      "building": "C",
+      "floor": 1,
+      "type": "entrance"
+    },
+    "n73_c_f1": {
+      "x": 1646,
+      "y": 623,
+      "building": "C",
+      "floor": 1,
+      "type": "corridor"
+    },
+    "n167_c_f1": {
+      "x": 1600,
+      "y": 522,
+      "building": "C",
+      "floor": 1,
+      "type": "corridor"
+    },
+    "n168_c_f1": {
+      "x": 1576,
+      "y": 352,
+      "building": "C",
+      "floor": 1,
+      "type": "corridor"
+    },
+    "n169_c_f1": {
+      "x": 1308,
+      "y": 352,
+      "building": "C",
+      "floor": 1,
+      "type": "corridor"
+    },
+    "n170_c_f1": {
+      "x": 1232,
+      "y": 629,
+      "building": "C",
+      "floor": 1,
+      "type": "corridor"
+    },
+    "n171_c_f1": {
+      "x": 1229,
+      "y": 356,
+      "building": "C",
+      "floor": 1,
+      "type": "corridor"
     }
   },
   "edges": [
@@ -2000,6 +2049,61 @@
       "from": "n145_c_f1",
       "to": "n161_c_f1",
       "weight": 58
+    },
+    {
+      "from": "n7_c_f1",
+      "to": "n170_c_f1",
+      "weight": 401
+    },
+    {
+      "from": "n171_c_f1",
+      "to": "n170_c_f1",
+      "weight": 273
+    },
+    {
+      "from": "n58_c_f1",
+      "to": "n171_c_f1",
+      "weight": 118
+    },
+    {
+      "from": "n57_c_f1",
+      "to": "n171_c_f1",
+      "weight": 98
+    },
+    {
+      "from": "n171_c_f1",
+      "to": "n169_c_f1",
+      "weight": 79
+    },
+    {
+      "from": "n169_c_f1",
+      "to": "n58_c_f1",
+      "weight": 139
+    },
+    {
+      "from": "n169_c_f1",
+      "to": "n168_c_f1",
+      "weight": 268
+    },
+    {
+      "from": "n167_c_f1",
+      "to": "n168_c_f1",
+      "weight": 172
+    },
+    {
+      "from": "n167_c_f1",
+      "to": "n73_c_f1",
+      "weight": 111
+    },
+    {
+      "from": "n73_c_f1",
+      "to": "n66_c_f1",
+      "weight": 12
+    },
+    {
+      "from": "n73_c_f1",
+      "to": "n170_c_f1",
+      "weight": 414
     }
   ]
 }
