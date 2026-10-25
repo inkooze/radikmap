@@ -10,6 +10,61 @@
 <path d="M225.5 619H192.5V458H225.5V619Z" fill="#E1E1E1"/>
 <path d="M125.5 613H192.5V562H125.5V613Z" fill="#E1E1E1"/>
 </g>
+<path id="coridor_2" d="M1659 426V683.5H1844V642.5H2216V711.5H2371V568H2363.5V426.5H1931.5V461.5H1858V426H1659Z" fill="#E1E1E1"/>
+<g id="C_stairs_f1_r2">
+<path d="M1817.5 426H1858.5V475H1817.5V426Z" fill="white"/>
+<path d="M1817.5 474H1858.5V475H1817.5V474Z" fill="#C4C4C4"/>
+<path d="M1817.5 468H1858.5V469H1817.5V468Z" fill="#C4C4C4"/>
+<path d="M1817.5 462H1858.5V463H1817.5V462Z" fill="#C4C4C4"/>
+<path d="M1817.5 456H1858.5V457H1817.5V456Z" fill="#C4C4C4"/>
+<path d="M1817.5 450H1858.5V451H1817.5V450Z" fill="#C4C4C4"/>
+<path d="M1857.5 426H1858.5V475H1857.5V426Z" fill="#C4C4C4"/>
+<path d="M1817.5 444H1858.5V445H1817.5V444Z" fill="#C4C4C4"/>
+<path d="M1817.5 438H1858.5V439H1817.5V438Z" fill="#C4C4C4"/>
+<path d="M1817.5 432H1858.5V433H1817.5V432Z" fill="#C4C4C4"/>
+<path d="M1817.5 426H1858.5V427H1817.5V426Z" fill="#C4C4C4"/>
+</g>
+<g id="C_stairs_f1_r3">
+<path d="M2316.5 426H2363.5V475H2316.5V426Z" fill="white"/>
+<path d="M2316.5 474H2363.5V475H2316.5V474Z" fill="#C4C4C4"/>
+<path d="M2316.5 468H2363.5V469H2316.5V468Z" fill="#C4C4C4"/>
+<path d="M2316.5 462H2363.5V463H2316.5V462Z" fill="#C4C4C4"/>
+<path d="M2316.5 456H2363.5V457H2316.5V456Z" fill="#C4C4C4"/>
+<path d="M2316.5 450H2363.5V451H2316.5V450Z" fill="#C4C4C4"/>
+<path d="M2316.5 444H2363.5V445H2316.5V444Z" fill="#C4C4C4"/>
+<path d="M2316.5 438H2363.5V439H2316.5V438Z" fill="#C4C4C4"/>
+<path d="M2316.5 432H2363.5V433H2316.5V432Z" fill="#C4C4C4"/>
+<path d="M2316.5 426H2363.5V427H2316.5V426Z" fill="#C4C4C4"/>
+</g>
+<rect id="C_spec_testing_center" x="1659.5" y="566" width="66" height="39" fill="white"/>
+<rect id="C_spec_prep_courses" width="66" height="39" transform="matrix(1 0 0 -1 1659.5 683)" fill="white"/>
+<rect id="C_wardrobe_f1_r" x="1843.5" y="683" width="43" height="117" transform="rotate(180 1843.5 683)" fill="white"/>
+<rect id="C_auditori_110" x="1843.5" y="556" width="105" height="86" fill="white"/>
+<rect id="C_admin_113b" width="34" height="38" transform="matrix(1 0 0 -1 1858.5 499)" fill="white"/>
+<rect id="C_admin_rektorat_right" x="1931.5" y="499" width="39" height="38" transform="rotate(180 1931.5 499)" fill="white"/>
+<rect id="C_wc_f1_r1" width="32" height="73" transform="matrix(1 0 0 -1 1931.5 499)" fill="white"/>
+<rect id="C_wc_f1_r2" x="2000.5" y="499" width="37" height="73" transform="rotate(180 2000.5 499)" fill="white"/>
+<rect id="C_utility_f1_boiler" width="39" height="73" transform="matrix(1 0 0 -1 2000.5 499)" fill="white"/>
+<rect id="C_auditori_111a" x="2105.5" y="499" width="66" height="73" transform="rotate(180 2105.5 499)" fill="white"/>
+<rect id="C_auditori_111" width="68" height="73" transform="matrix(1 0 0 -1 2105.5 499)" fill="white"/>
+<rect id="C_spec_109_master" x="2202.5" y="499" width="29" height="73" transform="rotate(180 2202.5 499)" fill="white"/>
+<rect id="C_spec_iibmt_prep" width="28" height="73" transform="matrix(1 0 0 -1 2202.5 499)" fill="white"/>
+<rect id="C_spec_iibmt_lab_105" x="2258.5" y="499" width="28" height="73" transform="rotate(180 2258.5 499)" fill="white"/>
+<rect id="C_spec_iibmt_lab_103" width="29" height="73" transform="matrix(1 0 0 -1 2258.5 499)" fill="white"/>
+<rect id="C_spec_iibmt_lab_101" x="2316.5" y="499" width="29" height="73" transform="rotate(180 2316.5 499)" fill="white"/>
+<rect id="C_spec_iibmt_lab_102k" x="2263.5" y="711" width="48" height="143" transform="rotate(180 2263.5 711)" fill="white"/>
+<rect id="C_spec_iibmt_lab_102l" width="55" height="143" transform="matrix(1 0 0 -1 2263.5 711)" fill="white"/>
+<rect id="C_spec_iibmt_lab_102m" x="2371.5" y="711" width="53" height="143" transform="rotate(180 2371.5 711)" fill="white"/>
+<rect id="C_buffet_f1_108a" width="79" height="86" transform="matrix(-1 0 0 1 2027.5 556)" fill="white"/>
+<rect id="C_auditori_106a" x="2027.5" y="556" width="75" height="86" fill="white"/>
+<rect id="C_auditori_106" width="76" height="86" transform="matrix(-1 0 0 1 2178.5 556)" fill="white"/>
+<rect id="C_admin_director" x="2178.5" y="556" width="37" height="86" fill="white"/>
+<rect id="C_spec_security_chief" width="72" height="67" transform="matrix(1 0 0 -1 1659.5 566)" fill="white"/>
+<rect id="C_spec_telecom_glav" x="1659.5" y="456" width="89" height="43" fill="white"/>
+<g id="C_spec_telecom">
+<path d="M1659.5 456H1748.5V426H1659.5V456Z" fill="white"/>
+<path d="M1817.5 499H1748.5V426H1817.5V499Z" fill="white"/>
+</g>
 <rect id="C_buffet_f1_l" x="225.5" y="414" width="172" height="81" fill="white"/>
 <rect id="C_wc_f1_l" x="463.5" y="414" width="61" height="81" fill="white"/>
 <path id="C_gym_main" d="M154.5 306H157.5V381H190.5V481H157.5V562H19.5V230H154.5V306Z" fill="white"/>
@@ -30,7 +85,7 @@
 <rect id="C_auditori_132" x="397.5" y="547" width="95" height="72" fill="white"/>
 <rect id="C_auditori_134" width="68" height="72" transform="matrix(-1 0 0 1 397.5 547)" fill="white"/>
 <rect id="C_auditori_134a" x="295.5" y="547" width="34" height="72" fill="white"/>
-<rect id="C_kafedra_fiz" width="70" height="72" transform="matrix(-1 0 0 1 295.5 547)" fill="white"/>
+<rect id="C_auditori_136" width="70" height="72" transform="matrix(-1 0 0 1 295.5 547)" fill="white"/>
 <g id="C_stairs_f1_r1">
 <path d="M1659.5 194H1689.5V254H1659.5V194Z" fill="white"/>
 <path d="M1659.5 231H1657.5V254H1659.5V231Z" fill="white"/>
@@ -100,9 +155,9 @@
 <rect id="C_auditori_157a" width="77" height="91" transform="matrix(1 0 0 -1 606.5 405)" fill="white"/>
 <rect id="C_auditori_155a" width="77" height="41" transform="matrix(1 0 0 -1 606.5 314)" fill="white"/>
 <rect id="C_auditori_155" x="606.5" y="205" width="77" height="68" fill="white"/>
-<rect id="C_kafedra_saprvs" width="77" height="47" transform="matrix(1 0 0 -1 606.5 205)" fill="white"/>
-<rect id="C_utility_saprvs1" x="606.5" y="100" width="34" height="57" fill="white"/>
-<rect id="C_spec_prep_saprvs" x="665.5" y="12" width="52" height="92" fill="white"/>
+<rect id="C_kafedra_SAPRVS" width="77" height="47" transform="matrix(1 0 0 -1 606.5 205)" fill="white"/>
+<rect id="C_auditori_sapr" x="606.5" y="100" width="34" height="57" fill="white"/>
+<rect id="C_spec_153a" x="665.5" y="12" width="52" height="92" fill="white"/>
 <g id="C_stairs_f1_c">
 <path d="M1187.5 3H1258.5V72H1187.5V3Z" fill="white"/>
 <path d="M1206.02 71H1239.98V72H1206.02V71Z" fill="#C4C4C4"/>
@@ -138,46 +193,46 @@
 <path d="M1241.01 23H1258.5V24H1241.01V23Z" fill="#C4C4C4"/>
 <path d="M1241.01 17H1258.5V18H1241.01V17Z" fill="#C4C4C4"/>
 </g>
-<rect id="C_spec_glavk" width="86" height="92" transform="matrix(-1 0 0 1 803.5 12)" fill="white"/>
-<rect id="C_spec_CMTSO2" x="803.5" y="12" width="44" height="92" fill="white"/>
-<rect id="C_spec_specAMR" width="33" height="92" transform="matrix(-1 0 0 1 880.5 12)" fill="white"/>
-<rect id="C_kafedra_kt" x="880.5" y="12" width="35" height="92" fill="white"/>
-<rect id="C_admin_upravteleinfores" width="37" height="92" transform="matrix(-1 0 0 1 952.5 12)" fill="white"/>
-<rect id="C_spec_OKISOIR" x="952.5" y="12" width="60" height="92" fill="white"/>
+<rect id="C_spec_153" width="86" height="92" transform="matrix(-1 0 0 1 803.5 12)" fill="white"/>
+<rect id="C_spec_151" x="803.5" y="12" width="44" height="92" fill="white"/>
+<rect id="C_spec_151b" width="33" height="92" transform="matrix(-1 0 0 1 880.5 12)" fill="white"/>
+<rect id="C_kafedra_KT" x="880.5" y="12" width="35" height="92" fill="white"/>
+<rect id="C_admin_147" width="37" height="92" transform="matrix(-1 0 0 1 952.5 12)" fill="white"/>
+<rect id="C_spec_145" x="952.5" y="12" width="60" height="92" fill="white"/>
 <rect id="C_spec_kassa" width="48" height="92" transform="matrix(-1 0 0 1 1060.5 12)" fill="white"/>
-<rect id="C_spec_glav2otdela" x="1060.5" y="12" width="33" height="92" fill="white"/>
-<rect id="C_spec_voenka" width="40" height="92" transform="matrix(-1 0 0 1 1133.5 12)" fill="white"/>
+<rect id="C_spec_139a" x="1060.5" y="12" width="33" height="92" fill="white"/>
+<rect id="C_spec_139" width="40" height="92" transform="matrix(-1 0 0 1 1133.5 12)" fill="white"/>
 <rect id="C_buffet_f1_c" x="1133.5" y="12" width="54" height="92" fill="white"/>
-<rect id="C_spec_AHO" width="32" height="92" transform="matrix(-1 0 0 1 1292.5 12)" fill="white"/>
+<rect id="C_spec_135a" width="32" height="92" transform="matrix(-1 0 0 1 1292.5 12)" fill="white"/>
 <rect id="C_dekanat_FVT" x="1292.5" y="12" width="79" height="92" fill="white"/>
 <rect id="C_wardrobe_f1_c" width="35" height="79" transform="matrix(1 0 0 -1 1325.5 237)" fill="white"/>
-<rect id="C_spec_glavohrana" width="36" height="92" transform="matrix(-1 0 0 1 1407.5 12)" fill="white"/>
-<rect id="C_spec_ohrana2" x="1407.5" y="12" width="35" height="92" fill="white"/>
+<rect id="C_spec_133" width="36" height="92" transform="matrix(-1 0 0 1 1407.5 12)" fill="white"/>
+<rect id="C_spec_134" x="1407.5" y="12" width="35" height="92" fill="white"/>
 <rect id="C_auditori_129a" width="41" height="92" transform="matrix(-1 0 0 1 1483.5 12)" fill="white"/>
 <rect id="C_auditori_129" x="1483.5" y="12" width="70" height="92" fill="white"/>
 <rect id="C_auditori_127a" width="55" height="92" transform="matrix(-1 0 0 1 1608.5 12)" fill="white"/>
 <rect id="C_auditori_127" x="1608.5" y="12" width="51" height="92" fill="white"/>
 <rect id="C_auditori_125" width="38" height="92" transform="matrix(-1 0 0 1 1697.5 12)" fill="white"/>
 <rect id="C_auditori_125a" x="1697.5" y="12" width="92" height="92" fill="white"/>
-<rect id="C_spec_prep_aitp" width="69" height="158" transform="matrix(-1 0 0 1 1858.5 12)" fill="white"/>
-<rect id="C_spec_aitp3" x="1858.5" y="211" width="73" height="41" transform="rotate(180 1858.5 211)" fill="white"/>
+<rect id="C_spec_125b" width="69" height="158" transform="matrix(-1 0 0 1 1858.5 12)" fill="white"/>
+<rect id="C_spec_123" x="1858.5" y="211" width="73" height="41" transform="rotate(180 1858.5 211)" fill="white"/>
 <rect id="C_auditori_121" width="73" height="68" transform="matrix(-1 0 0 1 1858.5 211)" fill="white"/>
-<rect id="C_spec_aitp1" x="1858.5" y="320" width="73" height="41" transform="rotate(180 1858.5 320)" fill="white"/>
+<rect id="C_spec_119" x="1858.5" y="320" width="73" height="41" transform="rotate(180 1858.5 320)" fill="white"/>
 <rect id="C_auditori_117a" width="73" height="106" transform="matrix(-1 0 0 1 1858.5 320)" fill="white"/>
-<rect id="C_spec_aitp0" width="59" height="31" transform="matrix(-1 0 0 1 1718.5 287)" fill="white"/>
+<rect id="C_spec_117v" width="59" height="31" transform="matrix(-1 0 0 1 1718.5 287)" fill="white"/>
 <rect id="C_wc_f1_aitp" x="1718.5" y="287" width="59" height="32" transform="rotate(180 1718.5 287)" fill="white"/>
-<rect id="C_spec_aitp2" width="29" height="86" transform="matrix(-1 0 0 1 1718.5 169)" fill="white"/>
+<rect id="C_spec_120" width="29" height="86" transform="matrix(-1 0 0 1 1718.5 169)" fill="white"/>
 <rect id="C_auditori_112" width="40" height="67" transform="matrix(-1 0 0 1 1659.5 158)" fill="white"/>
 <rect id="C_auditori_114" x="1587.5" y="158" width="32" height="67" fill="white"/>
 <rect id="C_auditori_116" width="69" height="67" transform="matrix(-1 0 0 1 1587.5 158)" fill="white"/>
-<rect id="C_kafedra_asu" x="1480.5" y="158" width="38" height="67" fill="white"/>
+<rect id="C_kafedra_ASU" x="1480.5" y="158" width="38" height="67" fill="white"/>
 <rect id="C_auditori_118" width="120" height="67" transform="matrix(-1 0 0 1 1480.5 158)" fill="white"/>
 <rect id="C_spec_ohrana" x="1098.5" y="158" width="45" height="42" fill="white"/>
-<rect id="C_spec_server" width="72" height="67" transform="matrix(-1 0 0 1 1098.5 158)" fill="white"/>
+<rect id="C_spec_122a" width="72" height="67" transform="matrix(-1 0 0 1 1098.5 158)" fill="white"/>
 <rect id="C_auditori_122" x="880.5" y="158" width="146" height="67" fill="white"/>
-<rect id="C_spec_CDO" width="76" height="67" transform="matrix(-1 0 0 1 880.5 158)" fill="white"/>
+<rect id="C_spec_124" width="76" height="67" transform="matrix(-1 0 0 1 880.5 158)" fill="white"/>
 <rect id="C_spec_smeta" width="45" height="37" transform="matrix(1 0 0 -1 1098.5 237)" fill="white"/>
-<rect id="C_spec_CMTSO1" x="606.5" y="12" width="59" height="39.5" fill="white"/>
+<rect id="C_spec_153b" x="606.5" y="12" width="59" height="39.5" fill="white"/>
 <rect id="C_auditori_124a" x="767.5" y="256" width="39" height="98" transform="rotate(180 767.5 256)" fill="white"/>
 <g id="C_stairs_f1_l4">
 <path d="M767.5 194H804.5V225H767.5V194Z" fill="white"/>
@@ -253,7 +308,7 @@
 <path d="M804.5 641H806.5V641.5H804.5V641Z" fill="white"/>
 </g>
 <path id="V1" d="M189 563.5H155V559.5H157V551.5H161V559.5H189V520.5H184V516.5H189V483H161V516.5H170V520.5H161V535.5H157V479H189V383H155.5V338.5H159.5V349H167V353H159.5V379H189V353H182.5V349H189V308.5H159.5V322.5H155.5V308.5H151.5V304.5H152.5V298.5H156.5V304.5H189V231.5H156.5V282.5H152.5V231.5H102.5V227.5H193V411.5H527V445H604.5V431.5H608.5V489.5H613V493.5H608.5V497.5H604.5V449H527V497.5H519.5V493.5H523V415.5H494V434.5H490V415.5H465V493.5H490V449.5H494V493.5H504V497.5H455V493.5H461V415.5H399.5V493.5H439.5V497.5H384.5V493.5H395.5V415.5H275V461.5H271V415.5H227.5V493.5H230V497.5H227.5V501.5H223.5V415.5H193V566.5H189V563.5ZM0 559.5H17.5V227.5H81V231.5H21.5V304.5H127V308.5H21.5V559.5H132.5V563.5H127V571H123V563.5H67.5V571H63.5V563.5H4V660.5H7V664.5H4V694H35V680.828L18.6719 664.5H15.5V660.5H20.3281L28.0088 668.181L41.0312 655.331L33.1357 647.962L32.5 647.369V636H26.5V632H39V636H36.5V645.631L43.8809 652.52L60.626 636H58.5V632H63.5V598.5H67.5V611H123V594H127V611H134.5V615H127V617H123V615H67.5V640H63.5V638.782L46.8086 655.252L57.7881 665.5H63.5V656.5H67.5V669.5H56.2119L55.6357 668.962L43.959 658.063L30.8369 671.009L39 679.172V694H63.5V688H67.5V694H123V628.5H127V632H161V628.5H165V636H127V694H191V614.5H165V617H161V614.5H158V610.5H191V606.5H195V617.5H223.5V549H222V545H223.5V542.5H227.5V545H272.5V549H227.5V617.5H293V549H288V545H305.5V549H297V617.5H327.5V549H320V545H375.5V549H331.5V617.5H395V549H390.5V545H408V549H399V617.5H490V549H486.5V545H543V549H494V617.5H597.5V549.5H558.5V545.5H604.5V544.5H608.5V558.5H672.5V562.5H601.5V692H806.5V640H810.5V696H597.5V621.5H195V698H0V559.5ZM806.5 562.5H717V558.5H723V534H727V558.5H802.5V493.5H727V516H723V493.5H718.5V489.5H723V486.5H727V489.5H802.5V407H656V489.5H682.5V486.5H686.5V489.5H693V493.5H643.5V489.5H652V407H608.5V413.5H604.5V403H806.5V558.5H810.5V619.5H806.5V562.5ZM246.5 493.5H271V477.5H275V493.5H369V497.5H246.5V493.5ZM423 545H472.5V549H423V545Z" fill="#838383"/>
-<path id="V2" d="M804.5 405V317.5M804.5 249.5V256M804.5 256V284M804.5 256H767.5M728.5 260V240.5V256H767.5M728.5 273.5V284M728.5 295V284M728.5 308.5V317.5H804.5M804.5 317.5V284M804.5 284H759M728.5 284H759M759 284V275.5M728.5 405V348.5M728.5 336.5V348.5M728.5 348.5H706M682 405V348.5M682 336.5V348.5M682 348.5H687.5H668M606.5 405V348.5M606.5 348.5H649M606.5 348.5V313.5M641 119V100H606.5V157M641 141.5V157M641 157H633M641 157H684M606.5 157V205M606.5 157H633M606.5 205H633M606.5 205V273.5M684 205V187.5M684 205H633M684 205V228M633 205V197M633 157V180.5M691.5 157H684M684 157V169M684 246V273.5M684 273.5H606.5M684 273.5V279M606.5 273.5V313.5M684 297V313.5M684 317.5V313.5M684 313.5H606.5M767.5 256V158H728.5M720.5 158H728.5M773 158H728.5M728.5 158V215.5M833 158H804.5V225.5H854M854 225.5V187.5M854 225.5H879M854 169.5V158H850.5H879M893.5 158H879M879 158V225.5M879 225.5H1026.5M1026.5 225.5V158H1015.5H1031M1026.5 225.5H1059M997.5 158H910.5M1133.5 12.5V104H1116H1140M1133.5 12.5H1093.5M1133.5 12.5H1140M1098.5 104H1093.5M1088.5 104H1093.5M1093.5 104V12.5M1093.5 12.5H1060.5M1060.5 12.5H1012M1060.5 12.5V76.5M1037.5 104H1071H1060.5V76.5M1020.5 104H1012M1003.5 104H1012M986 104H975M958.5 104H953M937.5 104H953M953 104V12.5M953 12.5H1012M953 12.5H915.5M1012 104V76.5M1012 12.5V76.5M1012 76.5H1034M1050.5 76.5H1060.5M915.5 12.5V104H921H907.5M915.5 12.5H880.25M890.5 104H880.25M870 104H880.25M880.25 104V72.5M880.25 12.5V72.5M880.25 12.5H847.5M880.25 72.5H870M854 72.5H847.5M847.5 72.5V12.5M847.5 72.5V83M847.5 12.5H803.5M852.5 104H803.5M742 104H759.5M759.5 104V83M759.5 104H803.5M759.5 45.5V12.5M759.5 12.5H803.5M759.5 12.5H717.5M803.5 12.5V104M723.5 104H717.5M706 104H717.5M717.5 104V12.5M717.5 12.5H665.5M688.5 104H665.5M659 104H665.5M665.5 104V51.5M665.5 12.5H606.5V51.5H641M665.5 12.5V51.5M665.5 51.5H659M1098.5 225.5H1059M1098.5 225.5V237.5H1143V233.5M1098.5 225.5V200M1098.5 158H1059M1098.5 158V200M1098.5 158H1143V171M1047.5 158H1059M1059 158V166M1059 180V225.5M1143 217V200M1143 188V200M1143 200H1098.5" stroke="#838383" stroke-width="4"/>
+<path id="V2" d="M804.5 256V249.5M804.5 256V284M804.5 256H767.5M728.5 256V240.5M728.5 256V260M728.5 256H767.5M728.5 308.5V317.5H804.5M804.5 405V317.5M804.5 317.5V284M804.5 284H759M728.5 273.5V284M728.5 284V295M728.5 284H759M759 284V275.5M728.5 405V348.5M728.5 348.5V336.5M728.5 348.5H706M682 405V348.5M682 348.5V336.5M682 348.5H687.5M682 348.5H668M606.5 405V348.5M606.5 348.5H649M606.5 348.5V313.5M641 119V100H606.5V157M641 141.5V157M641 157H633M641 157H684M606.5 157V205M606.5 157H633M606.5 205H633M606.5 205V273.5M684 205V187.5M684 205H633M684 205V228M633 205V197M633 157V180.5M684 157H691.5M684 157V169M684 246V273.5M684 273.5H606.5M684 273.5V279M606.5 273.5V313.5M684 297V313.5M684 313.5V317.5M684 313.5H606.5M767.5 256V158M767.5 158H728.5M767.5 158H773M720.5 158H728.5M728.5 158V215.5M833 158H804.5V225.5H854M854 225.5V187.5M854 225.5H879M854 169.5V158M854 158H850.5M854 158H879M879 158H893.5M879 158V225.5M879 225.5H1026.5M1026.5 225.5V158M1026.5 225.5H1059M1026.5 158H1015.5M1026.5 158H1031M997.5 158H910.5M1133.5 12.5V104M1133.5 12.5H1093.5M1133.5 12.5H1140M1133.5 104H1116M1133.5 104H1140M1098.5 104H1093.5M1093.5 104H1088.5M1093.5 104V12.5M1093.5 12.5H1060.5M1060.5 12.5H1012M1060.5 12.5V76.5M1060.5 104H1071M1060.5 104H1037.5M1060.5 104V76.5M986 104H975M958.5 104H953M953 104H937.5M953 104V12.5M953 12.5H1012M953 12.5H915.5M1020.5 104H1012M1012 104H1003.5M1012 104V76.5M1012 12.5V76.5M1012 76.5H1034M1060.5 76.5H1050.5M915.5 12.5V104M915.5 12.5H880.25M915.5 104H921M915.5 104H907.5M890.5 104H880.25M880.25 104H870M880.25 104V72.5M880.25 12.5V72.5M880.25 12.5H847.5M880.25 72.5H870M854 72.5H847.5M847.5 72.5V12.5M847.5 72.5V83M847.5 12.5H803.5M759.5 104H742M759.5 104V83M759.5 104H803.5M759.5 45.5V12.5M759.5 12.5H803.5M759.5 12.5H717.5M803.5 12.5V104M852.5 104H803.5M723.5 104H717.5M717.5 104H706M717.5 104V12.5M717.5 12.5H665.5M688.5 104H665.5M665.5 104H659M665.5 104V51.5M665.5 12.5H606.5V51.5H641M665.5 12.5V51.5M665.5 51.5H659M1098.5 158H1059M1098.5 158V200M1098.5 158H1143V171M1059 158H1047.5M1059 158V166M1059 225.5H1098.5M1059 225.5V180M1098.5 225.5V237.5H1143V233.5M1098.5 225.5V200M1143 217V200M1143 200V188M1143 200H1098.5" stroke-width="4" stroke="#838383"/>
 <g id="V3">
 <path d="M1659.5 289V285H1716.5V271H1720.5V289H1716.5H1659.5Z" fill="#838383"/>
 <path d="M1720.5 312H1716.5V298H1720.5V312Z" fill="#838383"/>
@@ -278,6 +333,6 @@
 <path d="M1657.5 424H1860.5V431.5H1856.5V428H1819.5V497.5H1821V501.5H1788.5V497.5H1815.5V428H1790.5V461.5H1786.5V428H1751V433.5H1747V428H1661.5V454.5H1747V451.5H1751V470.5H1747V458.5H1661.5V497.5H1747V487H1751V497.5H1761V501.5H1734V531H1730V501.5H1661.5V564H1730V546.5H1734V564H1737V568H1727V575H1723V568H1661.5V603H1723V591.5H1727V603H1730.5V607H1661.5V614H1657.5V424Z" fill="#838383"/>
 <path d="M1873 554H1913.5V558H1873V554Z" fill="#838383"/>
 </g>
-<path id="V5" d="M606.5 100H123.5V229.5M606.5 51.5H123.5V15.5M71.5 229.5V15.5" stroke="#838383" stroke-width="4"/>
+<path id="V5" d="M123.5 229.5V100H606.5M606.5 51.5H123.5V15.5M71.5 15.5V229.5" stroke-width="4" stroke="#838383"/>
 </g>
 </svg>

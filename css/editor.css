@@ -11,7 +11,50 @@
   padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
+  transition: width 0.25s ease, padding 0.25s ease;
+}
+
+body.sidebar-collapsed #editor-sidebar {
+  width: 0;
+  padding: 0;
+  border-left: none;
+  overflow: hidden;
+}
+
+/* Язычок сворачивания */
+.sidebar-handle {
+  position: fixed;
+  top: 50%;
+  right: 300px;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 64px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 22px;
+  padding: 0;
+  z-index: 1001;
+  transition: right 0.25s ease, background 0.15s, color 0.15s;
+  margin-right: -1px;
+}
+.sidebar-handle:hover {
+  background: var(--btn-hover);
+  color: var(--text-bright);
+}
+.sidebar-handle .mdi { transition: transform 0.25s ease; }
+body.sidebar-collapsed .sidebar-handle {
+  right: 0;
+}
+body.sidebar-collapsed .sidebar-handle .mdi {
+  transform: rotate(180deg);
 }
 
 .editor-section {
@@ -29,37 +72,11 @@
   margin-bottom: 4px;
 }
 
-.tool-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--btn-bg);
-  color: var(--text);
-  border: 1px solid transparent;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  text-align: left;
-  font-family: inherit;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.tool-btn:hover {
-  background: var(--btn-hover);
-  color: var(--text-bright);
-}
-.tool-btn.active {
-  background: var(--btn-flr-active);
-  color: #fff;
-  border-color: var(--btn-flr-active);
-}
-.tool-btn .mdi { font-size: 18px; }
-
 #node-info p {
   font-size: 13px;
   line-height: 1.5;
   color: var(--text);
+  margin-bottom: 4px;
 }
 #node-info .muted {
   color: var(--text-muted);
@@ -74,17 +91,6 @@
   padding: 1px 6px;
   border-radius: 4px;
   font-size: 12px;
-}
-
-#stats p {
-  font-size: 13px;
-  color: var(--text);
-  margin-bottom: 4px;
-}
-#stats strong {
-  color: var(--text-bright);
-  font-size: 15px;
-  font-weight: 700;
 }
 
 .hotkeys {
@@ -106,43 +112,247 @@
   border: 1px solid var(--border);
 }
 
-.editor-section .muted.small {
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-.editor-section code {
-  background: var(--btn-bg);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 12px;
+/* ============ Нижний плавающий островок с инструментами ============ */
+
+.bottom-toolbar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ctrl-bg);
+  border-radius: 12px;
+  box-shadow: var(--ctrl-shadow);
+  display: flex;
+  padding: 6px;
+  gap: 4px;
+  z-index: 1000;
 }
 
+.tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--ctrl-text);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.tool-btn:hover {
+  background: var(--ctrl-hover);
+  color: var(--ctrl-text-hover);
+}
+.tool-btn.active {
+  background: var(--btn-flr-active);
+  color: #fff;
+}
+.tool-btn .mdi { font-size: 18px; }
+
 /* ============ Маркеры узлов на карте ============ */
-/* Важно: НИКАКИХ transform / scale — иначе SVG-маркер дрожит при наведении */
 
 .graph-node-marker {
   cursor: pointer;
   transition: stroke-width 0.15s ease, fill 0.15s ease, stroke 0.15s ease;
 }
 .graph-node-marker:hover {
-  stroke-width: 4;      /* вместо увеличения размера — толще обводка */
+  stroke-width: 3;
   stroke: #fde047;
 }
 .graph-node-marker.selected {
   stroke-width: 4;
   stroke: #f59e0b;
 }
-.graph-node-marker.stairs {
-  /* цвета задаём через fill в JS, здесь только подсказка */
-}
-.graph-node-marker.entrance {
-  /* аналогично */
-}
 
 /* Кнопка "Сохранить" подсветится, когда есть несохранённые изменения */
 #editor-save.dirty {
   color: #f59e0b;
+}
+
+/* ============ Модальное окно ============ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.modal-backdrop.open {
+  display: flex;
+  opacity: 1;
+}
+
+.modal-window {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+  transform: translateY(20px);
+  transition: transform 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-backdrop.open .modal-window {
+  transform: translateY(0);
+}
+
+.modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin: 0;
+}
+
+.modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.form-group label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.form-group input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.form-group input:focus {
+  border-color: var(--btn-flr-active);
+}
+
+/* Радиокнопки */
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+.radio-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.radio-label input[type="radio"] {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--text-muted);
+  border-radius: 50%;
+  outline: none;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.15s;
+  margin: 0;
+}
+.radio-label input[type="radio"]:checked {
+  border-color: var(--btn-flr-active);
+}
+.radio-label input[type="radio"]:checked::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 10px;
+  height: 10px;
+  background: var(--btn-flr-active);
+  border-radius: 50%;
+}
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  background: var(--btn-bg);
+}
+
+.btn-primary, .btn-secondary {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  border: none;
+  transition: opacity 0.15s;
+}
+.btn-primary {
+  background: var(--btn-flr-active);
+  color: #fff;
+}
+.btn-primary:hover { opacity: 0.9; }
+.btn-secondary {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover {
+  background: var(--btn-hover);
+  color: var(--text-bright);
+}
+
+/* ============ Уведомления сверху ============ */
+#map-wrap .toast {
+  position: absolute;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  background: var(--topbar-bg);
+  color: var(--text-bright);
+  border: 1px solid var(--border);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 2000;
+  pointer-events: none;
+}
+#map-wrap .toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 /* Адаптив под мобильный */
@@ -153,12 +363,18 @@
     top: 60px;
     bottom: 0;
     z-index: 1500;
-    width: 280px;
-    transform: translateX(100%);
-    transition: transform 0.25s ease;
-    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
-  }
-  #editor-sidebar.open {
+    width: 300px;
     transform: translateX(0);
+  }
+  body.sidebar-collapsed #editor-sidebar {
+    transform: translateX(100%);
+  }
+  .sidebar-handle {
+    right: 300px;
+  }
+  .bottom-toolbar {
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 90%;
   }
 }

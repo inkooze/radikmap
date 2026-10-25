@@ -18,14 +18,12 @@ let graph = { nodes: {}, edges: [] };
 
 let currentTool = 'add-node';
 let selectedNodeId = null;
-let selectedEdgeIndex = null;
-
+let linkStairsSourceId = null;
 let hasUnsavedChanges = false;
 
 const nodeCirclePts = {};
 const edgeLines = [];
 
-let currentSvg = null;
 let currentSvgViewBox = { W: 1000, H: 1000 };
 
 // ================ КАРТА ================
@@ -42,6 +40,13 @@ const map = L.map('map', {
   attributionControl: false
 });
 
+// ВАЖНО: Создаем кастомные панели для правильного наложения слоев
+map.createPane('svgPane');
+map.getPane('svgPane').style.zIndex = 400; // План этажа
+
+map.createPane('graphPane');
+map.getPane('graphPane').style.zIndex = 450; // Граф (узлы и ребра)
+
 // ================ ЗАГРУЗКА ГРАФА ================
 
 async function loadGraph() {
@@ -51,15 +56,92 @@ async function loadGraph() {
     graph = await res.json();
     if (!graph.nodes) graph.nodes = {};
     if (!graph.edges) graph.edges = [];
-    console.log('[editor] graph загружен:', Object.keys(graph.nodes).length, 'узлов');
   } catch (e) {
-    console.log('[editor] graph.json ещё не создан, начинаю с пустого графа');
     graph = { nodes: {}, edges: [] };
   }
-  updateStats();
 }
 
-// ================ ЭТАЖИ ================
+// ================ ТЕМА ================
+
+function setupTheme() {
+  const btn = document.getElementById('btn-theme-toggle');
+  const updateIcon = () => {
+    const theme = document.documentElement.dataset.theme || 'light';
+    btn.innerHTML = theme === 'dark' ? '<i class="mdi mdi-weather-sunny"></i>' : '<i class="mdi mdi-weather-night"></i>';
+  };
+  updateIcon();
+  btn.addEventListener('click', () => {
+    const current = document.documentElement.dataset.theme || 'light';
+    const next = current === 'light' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = next;
+    updateIcon();
+  });
+}
+
+// ================ СВОРАЧИВАНИЕ ПАНЕЛИ ================
+
+function setupSidebar() {
+  const handle = document.getElementById('sidebar-handle');
+  handle.addEventListener('click', () => {
+    document.body.classList.toggle('sidebar-collapsed');
+    setTimeout(() => map.invalidateSize(), 260);
+  });
+}
+
+// ================ КОНТРОЛЫ КАРТЫ ================
+
+function setupResetControl() {
+  const ResetControl = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd() {
+      const wrap = L.DomUtil.create('div', 'leaflet-control-reset');
+      const btn = L.DomUtil.create('button', 'reset-view-btn', wrap);
+      btn.title = 'Сбросить вид';
+      btn.innerHTML = '<i class="mdi mdi-image-filter-center-focus"></i>';
+      L.DomEvent.disableClickPropagation(wrap);
+      btn.addEventListener('click', () => {
+        if (currentOverlay) map.fitBounds(currentOverlay.getBounds());
+      });
+      return wrap;
+    }
+  });
+  return new ResetControl();
+}
+
+function createFloorSwitcher() {
+  const FloorSwitcher = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd() {
+      const wrap = L.DomUtil.create('div', 'floor-switcher-wrap');
+      L.DomEvent.disableClickPropagation(wrap);
+      return wrap;
+    }
+  });
+  return new FloorSwitcher();
+}
+
+function updateFloorSwitcher() {
+  let w = document.querySelector('.floor-switcher-wrap');
+  if (!w) return;
+  w.innerHTML = '';
+  const b = BUILDINGS[currentBuilding];
+  if (!b) return;
+  const floors = Object.keys(b.floors).map(Number).sort((a, b) => b - a);
+  if (floors.length < 2) return;
+  
+  const sw = document.createElement('div');
+  sw.className = 'floor-switcher';
+  floors.forEach(f => {
+    const btn = document.createElement('button');
+    btn.textContent = f;
+    if (f === currentFloor) btn.classList.add('active');
+    btn.addEventListener('click', () => showFloor(currentBuilding, f));
+    sw.appendChild(btn);
+  });
+  w.appendChild(sw);
+}
+
+// ================ UI: ЗДАНИЯ ================
 
 function buildBuildingsUI() {
   const container = document.getElementById('buildings');
@@ -75,10 +157,7 @@ function buildBuildingsUI() {
     tab.addEventListener('click', () => {
       if (code === currentBuilding) return;
       const floors = Object.keys(b.floors).map(Number).sort((a, b) => a - b);
-      if (floors.length === 0) {
-        showToast(`Этажи корпуса «${b.name}» ещё не добавлены`);
-        return;
-      }
+      if (floors.length === 0) return alert(`Этажи корпуса «${b.name}» не добавлены`);
       currentBuilding = code;
       updateTabActive();
       showFloor(code, floors[0]);
@@ -129,55 +208,25 @@ async function showFloor(buildingCode, floorNum) {
 
   const vb = svgEl.getAttribute('viewBox').split(/\s+/).map(Number);
   const W = vb[2], H = vb[3];
-  currentSvg = svgEl;
   currentSvgViewBox = { W, H };
 
   if (currentOverlay) map.removeLayer(currentOverlay);
   if (currentFloorGroup) map.removeLayer(currentFloorGroup);
 
   const bounds = [[0, 0], [H, W]];
-  currentOverlay = L.svgOverlay(svgEl, bounds).addTo(map);
+  
+  // Добавляем SVG в нашу кастомную панель (слой ниже)
+  currentOverlay = L.svgOverlay(svgEl, bounds, { pane: 'svgPane' }).addTo(map);
   map.fitBounds(bounds);
 
   svgEl.style.pointerEvents = 'none';
 
+  // Граф добавляем в панель выше
   currentFloorGroup = L.layerGroup().addTo(map);
   drawGraphForCurrentFloor();
 
   updateTabActive();
   updateFloorSwitcher();
-}
-
-function updateFloorSwitcher() {
-  let w = document.querySelector('.floor-switcher-wrap');
-  if (!w) {
-    const ctl = L.Control.extend({
-      options: { position: 'topleft' },
-      onAdd() {
-        const el = L.DomUtil.create('div', 'floor-switcher-wrap');
-        L.DomEvent.disableClickPropagation(el);
-        return el;
-      }
-    });
-    new ctl().addTo(map);
-    w = document.querySelector('.floor-switcher-wrap');
-  }
-  if (!w) return;
-  w.innerHTML = '';
-  const b = BUILDINGS[currentBuilding];
-  if (!b) return;
-  const floors = Object.keys(b.floors).map(Number).sort((a, b) => b - a);
-  if (floors.length < 2) return;
-  const sw = document.createElement('div');
-  sw.className = 'floor-switcher';
-  floors.forEach(f => {
-    const btn = document.createElement('button');
-    btn.textContent = f;
-    if (f === currentFloor) btn.classList.add('active');
-    btn.addEventListener('click', () => showFloor(currentBuilding, f));
-    sw.appendChild(btn);
-  });
-  w.appendChild(sw);
 }
 
 // ================ РИСОВАНИЕ ГРАФА ================
@@ -191,43 +240,7 @@ function drawGraphForCurrentFloor() {
 
   const { H } = currentSvgViewBox;
 
-  for (const [id, node] of Object.entries(graph.nodes)) {
-    if (node.building !== currentBuilding) continue;
-    if (node.floor !== currentFloor) continue;
-
-    const latlng = [H - node.y, node.x];
-
-    const isStairs = node.type === 'stairs';
-    const isEntrance = node.type === 'entrance';
-    const isSelected = id === selectedNodeId;
-
-    const pt = L.circleMarker(latlng, {
-      radius: 7,
-      color: isSelected ? '#f59e0b' : '#ffffff',
-      weight: isSelected ? 4 : 2,
-      fillColor: isStairs ? '#a855f7' : (isEntrance ? '#22c55e' : '#3b82f6'),
-      fillOpacity: 1,
-      className: 'graph-node-marker'
-    });
-
-    pt.on('click', (e) => {
-      L.DomEvent.stopPropagation(e);
-      handleNodeClick(id);
-    });
-
-    pt.on('mouseover', () => {
-      if (id === selectedNodeId) return;
-      pt.setStyle({ weight: 4, color: '#fde047' });
-    });
-    pt.on('mouseout', () => {
-      if (id === selectedNodeId) return;
-      pt.setStyle({ weight: 2, color: '#ffffff' });
-    });
-
-    currentFloorGroup.addLayer(pt);
-    nodeCirclePts[id] = pt;
-  }
-
+  // Рёбра
   for (let i = 0; i < graph.edges.length; i++) {
     const edge = graph.edges[i];
     const a = graph.nodes[edge.from];
@@ -236,23 +249,101 @@ function drawGraphForCurrentFloor() {
     if (a.building !== currentBuilding || b.building !== currentBuilding) continue;
     if (a.floor !== currentFloor || b.floor !== currentFloor) continue;
 
-    const isSelected = i === selectedEdgeIndex;
-
-    const line = L.polyline(
-      [[H - a.y, a.x], [H - b.y, b.x]],
-      {
-        color: isSelected ? '#f59e0b' : '#3b82f6',
-        weight: isSelected ? 4 : 2,
-        opacity: isSelected ? 1 : 0.7
-      }
-    );
+    const line = L.polyline([[H - a.y, a.x], [H - b.y, b.x]], {
+      pane: 'graphPane',
+      color: '#3b82f6', weight: 2, opacity: 0.7
+    });
     line.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
-      handleEdgeClick(i);
+      if (currentTool === 'select') {
+        if (confirm(`Удалить ребро ${edge.from} → ${edge.to}?`)) {
+          graph.edges.splice(i, 1);
+          markDirty();
+          drawGraphForCurrentFloor();
+          clearNodeInfo();
+        }
+      }
     });
     currentFloorGroup.addLayer(line);
     edgeLines.push({ index: i, line });
   }
+
+  // Узлы
+  for (const [id, node] of Object.entries(graph.nodes)) {
+    if (node.building !== currentBuilding) continue;
+    if (node.floor !== currentFloor) continue;
+
+    const latlng = [H - node.y, node.x];
+    const isStairs = node.type === 'stairs';
+    const isEntrance = node.type === 'entrance';
+    const isSelected = id === selectedNodeId || id === linkStairsSourceId;
+
+    // Визуальный маркер (маленький)
+    const visualPt = L.circleMarker(latlng, {
+      pane: 'graphPane',
+      radius: 4,
+      color: isSelected ? '#f59e0b' : '#ffffff',
+      weight: isSelected ? 3 : 1.5,
+      fillColor: isStairs ? '#a855f7' : (isEntrance ? '#22c55e' : '#3b82f6'),
+      fillOpacity: 1,
+      className: 'graph-node-marker',
+      interactive: false // Отключаем клики на визуальном маркере, чтобы не мешал
+    });
+    
+    // Невидимый маркер для хитбокса (большой)
+    const hitbox = L.circleMarker(latlng, {
+      pane: 'graphPane',
+      radius: 12, // Большой радиус для удобного клика
+      fillColor: 'transparent',
+      fillOpacity: 1,
+      stroke: false,
+      interactive: true
+    });
+
+    hitbox.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      handleNodeClick(id);
+    });
+    
+    hitbox.on('mouseover', () => {
+      if (isSelected) return;
+      visualPt.setStyle({ weight: 3, color: '#fde047' });
+    });
+    hitbox.on('mouseout', () => {
+      if (isSelected) return;
+      visualPt.setStyle({ weight: 1.5, color: '#ffffff' });
+    });
+
+    currentFloorGroup.addLayer(visualPt);
+    currentFloorGroup.addLayer(hitbox);
+    nodeCirclePts[id] = { visual: visualPt, hitbox: hitbox };
+  }
+}
+
+// ================ МОДАЛЬНОЕ ОКНО ================
+
+function openModal({ title, bodyHtml, onConfirm }) {
+  const backdrop = document.getElementById('modal-backdrop');
+  document.getElementById('modal-title').textContent = title;
+  const body = document.getElementById('modal-body');
+  body.innerHTML = bodyHtml;
+  backdrop.classList.add('open');
+
+  const confirmBtn = document.getElementById('modal-confirm');
+  const cancelBtn = document.getElementById('modal-cancel');
+
+  const close = () => backdrop.classList.remove('open');
+
+  const newConfirmBtn = confirmBtn.cloneNode(true);
+  const newCancelBtn = cancelBtn.cloneNode(true);
+  confirmBtn.replaceWith(newConfirmBtn);
+  cancelBtn.replaceWith(newCancelBtn);
+
+  newCancelBtn.addEventListener('click', close);
+  newConfirmBtn.addEventListener('click', () => {
+    const result = onConfirm(body);
+    if (result !== false) close();
+  });
 }
 
 // ================ КЛИКИ ================
@@ -263,159 +354,157 @@ function handleMapClick(e) {
   const y = Math.round(H - e.latlng.lat);
 
   if (currentTool === 'add-node') {
-    addNodeAt(x, y);
+    showAddNodeModal(x, y);
   } else {
-    if (selectedNodeId) {
-      selectedNodeId = null;
-      refreshGraphView();
-      clearNodeInfo();
-    } else if (selectedEdgeIndex !== null) {
-      selectedEdgeIndex = null;
-      refreshGraphView();
-      clearNodeInfo();
+    selectedNodeId = null;
+    linkStairsSourceId = null;
+    drawGraphForCurrentFloor();
+    clearNodeInfo();
+  }
+}
+
+function showAddNodeModal(x, y) {
+  const autoId = `n${Object.keys(graph.nodes).length + 1}_${currentBuilding.toLowerCase()}_f${currentFloor}`;
+  
+  const html = `
+    <div class="form-group">
+      <label>ID узла</label>
+      <input type="text" id="modal-node-id" value="${autoId}">
+    </div>
+    <div class="form-group">
+      <label>Тип узла</label>
+      <div class="radio-group">
+        <label class="radio-label">
+          <input type="radio" name="node-type" value="corridor" checked>
+          Коридор
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="node-type" value="stairs">
+          Лестница
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="node-type" value="entrance">
+          Вход
+        </label>
+      </div>
+    </div>
+    <div class="form-group" id="modal-group-wrap" style="display:none">
+      <label>Группа лестницы (например, stairs_main)</label>
+      <input type="text" id="modal-node-group" value="stairs_main">
+    </div>
+  `;
+
+  openModal({
+    title: 'Добавить узел',
+    bodyHtml: html,
+    onConfirm: (body) => {
+      const id = body.querySelector('#modal-node-id').value.trim();
+      const type = body.querySelector('input[name="node-type"]:checked').value;
+      const group = body.querySelector('#modal-node-group').value.trim();
+
+      if (!id) { alert('Введите ID'); return false; }
+      if (graph.nodes[id]) { alert('Узел с таким ID уже существует'); return false; }
+
+      const node = { x, y, building: currentBuilding, floor: currentFloor, type };
+      if (type === 'stairs') node.group = group || 'stairs_default';
+
+      graph.nodes[id] = node;
+      markDirty();
+      drawGraphForCurrentFloor();
     }
-  }
-}
+  });
 
-// Автогенерация свободного ID вида n1_c_f1, n2_c_f1, ...
-function generateFreeId() {
-  const suffix = '_' + currentBuilding.toLowerCase() + '_f' + currentFloor;
-  let n = 1;
-  while (graph.nodes[`n${n}${suffix}`]) n++;
-  return `n${n}${suffix}`;
-}
-
-// Ищет свободный ID на основе желаемого: "n5_c_f1" → "n5_c_f1", "n5_c_f1_2", ...
-function findFreeIdVariants(baseId) {
-  const candidates = [baseId];
-  for (let i = 2; i <= 50; i++) candidates.push(`${baseId}_${i}`);
-  return candidates.find(id => !graph.nodes[id]);
-}
-
-function addNodeAt(x, y) {
-  const auto = generateFreeId();
-  const raw = prompt('ID узла (Enter — оставить автогенерацию):', auto);
-  if (raw === null) return; // пользователь нажал Cancel
-
-  let id = (raw && raw.trim()) ? raw.trim() : auto;
-
-  // Если ID занят — предлагаем следующий свободный
-  if (graph.nodes[id]) {
-    const free = findFreeIdVariants(id);
-    if (!free) {
-      alert(`Слишком много похожих ID для «${id}». Введи другой.`);
-      return;
-    }
-    const answer = confirm(`ID «${id}» уже занят. Использовать «${free}»?`);
-    if (!answer) return;
-    id = free;
-  }
-
-  const type = promptNodeType();
-  if (type === null) return; // пользователь отменил
-
-  const node = {
-    x, y,
-    building: currentBuilding,
-    floor: currentFloor,
-    type: type || 'corridor'
-  };
-
-  if (type === 'stairs') {
-    const grp = prompt('Группа лестницы (общая для всех этажей, например stairs_main):', 'stairs_main');
-    node.group = grp && grp.trim() ? grp.trim() : 'stairs_default';
-  }
-
-  graph.nodes[id] = node;
-
-  markDirty();
-  updateStats();
-  refreshGraphView();
-  showToast(`Узел «${id}» добавлен`);
-}
-
-function promptNodeType() {
-  const t = prompt(
-    'Тип узла:\n' +
-    '1 — corridor (коридор)\n' +
-    '2 — stairs (лестница)\n' +
-    '3 — entrance (вход)\n\n' +
-    'Enter — corridor',
-    '1'
-  );
-  if (t === null) return null;
-  if (t === '2') return 'stairs';
-  if (t === '3') return 'entrance';
-  return 'corridor';
+  const radios = document.querySelectorAll('input[name="node-type"]');
+  const groupWrap = document.getElementById('modal-group-wrap');
+  radios.forEach(r => {
+    r.addEventListener('change', () => {
+      groupWrap.style.display = r.value === 'stairs' && r.checked ? 'flex' : 'none';
+    });
+  });
 }
 
 function handleNodeClick(id) {
-  if (currentTool === 'select') {
-    selectedNodeId = id;
-    selectedEdgeIndex = null;
-    refreshGraphView();
-    showNodeInfo(id);
+  const node = graph.nodes[id];
+
+  if (currentTool === 'link-stairs') {
+    if (node.type !== 'stairs') { alert('Этот узел не является лестницей'); return; }
+
+    if (!linkStairsSourceId) {
+      linkStairsSourceId = id;
+      showToast('Лестница выбрана. Переключите этаж и кликните вторую.');
+      drawGraphForCurrentFloor();
+      return;
+    }
+
+    if (linkStairsSourceId === id) {
+      linkStairsSourceId = null;
+      drawGraphForCurrentFloor();
+      return;
+    }
+
+    const a = graph.nodes[linkStairsSourceId];
+    const b = node;
+    
+    const exists = graph.edges.some(e => 
+      (e.from === linkStairsSourceId && e.to === id) || (e.from === id && e.to === linkStairsSourceId)
+    );
+
+    if (exists) {
+      alert('Эти лестницы уже связаны');
+      linkStairsSourceId = null;
+      drawGraphForCurrentFloor();
+      return;
+    }
+
+    graph.edges.push({ from: linkStairsSourceId, to: id, weight: 40 });
+    
+    if (a.group && !b.group) b.group = a.group;
+    if (b.group && !a.group) a.group = b.group;
+    if (!a.group && !b.group) { a.group = 'stairs_main'; b.group = 'stairs_main'; }
+    
+    markDirty();
+    linkStairsSourceId = null;
+    drawGraphForCurrentFloor();
+    showToast('Лестницы связаны');
     return;
   }
 
   if (currentTool === 'add-edge') {
     if (!selectedNodeId) {
       selectedNodeId = id;
-      refreshGraphView();
-      showToast(`Первый узел: ${id}. Кликни второй.`);
+      drawGraphForCurrentFloor();
+      showToast('Первый узел выбран. Кликните второй.');
       return;
     }
-    if (selectedNodeId === id) {
-      showToast('Нельзя соединить узел сам с собой');
-      return;
-    }
-    addEdge(selectedNodeId, id);
+    if (selectedNodeId === id) { showToast('Нельзя соединить узел сам с собой'); return; }
+    
+    const a = graph.nodes[selectedNodeId];
+    const b = node;
+    const exists = graph.edges.some(e => 
+      (e.from === selectedNodeId && e.to === id) || (e.from === id && e.to === selectedNodeId)
+    );
+    if (exists) { alert('Такое ребро уже есть'); selectedNodeId = null; drawGraphForCurrentFloor(); return; }
+
+    let weight = (a.floor !== b.floor || a.building !== b.building) ? 40 : Math.round(Math.hypot(a.x - b.x, a.y - b.y));
+
+    graph.edges.push({ from: selectedNodeId, to: id, weight });
     selectedNodeId = null;
-    refreshGraphView();
+    markDirty();
+    drawGraphForCurrentFloor();
+    showToast('Ребро добавлено');
+    return;
+  }
+
+  if (currentTool === 'select') {
+    selectedNodeId = id;
+    linkStairsSourceId = null;
+    drawGraphForCurrentFloor();
+    showNodeInfo(id);
     return;
   }
 }
 
-function addEdge(fromId, toId) {
-  const exists = graph.edges.some(e =>
-    (e.from === fromId && e.to === toId) || (e.from === toId && e.to === fromId)
-  );
-  if (exists) {
-    showToast('Такое ребро уже есть');
-    return;
-  }
-
-  const a = graph.nodes[fromId];
-  const b = graph.nodes[toId];
-
-  let weight;
-  if (a.floor !== b.floor || a.building !== b.building) {
-    const w = prompt('Вес межэтажного перехода (условные единицы, например 40):', '40');
-    weight = w ? Number(w) : 40;
-  } else {
-    weight = Math.round(Math.hypot(a.x - b.x, a.y - b.y));
-  }
-
-  graph.edges.push({ from: fromId, to: toId, weight });
-  markDirty();
-  updateStats();
-  showToast(`Ребро ${fromId} → ${toId} (${weight})`);
-}
-
-function handleEdgeClick(index) {
-  if (currentTool !== 'select') return;
-  selectedEdgeIndex = index;
-  selectedNodeId = null;
-  refreshGraphView();
-  const e = graph.edges[index];
-  showEdgeInfo(e, index);
-}
-
-function refreshGraphView() {
-  drawGraphForCurrentFloor();
-}
-
-// ================ ПАНЕЛЬ СПРАВА ================
+// ================ ПАНЕЛЬ ИНФОРМАЦИИ ================
 
 function showNodeInfo(id) {
   const node = graph.nodes[id];
@@ -426,23 +515,15 @@ function showNodeInfo(id) {
     <p>Тип: <code>${node.type}</code></p>
     <p>Корпус: <code>${node.building}</code>, этаж: <code>${node.floor}</code></p>
     <p>Координаты: <code>${node.x}, ${node.y}</code></p>
-    ${node.group ? `<p>Группа: <code>${node.group}</code></p>` : ''}
-    <button class="tool-btn" onclick="deleteSelectedNode()" style="margin-top:8px">
+    ${node.group ? `<p>Группа лестницы: <code style="color:var(--btn-flr-active)">${node.group}</code></p>` : ''}
+    <button class="tool-btn" onclick="deleteSelectedNode()" style="margin-top:8px; background:rgba(239,68,68,0.1); color:#ef4444; border-color:rgba(239,68,68,0.2)">
       <i class="mdi mdi-delete"></i> Удалить узел
     </button>
   `;
 }
 
-function showEdgeInfo(edge, index) {
-  const el = document.getElementById('node-info');
-  el.innerHTML = `
-    <p><strong>Ребро #${index}</strong></p>
-    <p>${edge.from} → ${edge.to}</p>
-    <p>Вес: <code>${edge.weight}</code></p>
-    <button class="tool-btn" onclick="deleteSelectedEdge()" style="margin-top:8px">
-      <i class="mdi mdi-delete"></i> Удалить ребро
-    </button>
-  `;
+function clearNodeInfo() {
+  document.getElementById('node-info').innerHTML = '<p class="muted">Кликните по узлу или ребру для выбора</p>';
 }
 
 function deleteSelectedNode() {
@@ -454,31 +535,8 @@ function deleteSelectedNode() {
   graph.edges = graph.edges.filter(e => e.from !== id && e.to !== id);
   selectedNodeId = null;
   markDirty();
-  updateStats();
-  refreshGraphView();
+  drawGraphForCurrentFloor();
   clearNodeInfo();
-  showToast(`Узел «${id}» удалён`);
-}
-
-function deleteSelectedEdge() {
-  if (selectedEdgeIndex === null) return;
-  const e = graph.edges[selectedEdgeIndex];
-  if (!confirm(`Удалить ребро ${e.from} → ${e.to}?`)) return;
-  graph.edges.splice(selectedEdgeIndex, 1);
-  selectedEdgeIndex = null;
-  markDirty();
-  updateStats();
-  refreshGraphView();
-  clearNodeInfo();
-}
-
-function clearNodeInfo() {
-  document.getElementById('node-info').innerHTML = '<p class="muted">Кликните по узлу для выбора</p>';
-}
-
-function updateStats() {
-  document.getElementById('stat-nodes').textContent = Object.keys(graph.nodes).length;
-  document.getElementById('stat-edges').textContent = graph.edges.length;
 }
 
 function markDirty() {
@@ -491,6 +549,14 @@ function markClean() {
   document.getElementById('editor-save').classList.remove('dirty');
 }
 
+// Защита от закрытия вкладки с несохранёнными изменениями
+window.addEventListener('beforeunload', (e) => {
+  if (hasUnsavedChanges) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
 // ================ ИНСТРУМЕНТЫ ================
 
 document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
@@ -499,22 +565,10 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
     btn.classList.add('active');
     currentTool = btn.dataset.tool;
     selectedNodeId = null;
-    selectedEdgeIndex = null;
-    refreshGraphView();
+    linkStairsSourceId = null;
+    drawGraphForCurrentFloor();
     clearNodeInfo();
   });
-});
-
-document.getElementById('editor-save').addEventListener('click', saveGraph);
-document.getElementById('editor-clear').addEventListener('click', () => {
-  if (!confirm('Удалить ВСЕ узлы и рёбра? Это действие необратимо.')) return;
-  graph = { nodes: {}, edges: [] };
-  selectedNodeId = null;
-  selectedEdgeIndex = null;
-  markDirty();
-  updateStats();
-  refreshGraphView();
-  clearNodeInfo();
 });
 
 document.addEventListener('keydown', (e) => {
@@ -522,18 +576,18 @@ document.addEventListener('keydown', (e) => {
 
   if (e.key === '1') document.querySelector('[data-tool="add-node"]').click();
   if (e.key === '2') document.querySelector('[data-tool="add-edge"]').click();
-  if (e.key === '3') document.querySelector('[data-tool="select"]').click();
+  if (e.key === '3') document.querySelector('[data-tool="link-stairs"]').click();
+  if (e.key === '4') document.querySelector('[data-tool="select"]').click();
 
   if (e.key === 'Escape') {
     selectedNodeId = null;
-    selectedEdgeIndex = null;
-    refreshGraphView();
+    linkStairsSourceId = null;
+    drawGraphForCurrentFloor();
     clearNodeInfo();
   }
 
-  if (e.key === 'Delete' || e.key === 'Backspace') {
-    if (selectedNodeId) deleteSelectedNode();
-    else if (selectedEdgeIndex !== null) deleteSelectedEdge();
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
+    deleteSelectedNode();
   }
 });
 
@@ -554,6 +608,8 @@ async function saveGraph() {
   }
 }
 
+document.getElementById('editor-save').addEventListener('click', saveGraph);
+
 // ================ TOAST ================
 
 function showToast(text) {
@@ -573,7 +629,13 @@ function showToast(text) {
 map.on('click', handleMapClick);
 
 (async function init() {
+  setupTheme();
+  setupSidebar();
   await loadGraph();
   buildBuildingsUI();
-  showFloor('C', 1);
+  setupResetControl().addTo(map);
+  createFloorSwitcher().addTo(map);
+  
+  await showFloor('C', 1); 
+  updateFloorSwitcher();
 })();
