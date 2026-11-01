@@ -32,17 +32,11 @@
       
       <!-- Нижний горизонтальный островок с инструментами -->
       <div id="bottom-toolbar" class="bottom-toolbar">
-        <button class="tool-btn active" data-tool="add-node">
-          <i class="mdi mdi-plus-circle"></i> Добавить узел
+        <button class="tool-btn" data-tool="add">
+          <i class="mdi mdi-plus-circle"></i> Добавление
         </button>
-        <button class="tool-btn" data-tool="add-edge">
-          <i class="mdi mdi-vector-line"></i> Добавить ребро
-        </button>
-        <button class="tool-btn" data-tool="link-stairs">
-          <i class="mdi mdi-stairs"></i> Связать лестницы
-        </button>
-        <button class="tool-btn" data-tool="select">
-          <i class="mdi mdi-cursor-default"></i> Выделение
+        <button class="tool-btn" data-tool="delete">
+          <i class="mdi mdi-delete"></i> Удаление
         </button>
       </div>
 
@@ -58,12 +52,9 @@
       <div class="editor-section">
         <h3>Горячие клавиши</h3>
         <ul class="hotkeys">
-          <li><kbd>1</kbd> — добавить узел</li>
-          <li><kbd>2</kbd> — добавить ребро</li>
-          <li><kbd>3</kbd> — связать лестницы</li>
-          <li><kbd>4</kbd> — выделение</li>
-          <li><kbd>Esc</kbd> — снять выделение</li>
-          <li><kbd>Del</kbd> — удалить выбранное</li>
+          <li><kbd>1</kbd> — режим «Добавление»</li>
+          <li><kbd>2</kbd> — режим «Удаление»</li>
+          <li><kbd>Esc</kbd> — сбросить режим</li>
         </ul>
       </div>
     </aside>

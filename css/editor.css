@@ -93,6 +93,32 @@ body.sidebar-collapsed .sidebar-handle .mdi {
   font-size: 12px;
 }
 
+/* Стили для блока с информацией о лестницах */
+.stair-link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px;
+  background: var(--btn-bg);
+  border-radius: 6px;
+}
+.stair-link-row span {
+  font-size: 12px;
+  font-weight: 600;
+}
+.stair-link-row input {
+  width: 60px;
+  padding: 4px 6px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 12px;
+  text-align: center;
+}
+
 .hotkeys {
   list-style: none;
   display: flex;
@@ -148,10 +174,17 @@ body.sidebar-collapsed .sidebar-handle .mdi {
   background: var(--ctrl-hover);
   color: var(--ctrl-text-hover);
 }
-.tool-btn.active {
-  background: var(--btn-flr-active);
-  color: #fff;
+
+/* Цвета активных кнопок инструментов */
+#bottom-toolbar .tool-btn[data-tool="add"].active {
+  background-color: #22c55e !important; /* Зелёный */
+  color: #ffffff !important;
 }
+#bottom-toolbar .tool-btn[data-tool="delete"].active {
+  background-color: #ef4444 !important; /* Красный */
+  color: #ffffff !important;
+}
+
 .tool-btn .mdi { font-size: 18px; }
 
 /* ============ Маркеры узлов на карте ============ */
@@ -240,7 +273,8 @@ body.sidebar-collapsed .sidebar-handle .mdi {
   font-weight: 600;
   color: var(--text-muted);
 }
-.form-group input {
+.form-group input[type="text"], 
+.form-group input[type="number"] {
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid var(--input-border);
@@ -250,7 +284,8 @@ body.sidebar-collapsed .sidebar-handle .mdi {
   font-family: inherit;
   outline: none;
 }
-.form-group input:focus {
+.form-group input[type="text"]:focus, 
+.form-group input[type="number"]:focus {
   border-color: var(--btn-flr-active);
 }
 
@@ -271,19 +306,27 @@ body.sidebar-collapsed .sidebar-handle .mdi {
   color: var(--text);
 }
 .radio-label input[type="radio"] {
-  appearance: none;
-  width: 18px;
-  height: 18px;
-  border: 2px solid var(--text-muted);
-  border-radius: 50%;
-  outline: none;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  max-width: 18px !important;
+  min-height: 18px !important;
+  max-height: 18px !important;
+  flex: 0 0 18px !important;
+  border: 2px solid var(--text-muted) !important;
+  border-radius: 50% !important;
+  outline: none !important;
   cursor: pointer;
   position: relative;
   transition: border-color 0.15s;
-  margin: 0;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+  padding: 0 !important;
 }
 .radio-label input[type="radio"]:checked {
-  border-color: var(--btn-flr-active);
+  border-color: var(--btn-flr-active) !important;
 }
 .radio-label input[type="radio"]:checked::after {
   content: '';
@@ -332,27 +375,42 @@ body.sidebar-collapsed .sidebar-handle .mdi {
 }
 
 /* ============ Уведомления сверху ============ */
-#map-wrap .toast {
-  position: absolute;
-  top: 80px;
-  left: 50%;
-  transform: translateX(-50%) translateY(-20px);
-  background: var(--topbar-bg);
-  color: var(--text-bright);
-  border: 1px solid var(--border);
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+.toast {
+  position: fixed !important;
+  top: 76px !important; /* Отступ сверху, под навбаром */
+  
+  /* Центрируем с учетом открытой панели (300px / 2 = 150px) */
+  left: calc(50vw - 150px) !important; 
+  transform: translateX(-50%) translateY(-20px) !important;
+  
+  background: var(--topbar-bg) !important;
+  color: var(--text-bright) !important;
+  border: 1px solid var(--border) !important;
+  padding: 10px 20px !important;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
   opacity: 0;
-  transition: opacity 0.25s ease, transform 0.25s ease;
-  z-index: 2000;
-  pointer-events: none;
+  
+  /* Добавили left в transition для плавного съезда при сворачивании панели */
+  transition: opacity 0.25s ease, transform 0.25s ease, left 0.25s ease !important;
+  
+  z-index: 9999 !important;
+  pointer-events: none !important;
+  white-space: nowrap !important;
+  width: max-content !important;
+  height: max-content !important;
 }
-#map-wrap .toast.show {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
+
+/* Если панель свернута, центрируем ровно по середине экрана */
+body.sidebar-collapsed .toast {
+  left: 50vw !important;
+}
+
+.toast.show {
+  opacity: 1 !important;
+  transform: translateX(-50%) translateY(0) !important;
 }
 
 /* Адаптив под мобильный */
@@ -376,5 +434,9 @@ body.sidebar-collapsed .sidebar-handle .mdi {
     flex-wrap: wrap;
     justify-content: center;
     width: 90%;
+  }
+  /* На мобилках центруем по экрану в любом случае */
+  .toast {
+    left: 50vw !important;
   }
 }

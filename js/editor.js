@@ -16,9 +16,8 @@ let currentFloorGroup = null;
 
 let graph = { nodes: {}, edges: [] };
 
-let currentTool = 'add-node';
+let currentTool = null; // По умолчанию режим не выбран
 let selectedNodeId = null;
-let linkStairsSourceId = null;
 let hasUnsavedChanges = false;
 
 const nodeCirclePts = {};
@@ -40,7 +39,7 @@ const map = L.map('map', {
   attributionControl: false
 });
 
-// ВАЖНО: Создаем кастомные панели для правильного наложения слоев
+// Создаем кастомные панели для правильного наложения слоев
 map.createPane('svgPane');
 map.getPane('svgPane').style.zIndex = 400; // План этажа
 
@@ -215,13 +214,11 @@ async function showFloor(buildingCode, floorNum) {
 
   const bounds = [[0, 0], [H, W]];
   
-  // Добавляем SVG в нашу кастомную панель (слой ниже)
   currentOverlay = L.svgOverlay(svgEl, bounds, { pane: 'svgPane' }).addTo(map);
   map.fitBounds(bounds);
 
   svgEl.style.pointerEvents = 'none';
 
-  // Граф добавляем в панель выше
   currentFloorGroup = L.layerGroup().addTo(map);
   drawGraphForCurrentFloor();
 
@@ -251,21 +248,30 @@ function drawGraphForCurrentFloor() {
 
     const line = L.polyline([[H - a.y, a.x], [H - b.y, b.x]], {
       pane: 'graphPane',
-      color: '#3b82f6', weight: 2, opacity: 0.7
+      color: '#3b82f6', weight: 2, opacity: 0.7,
+      interactive: false
     });
-    line.on('click', (e) => {
+
+    // Хитбокс для ребра
+    const hitbox = L.polyline([[H - a.y, a.x], [H - b.y, b.x]], {
+      pane: 'graphPane',
+      color: 'transparent', weight: 15, opacity: 0,
+      interactive: true
+    });
+
+    hitbox.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
-      if (currentTool === 'select') {
-        if (confirm(`Удалить ребро ${edge.from} → ${edge.to}?`)) {
-          graph.edges.splice(i, 1);
-          markDirty();
-          drawGraphForCurrentFloor();
-          clearNodeInfo();
-        }
+      if (currentTool === 'delete') {
+        graph.edges.splice(i, 1);
+        markDirty();
+        drawGraphForCurrentFloor();
+        clearNodeInfo();
       }
     });
+
     currentFloorGroup.addLayer(line);
-    edgeLines.push({ index: i, line });
+    currentFloorGroup.addLayer(hitbox);
+    edgeLines.push({ index: i, line, hitbox });
   }
 
   // Узлы
@@ -276,9 +282,9 @@ function drawGraphForCurrentFloor() {
     const latlng = [H - node.y, node.x];
     const isStairs = node.type === 'stairs';
     const isEntrance = node.type === 'entrance';
-    const isSelected = id === selectedNodeId || id === linkStairsSourceId;
+    const isSelected = id === selectedNodeId;
 
-    // Визуальный маркер (маленький)
+    // Визуальный маркер
     const visualPt = L.circleMarker(latlng, {
       pane: 'graphPane',
       radius: 4,
@@ -287,13 +293,13 @@ function drawGraphForCurrentFloor() {
       fillColor: isStairs ? '#a855f7' : (isEntrance ? '#22c55e' : '#3b82f6'),
       fillOpacity: 1,
       className: 'graph-node-marker',
-      interactive: false // Отключаем клики на визуальном маркере, чтобы не мешал
+      interactive: false
     });
     
-    // Невидимый маркер для хитбокса (большой)
+    // Невидимый маркер для хитбокса
     const hitbox = L.circleMarker(latlng, {
       pane: 'graphPane',
-      radius: 12, // Большой радиус для удобного клика
+      radius: 12,
       fillColor: 'transparent',
       fillOpacity: 1,
       stroke: false,
@@ -332,7 +338,10 @@ function openModal({ title, bodyHtml, onConfirm }) {
   const confirmBtn = document.getElementById('modal-confirm');
   const cancelBtn = document.getElementById('modal-cancel');
 
-  const close = () => backdrop.classList.remove('open');
+  const close = () => {
+    backdrop.classList.remove('open');
+    document.removeEventListener('keydown', handleKeyDown);
+  };
 
   const newConfirmBtn = confirmBtn.cloneNode(true);
   const newCancelBtn = cancelBtn.cloneNode(true);
@@ -344,6 +353,17 @@ function openModal({ title, bodyHtml, onConfirm }) {
     const result = onConfirm(body);
     if (result !== false) close();
   });
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      newConfirmBtn.click();
+    }
+    if (e.key === 'Escape') {
+      close();
+    }
+  };
+  document.addEventListener('keydown', handleKeyDown);
 }
 
 // ================ КЛИКИ ================
@@ -353,18 +373,33 @@ function handleMapClick(e) {
   const x = Math.round(e.latlng.lng);
   const y = Math.round(H - e.latlng.lat);
 
-  if (currentTool === 'add-node') {
-    showAddNodeModal(x, y);
+  if (currentTool === 'add') {
+    if (!selectedNodeId) {
+      showAddNodeModal(x, y);
+    } else {
+      selectedNodeId = null;
+      drawGraphForCurrentFloor();
+    }
   } else {
     selectedNodeId = null;
-    linkStairsSourceId = null;
     drawGraphForCurrentFloor();
     clearNodeInfo();
   }
 }
 
 function showAddNodeModal(x, y) {
-  const autoId = `n${Object.keys(graph.nodes).length + 1}_${currentBuilding.toLowerCase()}_f${currentFloor}`;
+  // Умная авто-нумерация: ищем минимальный свободный номер
+  const usedNumbers = new Set();
+  Object.keys(graph.nodes).forEach(id => {
+    const match = id.match(/^n(\d+)_/);
+    if (match) usedNumbers.add(parseInt(match[1]));
+  });
+  
+  let proposedNum = 1;
+  while (usedNumbers.has(proposedNum)) {
+    proposedNum++;
+  }
+  const autoId = `n${proposedNum}_${currentBuilding.toLowerCase()}_f${currentFloor}`;
   
   const html = `
     <div class="form-group">
@@ -426,68 +461,62 @@ function showAddNodeModal(x, y) {
 function handleNodeClick(id) {
   const node = graph.nodes[id];
 
-  if (currentTool === 'link-stairs') {
-    if (node.type !== 'stairs') { alert('Этот узел не является лестницей'); return; }
-
-    if (!linkStairsSourceId) {
-      linkStairsSourceId = id;
-      showToast('Лестница выбрана. Переключите этаж и кликните вторую.');
-      drawGraphForCurrentFloor();
-      return;
-    }
-
-    if (linkStairsSourceId === id) {
-      linkStairsSourceId = null;
-      drawGraphForCurrentFloor();
-      return;
-    }
-
-    const a = graph.nodes[linkStairsSourceId];
-    const b = node;
-    
-    const exists = graph.edges.some(e => 
-      (e.from === linkStairsSourceId && e.to === id) || (e.from === id && e.to === linkStairsSourceId)
-    );
-
-    if (exists) {
-      alert('Эти лестницы уже связаны');
-      linkStairsSourceId = null;
-      drawGraphForCurrentFloor();
-      return;
-    }
-
-    graph.edges.push({ from: linkStairsSourceId, to: id, weight: 40 });
-    
-    if (a.group && !b.group) b.group = a.group;
-    if (b.group && !a.group) a.group = b.group;
-    if (!a.group && !b.group) { a.group = 'stairs_main'; b.group = 'stairs_main'; }
-    
+  // Режим удаления
+  if (currentTool === 'delete') {
+    delete graph.nodes[id];
+    graph.edges = graph.edges.filter(e => e.from !== id && e.to !== id);
+    selectedNodeId = null;
     markDirty();
-    linkStairsSourceId = null;
     drawGraphForCurrentFloor();
-    showToast('Лестницы связаны');
+    clearNodeInfo();
     return;
   }
 
-  if (currentTool === 'add-edge') {
+  // Режим добавления (связывание любых узлов)
+  if (currentTool === 'add') {
     if (!selectedNodeId) {
       selectedNodeId = id;
+      showNodeInfo(id);
+      showToast('Первый узел выбран. Кликните второй для создания ребра.');
       drawGraphForCurrentFloor();
-      showToast('Первый узел выбран. Кликните второй.');
       return;
     }
-    if (selectedNodeId === id) { showToast('Нельзя соединить узел сам с собой'); return; }
-    
+
+    if (selectedNodeId === id) {
+      selectedNodeId = null;
+      drawGraphForCurrentFloor();
+      return;
+    }
+
     const a = graph.nodes[selectedNodeId];
     const b = node;
+    
+    // Проверка на существующее ребро
     const exists = graph.edges.some(e => 
       (e.from === selectedNodeId && e.to === id) || (e.from === id && e.to === selectedNodeId)
     );
-    if (exists) { alert('Такое ребро уже есть'); selectedNodeId = null; drawGraphForCurrentFloor(); return; }
+    
+    if (exists) {
+      showToast('Такое ребро уже есть');
+      selectedNodeId = null;
+      drawGraphForCurrentFloor();
+      return;
+    }
 
-    let weight = (a.floor !== b.floor || a.building !== b.building) ? 40 : Math.round(Math.hypot(a.x - b.x, a.y - b.y));
-
+    // Если узлы на разных этажах/корпусах, вес по умолчанию 40. Иначе — расстояние.
+    let weight = (a.floor !== b.floor || a.building !== b.building) 
+      ? 40 
+      : Math.round(Math.hypot(a.x - b.x, a.y - b.y));
+      
     graph.edges.push({ from: selectedNodeId, to: id, weight });
+    
+    // Если связываем две лестницы, объединяем их группы
+    if (a.type === 'stairs' && b.type === 'stairs') {
+      if (a.group && !b.group) b.group = a.group;
+      if (b.group && !a.group) a.group = b.group;
+      if (!a.group && !b.group) { a.group = 'stairs_main'; b.group = 'stairs_main'; }
+    }
+
     selectedNodeId = null;
     markDirty();
     drawGraphForCurrentFloor();
@@ -495,9 +524,9 @@ function handleNodeClick(id) {
     return;
   }
 
-  if (currentTool === 'select') {
+  // Если режим не выбран
+  if (currentTool === null) {
     selectedNodeId = id;
-    linkStairsSourceId = null;
     drawGraphForCurrentFloor();
     showNodeInfo(id);
     return;
@@ -510,33 +539,67 @@ function showNodeInfo(id) {
   const node = graph.nodes[id];
   if (!node) return;
   const el = document.getElementById('node-info');
-  el.innerHTML = `
+
+  let html = `
     <p><strong>${id}</strong></p>
     <p>Тип: <code>${node.type}</code></p>
     <p>Корпус: <code>${node.building}</code>, этаж: <code>${node.floor}</code></p>
     <p>Координаты: <code>${node.x}, ${node.y}</code></p>
     ${node.group ? `<p>Группа лестницы: <code style="color:var(--btn-flr-active)">${node.group}</code></p>` : ''}
-    <button class="tool-btn" onclick="deleteSelectedNode()" style="margin-top:8px; background:rgba(239,68,68,0.1); color:#ef4444; border-color:rgba(239,68,68,0.2)">
-      <i class="mdi mdi-delete"></i> Удалить узел
-    </button>
   `;
+
+  // Отображаем веса ТОЛЬКО для связей лестница-лестница
+  if (node.type === 'stairs') {
+    const stairsEdges = graph.edges.filter(e => {
+      if (e.from !== id && e.to !== id) return false;
+      const otherId = e.from === id ? e.to : e.from;
+      const otherNode = graph.nodes[otherId];
+      return otherNode && otherNode.type === 'stairs';
+    });
+
+    if (stairsEdges.length > 0) {
+      html += `<p style="margin-top: 12px;"><strong>Связанные лестницы (веса):</strong></p>`;
+      stairsEdges.forEach(edge => {
+        const otherId = edge.from === id ? edge.to : edge.from;
+        const otherNode = graph.nodes[otherId];
+        
+        html += `
+          <div class="stair-link-row" data-edge-from="${edge.from}" data-edge-to="${edge.to}">
+            <span>${otherId} (эт. ${otherNode.floor})</span>
+            <input type="number" class="weight-input" value="${edge.weight}" min="1" step="1" />
+          </div>
+        `;
+      });
+    } else {
+      html += `<p class="muted" style="margin-top: 12px;">Нет связанных лестниц (только коридоры)</p>`;
+    }
+  }
+
+  el.innerHTML = html;
+
+  el.querySelectorAll('.weight-input').forEach(input => {
+    input.addEventListener('change', (e) => {
+      const row = e.target.closest('.stair-link-row');
+      const from = row.dataset.edgeFrom;
+      const to = row.dataset.edgeTo;
+      const edge = graph.edges.find(ed => (ed.from === from && ed.to === to) || (ed.from === to && ed.to === from));
+      
+      if (edge) {
+        const val = parseInt(e.target.value);
+        if (val > 0) {
+          edge.weight = val;
+          markDirty();
+          showToast('Вес обновлен');
+        } else {
+          e.target.value = edge.weight;
+        }
+      }
+    });
+  });
 }
 
 function clearNodeInfo() {
   document.getElementById('node-info').innerHTML = '<p class="muted">Кликните по узлу или ребру для выбора</p>';
-}
-
-function deleteSelectedNode() {
-  if (!selectedNodeId) return;
-  const id = selectedNodeId;
-  if (!confirm(`Удалить узел «${id}» и все его рёбра?`)) return;
-
-  delete graph.nodes[id];
-  graph.edges = graph.edges.filter(e => e.from !== id && e.to !== id);
-  selectedNodeId = null;
-  markDirty();
-  drawGraphForCurrentFloor();
-  clearNodeInfo();
 }
 
 function markDirty() {
@@ -549,7 +612,6 @@ function markClean() {
   document.getElementById('editor-save').classList.remove('dirty');
 }
 
-// Защита от закрытия вкладки с несохранёнными изменениями
 window.addEventListener('beforeunload', (e) => {
   if (hasUnsavedChanges) {
     e.preventDefault();
@@ -561,11 +623,18 @@ window.addEventListener('beforeunload', (e) => {
 
 document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    currentTool = btn.dataset.tool;
+    const tool = btn.dataset.tool;
+    
+    if (currentTool === tool) {
+      currentTool = null;
+      btn.classList.remove('active');
+    } else {
+      document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentTool = tool;
+    }
+
     selectedNodeId = null;
-    linkStairsSourceId = null;
     drawGraphForCurrentFloor();
     clearNodeInfo();
   });
@@ -574,20 +643,15 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-  if (e.key === '1') document.querySelector('[data-tool="add-node"]').click();
-  if (e.key === '2') document.querySelector('[data-tool="add-edge"]').click();
-  if (e.key === '3') document.querySelector('[data-tool="link-stairs"]').click();
-  if (e.key === '4') document.querySelector('[data-tool="select"]').click();
+  if (e.key === '1') document.querySelector('[data-tool="add"]').click();
+  if (e.key === '2') document.querySelector('[data-tool="delete"]').click();
 
   if (e.key === 'Escape') {
+    currentTool = null;
+    document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
     selectedNodeId = null;
-    linkStairsSourceId = null;
     drawGraphForCurrentFloor();
     clearNodeInfo();
-  }
-
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
-    deleteSelectedNode();
   }
 });
 
@@ -616,7 +680,7 @@ function showToast(text) {
   const t = document.createElement('div');
   t.className = 'toast';
   t.textContent = text;
-  document.getElementById('map-wrap').appendChild(t);
+  document.body.appendChild(t);
   requestAnimationFrame(() => t.classList.add('show'));
   setTimeout(() => {
     t.classList.remove('show');

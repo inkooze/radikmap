@@ -152,6 +152,9 @@ let routeState = {
 };
 let routePickSide = 'from';    // 'from' | 'to' — в какое поле попадёт следующий клик по карте
 
+// Кэш для SVG документов при кросс-этажных запросах
+const svgCache = {};
+
 // ================ КАРТА ================
 
 const map = L.map('map', {
@@ -165,6 +168,9 @@ const map = L.map('map', {
   zoomAnimation: true,
   attributionControl: false
 });
+
+map.createPane('routePane');
+map.getPane('routePane').style.zIndex = 450;
 
 routeLayer = L.layerGroup().addTo(map);
 routePickLayer = L.layerGroup().addTo(map);
@@ -290,7 +296,6 @@ function selectRoom(id) {
 // ================ ПОДСВЕТКА ТОЧЕК МАРШРУТА ================
 
 function refreshRoutePickHighlight() {
-  // Убираем все предыдущие метки
   Object.values(roomShapes).forEach(shapes => {
     shapes.forEach(s => {
       s.classList.remove('room-route-from');
@@ -1554,8 +1559,9 @@ function dijkstra(startId, endId) {
   for (const id of Object.keys(graph.nodes)) adj[id] = [];
   for (const e of graph.edges) {
     if (adj[e.from] && adj[e.to]) {
-      adj[e.from].push({ to: e.to, weight: e.weight });
-      adj[e.to].push({ to: e.from, weight: e.weight });
+      const weight = Number(e.weight) || 1; // Защита от NaN
+      adj[e.from].push({ to: e.to, weight });
+      adj[e.to].push({ to: e.from, weight });
     }
   }
 
@@ -1598,7 +1604,7 @@ function dijkstra(startId, endId) {
   return path;
 }
 
-// Центроид фигуры в SVG-координатах
+// Центроид фигуры в SVG-координатах (для текущего этажа)
 function getShapeCentroidSvg(id) {
   const shapes = roomShapes[id];
   if (!shapes || !shapes.length) return null;
@@ -1623,7 +1629,83 @@ function getShapeCentroidSvg(id) {
   return { x: latlng.lng, y: H - latlng.lat };
 }
 
-// Ближайший узел графа на том же корпусе и этаже
+// Получение центроида комнаты из SVG на любом этаже (с кэшированием файла)
+async function fetchSvgCentroid(building, floor, roomId) {
+  const b = BUILDINGS[building];
+  const svgUrl = b?.floors?.[floor];
+  if (!svgUrl) return null;
+
+  try {
+    if (!svgCache[svgUrl]) {
+      const svgText = await fetch(svgUrl).then(r => r.text());
+      svgCache[svgUrl] = svgText;
+    }
+
+    const svgText = svgCache[svgUrl];
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgText, 'image/svg+xml');
+    const svgEl = doc.querySelector('svg');
+    if (!svgEl) return null;
+
+    const vb = svgEl.getAttribute('viewBox').split(/\s+/).map(Number);
+    const W = vb[2], H = vb[3];
+
+    const tempDiv = document.createElement('div');
+    tempDiv.style.position = 'absolute';
+    tempDiv.style.top = '-9999px';
+    tempDiv.style.left = '-9999px';
+    tempDiv.style.width = W + 'px';
+    tempDiv.style.height = H + 'px';
+    tempDiv.innerHTML = svgText;
+    
+    const svgNode = tempDiv.querySelector('svg');
+    svgNode.style.width = '100%';
+    svgNode.style.height = '100%';
+    
+    document.body.appendChild(tempDiv);
+
+    const el = tempDiv.querySelector(`[id="${roomId}"]`);
+    if (!el) {
+      document.body.removeChild(tempDiv);
+      return null;
+    }
+
+    const rect = el.getBoundingClientRect();
+    const divRect = tempDiv.getBoundingClientRect();
+
+    const cX = (rect.left + rect.right) / 2 - divRect.left;
+    const cY = (rect.top + rect.bottom) / 2 - divRect.top;
+
+    document.body.removeChild(tempDiv);
+
+    return { x: cX, y: cY };
+  } catch (e) {
+    console.error('Error fetching SVG:', e);
+    return null;
+  }
+}
+
+// Универсальный поиск ближайшего узла для комнаты (на любом этаже)
+async function getRoomNode(roomId) {
+  const meta = roomsMeta[roomId];
+  if (!meta) return null;
+
+  let centroid = null;
+
+  if (meta.building === currentBuilding && meta.floor === currentFloor) {
+    centroid = getShapeCentroidSvg(roomId);
+  }
+
+  if (!centroid) {
+    centroid = await fetchSvgCentroid(meta.building, meta.floor, roomId);
+  }
+
+  if (!centroid) return null;
+
+  return findNearestNode(centroid, meta.building, meta.floor);
+}
+
+// Ближайший узел графа на указанном корпусе и этаже
 function findNearestNode(point, building, floor) {
   let best = null, bestDist = Infinity;
   for (const [id, node] of Object.entries(graph.nodes)) {
@@ -1647,7 +1729,7 @@ function computeRouteLength(path) {
     const edge = graph.edges.find(e =>
       (e.from === a && e.to === b) || (e.from === b && e.to === a)
     );
-    if (edge) total += edge.weight;
+    if (edge) total += (Number(edge.weight) || 1);
   }
   return Math.round(total);
 }
@@ -1671,58 +1753,102 @@ function smoothPath(latlngs, iterations = 2) {
   return pts.map(p => [p.lat, p.lng]);
 }
 
-// Отрисовка маршрута
+// Отрисовка маршрута (поддерживает мультиэтажность)
 function drawRoute(path) {
   if (!routeLayer) return;
   routeLayer.clearLayers();
   if (!path || path.length === 0) return;
 
   const { H } = currentSvgViewBox;
-  const latlngs = [];
-  const visibleNodes = [];
+  const routeColor = getComputedStyle(document.documentElement).getPropertyValue('--route-color').trim() || '#22c55e';
+  const startColor = getComputedStyle(document.documentElement).getPropertyValue('--route-start').trim() || '#22c55e';
+  const endColor = getComputedStyle(document.documentElement).getPropertyValue('--route-end').trim() || '#ef4444';
+  const stairColor = '#a855f7';
 
-  for (const id of path) {
-    const n = graph.nodes[id];
+  let currentSegment = [];
+  const allSegments = [];
+
+  for (let i = 0; i < path.length; i++) {
+    const nodeId = path[i];
+    const n = graph.nodes[nodeId];
     if (!n) continue;
-    if (n.building !== currentBuilding || n.floor !== currentFloor) continue;
-    latlngs.push([H - n.y, n.x]);
-    visibleNodes.push(id);
+
+    if (n.building === currentBuilding && n.floor === currentFloor) {
+      currentSegment.push({ id: nodeId, latlng: [H - n.y, n.x], node: n });
+    } else {
+      if (currentSegment.length > 0) {
+        allSegments.push(currentSegment);
+        currentSegment = [];
+      }
+    }
+  }
+  if (currentSegment.length > 0) allSegments.push(currentSegment);
+
+  // Рисуем линии между узлами
+  allSegments.forEach(seg => {
+    if (seg.length < 2) return;
+    const latlngs = seg.map(p => p.latlng);
+    const smooth = smoothPath(latlngs, 2);
+    L.polyline(smooth, {
+      pane: 'routePane',
+      color: routeColor, weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round'
+    }).addTo(routeLayer);
+  });
+
+  // Добавляем пунктир от комнаты до первого узла, если это старт/финиш
+  const fromMeta = roomsMeta[routeState.fromRoomId];
+  const toMeta = roomsMeta[routeState.toRoomId];
+
+  // Рисуем стартовую комнату
+  if (fromMeta && fromMeta.building === currentBuilding && fromMeta.floor === currentFloor) {
+    const startNode = graph.nodes[path[0]];
+    if (startNode && startNode.building === currentBuilding && startNode.floor === currentFloor) {
+      const centroid = getShapeCentroidSvg(routeState.fromRoomId);
+      if (centroid) {
+        L.polyline([[H - centroid.y, centroid.x], [H - startNode.y, startNode.x]], {
+          pane: 'routePane', color: startColor, weight: 3, dashArray: '5, 5', opacity: 0.8
+        }).addTo(routeLayer);
+
+        L.circleMarker([H - centroid.y, centroid.x], {
+          pane: 'routePane', radius: 9, color: '#ffffff', weight: 3, fillColor: startColor, fillOpacity: 1
+        }).addTo(routeLayer);
+      }
+    }
   }
 
-  if (latlngs.length < 2) return;
+  // Рисуем конечную комнату
+  if (toMeta && toMeta.building === currentBuilding && toMeta.floor === currentFloor) {
+    const endNode = graph.nodes[path[path.length - 1]];
+    if (endNode && endNode.building === currentBuilding && endNode.floor === currentFloor) {
+      const centroid = getShapeCentroidSvg(routeState.toRoomId);
+      if (centroid) {
+        L.polyline([[H - centroid.y, centroid.x], [H - endNode.y, endNode.x]], {
+          pane: 'routePane', color: endColor, weight: 3, dashArray: '5, 5', opacity: 0.8
+        }).addTo(routeLayer);
 
-  // Сглаженная линия
-  const smooth = smoothPath(latlngs, 2);
+        L.circleMarker([H - centroid.y, centroid.x], {
+          pane: 'routePane', radius: 9, color: '#ffffff', weight: 3, fillColor: endColor, fillOpacity: 1
+        }).addTo(routeLayer);
+      }
+    }
+  }
 
-  L.polyline(smooth, {
-    color: getComputedStyle(document.documentElement).getPropertyValue('--route-color').trim() || '#22c55e',
-    weight: 5,
-    opacity: 0.9,
-    lineCap: 'round',
-    lineJoin: 'round'
-  }).addTo(routeLayer);
-
-  // Старт
-  const startId = visibleNodes[0];
-  const startNode = graph.nodes[startId];
-  L.circleMarker([H - startNode.y, startNode.x], {
-    radius: 9,
-    color: '#ffffff',
-    weight: 3,
-    fillColor: getComputedStyle(document.documentElement).getPropertyValue('--route-start').trim() || '#22c55e',
-    fillOpacity: 1
-  }).addTo(routeLayer);
-
-  // Финиш
-  const endId = visibleNodes[visibleNodes.length - 1];
-  const endNode = graph.nodes[endId];
-  L.circleMarker([H - endNode.y, endNode.x], {
-    radius: 9,
-    color: '#ffffff',
-    weight: 3,
-    fillColor: getComputedStyle(document.documentElement).getPropertyValue('--route-end').trim() || '#ef4444',
-    fillOpacity: 1
-  }).addTo(routeLayer);
+  // Отмечаем лестницы на текущем этаже
+  path.forEach(id => {
+    const node = graph.nodes[id];
+    if (node && node.type === 'stairs' && node.building === currentBuilding && node.floor === currentFloor) {
+      // Проверяем, есть ли переход на другой этаж через эту лестницу
+      const isTransition = path.some(otherId => {
+        const other = graph.nodes[otherId];
+        return other && other.type === 'stairs' && other.floor !== currentFloor;
+      });
+      if (isTransition) {
+        L.circleMarker([H - node.y, node.x], {
+          pane: 'routePane', radius: 7, color: '#fff', weight: 2, fillColor: stairColor, fillOpacity: 1
+        }).addTo(routeLayer);
+      }
+    }
+  });
 }
 
 function redrawRoute() {
@@ -1739,7 +1865,6 @@ function clearRoute() {
 
 function openRoutePanel() {
   if (panelMode === 'route') {
-    // Закрыть
     closeRoutePanel();
     return;
   }
@@ -1765,12 +1890,7 @@ function closeRoutePanel() {
 function handleRouteMapPick(id) {
   const meta = roomsMeta[id];
   if (!meta) return;
-  if (meta.building !== currentBuilding || meta.floor !== currentFloor) {
-    showToast('Можно выбирать только помещения текущего этажа');
-    return;
-  }
   setRoutePoint(routePickSide, id, formatRoomName(meta.name));
-  // Переключаем активное поле
   routePickSide = routePickSide === 'from' ? 'to' : 'from';
 }
 
@@ -1839,6 +1959,16 @@ function renderRoutePanel() {
     });
   }
 
+  panel.querySelectorAll('.step-floor-link').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const b = e.target.dataset.building;
+      const f = parseInt(e.target.dataset.floor);
+      if (b && !isNaN(f)) {
+        showFloor(b, f);
+      }
+    });
+  });
+
   updatePanelHandle();
 }
 
@@ -1851,7 +1981,6 @@ function setupRouteInput(side) {
 
   input.addEventListener('focus', () => {
     routePickSide = side;
-    // Обновляем подсказки в label
     const labelFrom = document.querySelector('#route-from')?.closest('.route-field')?.querySelector('.label-hint');
     const labelTo = document.querySelector('#route-to')?.closest('.route-field')?.querySelector('.label-hint');
     if (labelFrom) labelFrom.textContent = side === 'from' ? '← или ткните на карте' : '';
@@ -1920,7 +2049,7 @@ function setRoutePoint(side, roomId, name) {
   refreshRoutePickHighlight();
 }
 
-function onBuildRouteClick() {
+async function onBuildRouteClick() {
   const panel = document.getElementById('panel');
 
   if (!routeState.fromRoomId || !routeState.toRoomId) {
@@ -1928,36 +2057,14 @@ function onBuildRouteClick() {
     return;
   }
 
-  const fromMeta = roomsMeta[routeState.fromRoomId];
-  const toMeta = roomsMeta[routeState.toRoomId];
+  panel.querySelector('.panel-scroll').innerHTML = '<p class="muted-text">Строим маршрут…</p>';
 
-  if (fromMeta.building !== currentBuilding || fromMeta.floor !== currentFloor ||
-      toMeta.building !== currentBuilding || toMeta.floor !== currentFloor) {
-    panel.querySelector('.panel-scroll').innerHTML = `
-      <div class="route-warning">
-        Одна из точек находится на другом этаже или в другом корпусе.
-        Перейди на нужный этаж и выбери точки снова.
-      </div>
-    `;
-    return;
-  }
-
-  const fromCentroid = getShapeCentroidSvg(routeState.fromRoomId);
-  const toCentroid = getShapeCentroidSvg(routeState.toRoomId);
-
-  if (!fromCentroid || !toCentroid) {
-    panel.querySelector('.panel-scroll').innerHTML = `
-      <div class="route-warning">Не удалось определить положение выбранных помещений на карте.</div>
-    `;
-    return;
-  }
-
-  const fromNode = findNearestNode(fromCentroid, currentBuilding, currentFloor);
-  const toNode = findNearestNode(toCentroid, currentBuilding, currentFloor);
+  const fromNode = await getRoomNode(routeState.fromRoomId);
+  const toNode = await getRoomNode(routeState.toRoomId);
 
   if (!fromNode || !toNode) {
     panel.querySelector('.panel-scroll').innerHTML = `
-      <div class="route-warning">Рядом с этими помещениями нет узлов графа. Возможно, граф для этого этажа ещё не размечен.</div>
+      <div class="route-warning">Не удалось определить положение выбранных помещений на карте.</div>
     `;
     return;
   }
@@ -1966,7 +2073,7 @@ function onBuildRouteClick() {
 
   if (!path) {
     panel.querySelector('.panel-scroll').innerHTML = `
-      <div class="route-warning">Между этими точками нет пути по графу. Проверь, что все нужные рёбра размечены.</div>
+      <div class="route-warning">Между этими точками нет пути по графу.</div>
     `;
     return;
   }
@@ -1981,24 +2088,78 @@ function renderRouteResult(path) {
   const length = computeRouteLength(path);
   const steps = path.length - 1;
 
-  const stepsHtml = path.slice(1).map((nodeId, idx) => {
-    const prevId = path[idx];
-    const a = graph.nodes[prevId];
-    const b = graph.nodes[nodeId];
-    if (!a || !b) return '';
-    const dist = Math.round(Math.hypot(a.x - b.x, a.y - b.y));
-    const angle = computeTurn(prevId, nodeId, path[idx + 2]);
-    const turnText = angle ? ` · ${angle}` : '';
+  let currentFloorGroup = [];
+  const floorGroups = [];
 
-    return `
-      <li class="route-step">
-        <span class="step-num">${idx + 1}</span>
-        <div class="step-body">
-          Пройдите <strong>${dist}</strong> ед.${turnText}
-        </div>
-      </li>
-    `;
-  }).join('');
+  for (let i = 0; i < path.length; i++) {
+    const nodeId = path[i];
+    const n = graph.nodes[nodeId];
+    if (!n) continue;
+
+    if (currentFloorGroup.length === 0) {
+      currentFloorGroup.push({ id: nodeId, node: n, index: i });
+    } else {
+      const lastItem = currentFloorGroup[currentFloorGroup.length - 1];
+      if (lastItem.node.floor === n.floor && lastItem.node.building === n.building) {
+        currentFloorGroup.push({ id: nodeId, node: n, index: i });
+      } else {
+        floorGroups.push(currentFloorGroup);
+        currentFloorGroup = [{ id: nodeId, node: n, index: i }];
+      }
+    }
+  }
+  if (currentFloorGroup.length > 0) floorGroups.push(currentFloorGroup);
+
+  let stepsHtml = '';
+  let stepNum = 1;
+
+  floorGroups.forEach((group, groupIdx) => {
+    if (groupIdx > 0) {
+      const prevNode = floorGroups[groupIdx - 1][floorGroups[groupIdx - 1].length - 1].node;
+      const currNode = group[0].node;
+      const dir = currNode.floor > prevNode.floor ? 'Поднимитесь' : 'Спуститесь';
+      const bName = BUILDINGS[currNode.building]?.name || currNode.building;
+      
+      stepsHtml += `
+        <li class="route-step" style="background: var(--btn-bg); border-left: 3px solid #a855f7;">
+          <span class="step-num" style="background: #a855f7;">↕</span>
+          <div class="step-body">
+            <strong>${dir} на ${currNode.floor} этаж</strong> (${bName})
+            <div class="step-meta">по лестнице</div>
+            <button class="step-floor-link" data-building="${currNode.building}" data-floor="${currNode.floor}" style="margin-top: 8px; padding: 4px 8px; font-size: 12px; background: var(--btn-bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">
+              Перейти на ${currNode.floor} этаж
+            </button>
+          </div>
+        </li>
+      `;
+      stepNum++;
+    }
+
+    for (let i = 1; i < group.length; i++) {
+      const prevItem = group[i - 1];
+      const currItem = group[i];
+      const a = prevItem.node;
+      const b = currItem.node;
+
+      if (a.x === b.x && a.y === b.y) continue;
+
+      const dist = Math.round(Math.hypot(a.x - b.x, a.y - b.y));
+      const prevId = path[currItem.index - 1];
+      const nextId = path[currItem.index + 1];
+      const angle = computeTurn(prevId, currItem.id, nextId);
+      const turnText = angle ? ` · ${angle}` : '';
+
+      stepsHtml += `
+        <li class="route-step">
+          <span class="step-num">${stepNum}</span>
+          <div class="step-body">
+            Пройдите <strong>${dist}</strong> ед.${turnText}
+          </div>
+        </li>
+      `;
+      stepNum++;
+    }
+  });
 
   return `
     <div class="route-summary">
@@ -2015,11 +2176,12 @@ function renderRouteResult(path) {
   `;
 }
 
-// Угол поворота от prev→cur к cur→next
 function computeTurn(prevId, curId, nextId) {
   if (!nextId) return null;
   const p = graph.nodes[prevId], c = graph.nodes[curId], n = graph.nodes[nextId];
   if (!p || !c || !n) return null;
+  
+  if (p.floor !== c.floor || c.floor !== n.floor) return null;
 
   const v1 = { x: c.x - p.x, y: c.y - p.y };
   const v2 = { x: n.x - c.x, y: n.y - c.y };

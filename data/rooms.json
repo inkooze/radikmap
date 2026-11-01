@@ -34,7 +34,7 @@
   "C_spec_043": { "name": "Переплетная (043)", "shortName": "043", "type": "utility", "building": "C", "floor": 0 },
   "C_spec_041": { "name": "ОГЗ (041)", "shortName": "041", "type": "utility", "building": "C", "floor": 0 },
   "C_utility_f0_el": { "name": "Элеваторный узел (039)", "shortName": "039", "type": "utility", "building": "C", "floor": 0 },
-  "C_spec_38": { "name": "Служебное помещение АХР (38)", "shortName": "037", "type": "utility", "building": "C", "floor": 0 },
+  "C_spec_38": { "name": "Служебное помещение АХР (38)", "shortName": "38", "type": "utility", "building": "C", "floor": 0 },
   "C_spec_037": { "name": "Сл. помещение АХР (037)", "shortName": "037", "type": "utility", "building": "C", "floor": 0 },
   "C_spec_035": { "name": "Служебное помещение АХР (035)", "shortName": "035", "type": "utility", "building": "C", "floor": 0 },
   "C_spec_033": { "name": "Служебное помещение АХР (033)", "shortName": "033", "type": "utility", "building": "C", "floor": 0 },
