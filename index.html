@@ -4,13 +4,19 @@
   <meta charset="UTF-8">
   <script>
     try {
-      document.documentElement.dataset.theme = localStorage.getItem('theme') || 'dark';
+      document.documentElement.dataset.theme = localStorage.getItem('theme') || 'light';
     } catch (e) {
-      document.documentElement.dataset.theme = 'dark';
+      document.documentElement.dataset.theme = 'light';
     }
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Карта РГРТУ</title>
+  <title>Карта РГРТУ — Интерактивная навигация и расписание</title>
+  <meta name="description" content="Интерактивная карта Главного корпуса РГРТУ: расписание аудиторий, свободные кабинеты, маршруты по этажам и умный ИИ-помощник.">
+  <meta property="og:title" content="Карта РГРТУ — Интерактивная навигация и расписание">
+  <meta property="og:description" content="Интерактивная карта Главного корпуса РГРТУ: расписание аудиторий, свободные кабинеты, маршруты по этажам и умный ИИ-помощник.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
   <link rel="stylesheet" href="css/style.css">
@@ -18,34 +24,44 @@
 </head>
 <body>
   <header id="topbar">
-    <div class="topbar-brand">
-      <span class="topbar-title">Карта РГРТУ</span>
+    <div class="topbar-left">
+      <div class="topbar-brand">
+        <span class="topbar-title">Карта РГРТУ</span>
+        <span class="topbar-sep" aria-hidden="true"></span>
+        <span class="topbar-subtitle">Главный корпус</span>
+      </div>
     </div>
 
-    <div class="topbar-divider"></div>
-
-    <nav id="buildings" class="topbar-nav"></nav>
-
     <div class="topbar-actions">
-      <button class="action-btn" id="route-toggle" title="Построить маршрут">
-        <i class="mdi mdi-compass-outline"></i>
-      </button>
-      <button class="action-btn" id="theme-toggle" title="Переключить тему">
-        <i class="mdi mdi-weather-sunny"></i>
-      </button>
       <div class="search-wrap" id="search-wrap">
-        <button class="action-btn" id="search-toggle" title="Поиск">
-          <i class="mdi mdi-magnify"></i>
-        </button>
-        <div class="search-panel" id="search-panel">
+        <div class="omni-bar" id="omni-bar">
+          <i class="mdi mdi-magnify omni-search-icon"></i>
           <input type="text" id="search-input"
-                 placeholder="Аудитория, спортзал, стадион…"
+                 placeholder="Аудитория, группа, преподаватель или вопрос ИИ…"
                  autocomplete="off">
+          <button type="button" class="omni-clear-btn hidden" id="search-clear" title="Очистить">
+            <i class="mdi mdi-close"></i>
+          </button>
+          <button type="button" class="omni-ai-btn" id="omni-ai-btn" title="Открыть чат с ИИ">
+            <i class="mdi mdi-creation"></i>
+            <span>ИИ</span>
+          </button>
+        </div>
+
+        <div class="search-panel" id="search-panel">
           <div class="quick-tags" id="quick-tags"></div>
+          <div class="ai-inline-trigger hidden" id="ai-inline-trigger">
+            <i class="mdi mdi-creation"></i>
+            <span>Спросить ИИ: «<strong id="ai-inline-query"></strong>»</span>
+          </div>
           <div class="search-history" id="search-history"></div>
           <ul class="results" id="search-results"></ul>
         </div>
       </div>
+
+      <button class="action-btn" id="theme-toggle" title="Переключить тему">
+        <i class="mdi mdi-weather-night"></i>
+      </button>
     </div>
   </header>
 
@@ -54,6 +70,7 @@
       <div id="map"></div>
     </div>
     <aside id="panel"></aside>
+    <section id="schedule-view" class="schedule-view hidden" aria-label="Расписание групп и преподавателей"></section>
   </div>
 
   <button id="panel-handle" class="panel-handle hidden" title="Свернуть / развернуть">

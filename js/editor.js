@@ -65,14 +65,15 @@ async function loadGraph() {
 function setupTheme() {
   const btn = document.getElementById('btn-theme-toggle');
   const updateIcon = () => {
-    const theme = document.documentElement.dataset.theme || 'light';
+    const theme = document.documentElement.dataset.theme || 'dark';
     btn.innerHTML = theme === 'dark' ? '<i class="mdi mdi-weather-sunny"></i>' : '<i class="mdi mdi-weather-night"></i>';
   };
   updateIcon();
   btn.addEventListener('click', () => {
-    const current = document.documentElement.dataset.theme || 'light';
+    const current = document.documentElement.dataset.theme || 'dark';
     const next = current === 'light' ? 'dark' : 'light';
     document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('theme', next); } catch (e) {}
     updateIcon();
   });
 }
@@ -156,7 +157,10 @@ function buildBuildingsUI() {
     tab.addEventListener('click', () => {
       if (code === currentBuilding) return;
       const floors = Object.keys(b.floors).map(Number).sort((a, b) => a - b);
-      if (floors.length === 0) return alert(`Этажи корпуса «${b.name}» не добавлены`);
+      if (floors.length === 0) {
+        showToast(`Этажи корпуса «${b.name}» ещё не добавлены`);
+        return;
+      }
       currentBuilding = code;
       updateTabActive();
       showFloor(code, floors[0]);
@@ -266,6 +270,11 @@ function drawGraphForCurrentFloor() {
         markDirty();
         drawGraphForCurrentFloor();
         clearNodeInfo();
+        showToast('Ребро удалено');
+      } else if (currentTool === null) {
+        selectedNodeId = null;
+        drawGraphForCurrentFloor();
+        showEdgeInfo(edge);
       }
     });
 
@@ -340,7 +349,7 @@ function openModal({ title, bodyHtml, onConfirm }) {
 
   const close = () => {
     backdrop.classList.remove('open');
-    document.removeEventListener('keydown', handleKeyDown);
+    document.removeEventListener('keydown', handleKeyDown, true);
   };
 
   const newConfirmBtn = confirmBtn.cloneNode(true);
@@ -355,15 +364,26 @@ function openModal({ title, bodyHtml, onConfirm }) {
   });
 
   const handleKeyDown = (e) => {
+    if (!backdrop.classList.contains('open')) return;
     if (e.key === 'Enter') {
       e.preventDefault();
+      e.stopPropagation();
       newConfirmBtn.click();
-    }
-    if (e.key === 'Escape') {
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
       close();
     }
   };
-  document.addEventListener('keydown', handleKeyDown);
+  document.addEventListener('keydown', handleKeyDown, true);
+
+  requestAnimationFrame(() => {
+    const firstInput = body.querySelector('input[type="text"]');
+    if (firstInput) {
+      firstInput.focus();
+      firstInput.select();
+    }
+  });
 }
 
 // ================ КЛИКИ ================
@@ -392,7 +412,7 @@ function showAddNodeModal(x, y) {
   const usedNumbers = new Set();
   Object.keys(graph.nodes).forEach(id => {
     const match = id.match(/^n(\d+)_/);
-    if (match) usedNumbers.add(parseInt(match[1]));
+    if (match) usedNumbers.add(parseInt(match[1], 10));
   });
   
   let proposedNum = 1;
@@ -403,7 +423,7 @@ function showAddNodeModal(x, y) {
   
   const html = `
     <div class="form-group">
-      <label>ID узла</label>
+      <label for="modal-node-id">ID узла</label>
       <input type="text" id="modal-node-id" value="${autoId}">
     </div>
     <div class="form-group">
@@ -424,7 +444,7 @@ function showAddNodeModal(x, y) {
       </div>
     </div>
     <div class="form-group" id="modal-group-wrap" style="display:none">
-      <label>Группа лестницы (например, stairs_main)</label>
+      <label for="modal-node-group">Группа лестницы (например, stairs_main)</label>
       <input type="text" id="modal-node-group" value="stairs_main">
     </div>
   `;
@@ -437,8 +457,8 @@ function showAddNodeModal(x, y) {
       const type = body.querySelector('input[name="node-type"]:checked').value;
       const group = body.querySelector('#modal-node-group').value.trim();
 
-      if (!id) { alert('Введите ID'); return false; }
-      if (graph.nodes[id]) { alert('Узел с таким ID уже существует'); return false; }
+      if (!id) { showToast('Введите ID узла'); return false; }
+      if (graph.nodes[id]) { showToast('Узел с таким ID уже существует'); return false; }
 
       const node = { x, y, building: currentBuilding, floor: currentFloor, type };
       if (type === 'stairs') node.group = group || 'stairs_default';
@@ -446,6 +466,8 @@ function showAddNodeModal(x, y) {
       graph.nodes[id] = node;
       markDirty();
       drawGraphForCurrentFloor();
+      showNodeInfo(id);
+      showToast('Узел добавлен');
     }
   });
 
@@ -469,15 +491,20 @@ function handleNodeClick(id) {
     markDirty();
     drawGraphForCurrentFloor();
     clearNodeInfo();
+    showToast('Узел удалён');
     return;
   }
 
-  // Режим добавления (связывание любых узлов)
+  // Режим добавления (связывание любых узлов, включая лестницы)
   if (currentTool === 'add') {
     if (!selectedNodeId) {
       selectedNodeId = id;
       showNodeInfo(id);
-      showToast('Первый узел выбран. Кликните второй для создания ребра.');
+      if (node.type === 'stairs') {
+        showToast('Лестница выбрана. Кликните другой узел или лестницу для связывания.');
+      } else {
+        showToast('Первый узел выбран. Кликните второй для создания ребра.');
+      }
       drawGraphForCurrentFloor();
       return;
     }
@@ -511,7 +538,8 @@ function handleNodeClick(id) {
     graph.edges.push({ from: selectedNodeId, to: id, weight });
     
     // Если связываем две лестницы, объединяем их группы
-    if (a.type === 'stairs' && b.type === 'stairs') {
+    const bothStairs = a.type === 'stairs' && b.type === 'stairs';
+    if (bothStairs) {
       if (a.group && !b.group) b.group = a.group;
       if (b.group && !a.group) a.group = b.group;
       if (!a.group && !b.group) { a.group = 'stairs_main'; b.group = 'stairs_main'; }
@@ -520,7 +548,8 @@ function handleNodeClick(id) {
     selectedNodeId = null;
     markDirty();
     drawGraphForCurrentFloor();
-    showToast('Ребро добавлено');
+    showNodeInfo(id);
+    showToast(bothStairs ? 'Лестницы связаны' : 'Ребро добавлено');
     return;
   }
 
@@ -535,6 +564,21 @@ function handleNodeClick(id) {
 
 // ================ ПАНЕЛЬ ИНФОРМАЦИИ ================
 
+function showEdgeInfo(edge) {
+  if (!edge) return;
+  const el = document.getElementById('node-info');
+  el.innerHTML = `
+    <p><strong>Ребро</strong></p>
+    <p>От: <code>${edge.from}</code></p>
+    <p>До: <code>${edge.to}</code></p>
+    <div class="stair-link-row" data-edge-from="${edge.from}" data-edge-to="${edge.to}" style="margin-top: 8px;">
+      <span>Вес ребра</span>
+      <input type="number" class="weight-input" value="${edge.weight}" min="1" step="1" aria-label="Вес ребра" />
+    </div>
+  `;
+  bindWeightInputs(el);
+}
+
 function showNodeInfo(id) {
   const node = graph.nodes[id];
   if (!node) return;
@@ -548,51 +592,58 @@ function showNodeInfo(id) {
     ${node.group ? `<p>Группа лестницы: <code style="color:var(--btn-flr-active)">${node.group}</code></p>` : ''}
   `;
 
-  // Отображаем веса ТОЛЬКО для связей лестница-лестница
+  // При нажатии на узел лестницы выводим связанные узлы и веса с возможностью редактирования
   if (node.type === 'stairs') {
-    const stairsEdges = graph.edges.filter(e => {
-      if (e.from !== id && e.to !== id) return false;
-      const otherId = e.from === id ? e.to : e.from;
-      const otherNode = graph.nodes[otherId];
-      return otherNode && otherNode.type === 'stairs';
-    });
+    const connectedEdges = graph.edges.filter(e => e.from === id || e.to === id);
 
-    if (stairsEdges.length > 0) {
-      html += `<p style="margin-top: 12px;"><strong>Связанные лестницы (веса):</strong></p>`;
-      stairsEdges.forEach(edge => {
+    if (connectedEdges.length > 0) {
+      html += `<p style="margin-top: 12px;"><strong>Связанные узлы (веса):</strong></p>`;
+      connectedEdges.forEach(edge => {
         const otherId = edge.from === id ? edge.to : edge.from;
         const otherNode = graph.nodes[otherId];
+        if (!otherNode) return;
+        const typeLabel = otherNode.type === 'stairs' ? 'лестн.' : otherNode.type;
         
         html += `
           <div class="stair-link-row" data-edge-from="${edge.from}" data-edge-to="${edge.to}">
-            <span>${otherId} (эт. ${otherNode.floor})</span>
-            <input type="number" class="weight-input" value="${edge.weight}" min="1" step="1" />
+            <span>${otherId} (${typeLabel}, эт. ${otherNode.floor})</span>
+            <input type="number" class="weight-input" value="${edge.weight}" min="1" step="1" aria-label="Вес связи с ${otherId}" />
           </div>
         `;
       });
     } else {
-      html += `<p class="muted" style="margin-top: 12px;">Нет связанных лестниц (только коридоры)</p>`;
+      html += `<p class="muted" style="margin-top: 12px;">Нет связанных узлов</p>`;
     }
   }
 
   el.innerHTML = html;
+  bindWeightInputs(el);
+}
 
-  el.querySelectorAll('.weight-input').forEach(input => {
-    input.addEventListener('change', (e) => {
+function bindWeightInputs(container) {
+  container.querySelectorAll('.weight-input').forEach(input => {
+    const updateWeight = (e) => {
       const row = e.target.closest('.stair-link-row');
       const from = row.dataset.edgeFrom;
       const to = row.dataset.edgeTo;
       const edge = graph.edges.find(ed => (ed.from === from && ed.to === to) || (ed.from === to && ed.to === from));
       
       if (edge) {
-        const val = parseInt(e.target.value);
+        const val = parseInt(e.target.value, 10);
         if (val > 0) {
           edge.weight = val;
           markDirty();
-          showToast('Вес обновлен');
+          showToast('Вес обновлён');
         } else {
           e.target.value = edge.weight;
         }
+      }
+    };
+    input.addEventListener('change', updateWeight);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.target.blur();
       }
     });
   });
@@ -641,6 +692,7 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (document.getElementById('modal-backdrop')?.classList.contains('open')) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
   if (e.key === '1') document.querySelector('[data-tool="add"]').click();
@@ -655,20 +707,126 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ================ СОХРАНЕНИЕ ================
+// ================ АВТОРИЗАЦИЯ И СОХРАНЕНИЕ ================
+
+const EDITOR_TOKEN_KEY = 'radikmap_editor_token';
+
+function getStoredEditorToken() {
+  try {
+    return localStorage.getItem(EDITOR_TOKEN_KEY) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function setStoredEditorToken(token) {
+  try {
+    if (token) localStorage.setItem(EDITOR_TOKEN_KEY, token);
+    else localStorage.removeItem(EDITOR_TOKEN_KEY);
+  } catch (e) {}
+}
+
+async function verifyEditorSession() {
+  const token = getStoredEditorToken();
+  if (!token) return false;
+  try {
+    const res = await fetch('/api/editor/check', {
+      headers: { 'X-Editor-Token': token }
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+function showEditorAuthGate(message = '') {
+  const gate = document.getElementById('editor-auth-gate');
+  const errEl = document.getElementById('editor-auth-error');
+  const passInput = document.getElementById('editor-auth-password');
+  if (!gate) return;
+  gate.classList.remove('hidden');
+  if (errEl) {
+    if (message) {
+      errEl.textContent = message;
+      errEl.classList.remove('hidden');
+    } else {
+      errEl.textContent = '';
+      errEl.classList.add('hidden');
+    }
+  }
+  if (passInput) {
+    passInput.value = '';
+    setTimeout(() => passInput.focus(), 50);
+  }
+}
+
+function hideEditorAuthGate() {
+  const gate = document.getElementById('editor-auth-gate');
+  if (gate) gate.classList.add('hidden');
+}
+
+function setupEditorAuthForm() {
+  const form = document.getElementById('editor-auth-form');
+  const passInput = document.getElementById('editor-auth-password');
+  const errEl = document.getElementById('editor-auth-error');
+  if (!form || !passInput) return;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const password = passInput.value.trim();
+    if (!password) return;
+    try {
+      const res = await fetch('/api/editor/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok || !data.token) {
+        if (errEl) {
+          errEl.textContent = data.error || 'Неверный пароль администратора';
+          errEl.classList.remove('hidden');
+        }
+        return;
+      }
+      setStoredEditorToken(data.token);
+      hideEditorAuthGate();
+      showToast('Доступ к редактору открыт');
+    } catch (err) {
+      if (errEl) {
+        errEl.textContent = 'Ошибка соединения с сервером';
+        errEl.classList.remove('hidden');
+      }
+    }
+  });
+}
 
 async function saveGraph() {
+  const token = getStoredEditorToken();
+  if (!token) {
+    showEditorAuthGate('Введите пароль администратора для сохранения');
+    return;
+  }
   try {
     const res = await fetch('/api/graph/save', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Editor-Token': token
+      },
       body: JSON.stringify(graph)
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      setStoredEditorToken('');
+      showEditorAuthGate('Сессия истекла. Введите пароль администратора');
+      return;
+    }
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     markClean();
     showToast('graph.json сохранён');
   } catch (e) {
-    alert('Не удалось сохранить: ' + e.message);
+    showToast('Не удалось сохранить: ' + e.message);
   }
 }
 
@@ -677,6 +835,7 @@ document.getElementById('editor-save').addEventListener('click', saveGraph);
 // ================ TOAST ================
 
 function showToast(text) {
+  document.querySelectorAll('.toast').forEach(el => el.remove());
   const t = document.createElement('div');
   t.className = 'toast';
   t.textContent = text;
@@ -695,6 +854,15 @@ map.on('click', handleMapClick);
 (async function init() {
   setupTheme();
   setupSidebar();
+  setupEditorAuthForm();
+
+  const authorized = await verifyEditorSession();
+  if (authorized) {
+    hideEditorAuthGate();
+  } else {
+    showEditorAuthGate();
+  }
+
   await loadGraph();
   buildBuildingsUI();
   setupResetControl().addTo(map);

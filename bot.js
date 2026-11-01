@@ -1,21 +1,26 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 const { Telegraf, Markup } = require('telegraf');
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const WEBAPP_URL = process.env.WEBAPP_URL || 'http://localhost:3000';
+const BOT_TOKEN = (process.env.BOT_TOKEN || '').trim();
+const rawWebAppUrl = (process.env.WEBAPP_URL || '').trim();
+const WEBAPP_URL = (!rawWebAppUrl || rawWebAppUrl.includes('ngrok'))
+  ? 'https://radikmap.ai.studio/'
+  : rawWebAppUrl;
 const API_BASE = `http://localhost:${process.env.PORT || 3000}`;
 
 console.log('[bot] BOT_TOKEN:', BOT_TOKEN ? `установлен (${BOT_TOKEN.slice(0, 10)}...)` : 'НЕ УСТАНОВЛЕН');
 console.log('[bot] WEBAPP_URL:', WEBAPP_URL);
 console.log('[bot] API_BASE:', API_BASE);
 
-if (!BOT_TOKEN) {
-  console.error('❌ BOT_TOKEN не задан. Создай .env и заполни BOT_TOKEN=...');
+if (!BOT_TOKEN && require.main === module) {
+  console.error('❌ BOT_TOKEN не задан. Заполни BOT_TOKEN в .env или .env.example');
   process.exit(1);
 }
 
-const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 15000 });
+const bot = BOT_TOKEN ? new Telegraf(BOT_TOKEN, { handlerTimeout: 15000 }) : null;
 
+if (bot) {
 bot.use((ctx, next) => {
   console.log('[bot] update:', ctx.updateType, ctx.message?.text || ctx.callbackQuery?.data || '');
   return next();
@@ -145,19 +150,32 @@ bot.command('schedule', async (ctx) => {
 bot.catch((err, ctx) => {
   console.error('[bot] error для', ctx?.updateType, err);
 });
+}
 
-if (require.main === module) {
+let botLaunched = false;
+
+function startBot(retryCount = 0) {
+  if (!bot || botLaunched) return;
+  botLaunched = true;
   bot.launch()
     .then(() => {
       console.log('🤖 Telegram-бот запущен и слушает команды');
     })
     .catch((err) => {
-      console.error('❌ Не удалось запустить бота:', err.message);
-      process.exit(1);
+      botLaunched = false;
+      console.error('❌ Ошибка запуска Telegram-бота:', err.message);
+      if (String(err.message).includes('409') && retryCount < 3) {
+        console.log('[bot] Повторная попытка подключения через 3 сек...');
+        setTimeout(() => startBot(retryCount + 1), 3000);
+      }
     });
 
-  process.once('SIGINT', () => bot.stop('SIGINT'));
-  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  process.once('SIGINT', () => { try { bot.stop('SIGINT'); } catch (e) {} });
+  process.once('SIGTERM', () => { try { bot.stop('SIGTERM'); } catch (e) {} });
 }
 
-module.exports = bot;
+if (require.main === module) {
+  startBot();
+}
+
+module.exports = { bot, startBot };

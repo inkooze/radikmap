@@ -1,9 +1,17 @@
 <!DOCTYPE html>
-<html lang="ru" data-theme="light">
+<html lang="ru">
 <head>
   <meta charset="UTF-8">
+  <script>
+    try {
+      document.documentElement.dataset.theme = localStorage.getItem('theme') || 'dark';
+    } catch (e) {
+      document.documentElement.dataset.theme = 'dark';
+    }
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Карта РГРТУ - Редактор</title>
+  <meta name="description" content="Редактор графа навигации интерактивной карты РГРТУ.">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
   <link rel="stylesheet" href="css/style.css">
@@ -17,10 +25,13 @@
     <div class="topbar-divider"></div>
     <nav id="buildings" class="topbar-nav"></nav>
     <div class="topbar-actions">
-      <button class="action-btn" id="btn-theme-toggle" title="Переключить тему">
+      <a class="action-btn" id="map-link" href="index.html" title="Вернуться на карту" aria-label="Вернуться на карту" style="text-decoration:none">
+        <i class="mdi mdi-map-outline"></i>
+      </a>
+      <button class="action-btn" id="btn-theme-toggle" title="Переключить тему" aria-label="Переключить тему">
         <i class="mdi mdi-weather-night"></i>
       </button>
-      <button class="action-btn" id="editor-save" title="Сохранить graph.json">
+      <button class="action-btn" id="editor-save" title="Сохранить graph.json" aria-label="Сохранить graph.json">
         <i class="mdi mdi-content-save"></i>
       </button>
     </div>
@@ -77,6 +88,27 @@
         <button class="btn-secondary" id="modal-cancel">Отмена</button>
         <button class="btn-primary" id="modal-confirm">ОК</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Экран авторизации администратора -->
+  <div id="editor-auth-gate" class="editor-auth-gate">
+    <div class="editor-auth-card">
+      <div class="editor-auth-icon">
+        <i class="mdi mdi-shield-lock-outline"></i>
+      </div>
+      <h2>Доступ к редактору графа</h2>
+      <p>Редактирование и сохранение графа маршрутов доступно только администратору.</p>
+      <form id="editor-auth-form">
+        <div class="editor-auth-input-wrap">
+          <input type="password" id="editor-auth-password" placeholder="Пароль администратора…" autocomplete="current-password" required>
+        </div>
+        <div id="editor-auth-error" class="editor-auth-error hidden"></div>
+        <div class="editor-auth-actions">
+          <a href="index.html" class="btn-secondary" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;">На карту</a>
+          <button type="submit" class="btn-primary" id="editor-auth-submit">Войти</button>
+        </div>
+      </form>
     </div>
   </div>
 

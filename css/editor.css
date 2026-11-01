@@ -375,9 +375,11 @@ body.sidebar-collapsed .sidebar-handle .mdi {
 }
 
 /* ============ Уведомления сверху ============ */
-.toast {
+.toast,
+#map-wrap .toast {
   position: fixed !important;
   top: 76px !important; /* Отступ сверху, под навбаром */
+  bottom: auto !important; /* Сбрасываем bottom: 24px из style.css, чтобы плашка не растягивалась по высоте */
   
   /* Центрируем с учетом открытой панели (300px / 2 = 150px) */
   left: calc(50vw - 150px) !important; 
@@ -390,6 +392,7 @@ body.sidebar-collapsed .sidebar-handle .mdi {
   border-radius: 8px !important;
   font-size: 13px !important;
   font-weight: 500 !important;
+  line-height: 1.4 !important;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
   opacity: 0;
   
@@ -401,14 +404,20 @@ body.sidebar-collapsed .sidebar-handle .mdi {
   white-space: nowrap !important;
   width: max-content !important;
   height: max-content !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  flex: none !important;
+  display: inline-block !important;
 }
 
 /* Если панель свернута, центрируем ровно по середине экрана */
-body.sidebar-collapsed .toast {
+body.sidebar-collapsed .toast,
+body.sidebar-collapsed #map-wrap .toast {
   left: 50vw !important;
 }
 
-.toast.show {
+.toast.show,
+#map-wrap .toast.show {
   opacity: 1 !important;
   transform: translateX(-50%) translateY(0) !important;
 }
@@ -439,4 +448,97 @@ body.sidebar-collapsed .toast {
   .toast {
     left: 50vw !important;
   }
+}
+
+/* ============ Экран авторизации администратора ============ */
+.editor-auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.editor-auth-gate.hidden {
+  display: none;
+}
+
+.editor-auth-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.editor-auth-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: rgba(59, 130, 246, 0.14);
+  color: var(--btn-flr-active);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  margin: 0 auto 12px;
+}
+
+.editor-auth-card h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 6px;
+}
+
+.editor-auth-card p {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin-bottom: 16px;
+}
+
+.editor-auth-input-wrap input {
+  width: 100%;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-bright);
+  font-size: 14px;
+  outline: none;
+}
+
+.editor-auth-input-wrap input:focus {
+  border-color: var(--btn-flr-active);
+}
+
+.editor-auth-error {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: #ef4444;
+  font-weight: 500;
+}
+
+.editor-auth-error.hidden {
+  display: none;
+}
+
+.editor-auth-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.editor-auth-actions > * {
+  flex: 1;
+  height: 40px;
 }

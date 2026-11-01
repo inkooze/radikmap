@@ -1,0 +1,8 @@
+{
+  "name": "Карта РГРТУ",
+  "description": "Интерактивная поэтажная карта корпусов РГРТУ с ИИ-навигатором, расписанием занятий, поиском свободных аудиторий и построением маршрутов.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

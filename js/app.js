@@ -1,10 +1,16 @@
 // ================ КОНФИГ ================
 
 const BUILDINGS = {
-  C: { name: 'Главный',    floors: { 0: 'data/floor0.svg', 1: 'data/floor1.svg', 2: 'data/floor2.svg', 3: 'data/floor3.svg', 4: 'data/floor4.svg' } },
-  L: { name: 'Лабок',      floors: {} },
-  B: { name: 'Инкубатор',  floors: {} },
-  F: { name: 'Военка',     floors: {} }
+  C: {
+    name: 'Главный корпус',
+    floors: {
+      0: 'data/floor0.svg',
+      1: 'data/floor1.svg',
+      2: 'data/floor2.svg',
+      3: 'data/floor3.svg',
+      4: 'data/floor4.svg'
+    }
+  }
 };
 
 const BREAKS = {
@@ -37,20 +43,66 @@ const DAY_GENITIVE = {
   'Воскресенье': 'воскресенья'
 };
 
-const SEARCH_SYNONYMS = {
-  'спорт':      ['спорт', 'спортзал', 'спортивный', 'стадион', 'физра', 'физкультура', 'самбо', 'атлетика'],
-  'столовая':   ['столовая', 'буфет', 'кафе', 'кофейня', 'столовка'],
-  'туалет':     ['туалет', 'wc', 'санузел', 'уборная'],
-  'деканат':    ['деканат', 'деконат', 'деканаты'],
-  'библиотека': ['библиотека', 'читальный зал', 'читалка'],
-  'гардероб':   ['гардероб', 'раздевалка', 'вешалка']
-};
+const SEARCH_CATEGORY_RULES = [
+  {
+    triggers: ['столовая', 'столовка', 'буфет', 'поесть', 'еда', 'перекус', 'обед', 'кафе', 'кофе', 'кофейня', 'питание'],
+    types: ['buffet'],
+    keywords: ['буфет', 'столовая', 'кофейня', 'кофе-поинт']
+  },
+  {
+    triggers: ['спорт', 'спортзал', 'спортивный', 'стадион', 'физра', 'физкультура', 'самбо', 'атлетика', 'тренажерный'],
+    types: ['gym'],
+    keywords: ['спортзал', 'спортивный', 'самбо', 'атлетик', 'стадион']
+  },
+  {
+    triggers: ['туалет', 'wc', 'санузел', 'уборная', 'тубзик'],
+    types: ['wc'],
+    keywords: ['туалет', 'санузел']
+  },
+  {
+    triggers: ['гардероб', 'раздевалка', 'вешалка', 'куртка', 'одежда'],
+    types: ['wardrobe'],
+    keywords: ['гардероб']
+  },
+  {
+    triggers: ['медпункт', 'врач', 'медик', 'здравпункт', 'аптечка'],
+    types: ['medical'],
+    keywords: ['медпункт', 'медицинск']
+  },
+  {
+    triggers: ['деканат', 'деконат', 'деканаты'],
+    types: [],
+    keywords: ['деканат']
+  },
+  {
+    triggers: ['вход', 'выход', 'вахта', 'турникет', 'главный вход'],
+    types: ['entrance'],
+    keywords: ['вход', 'выход']
+  },
+  {
+    triggers: ['музей'],
+    types: ['museum'],
+    keywords: ['музей']
+  }
+];
 
 const QUICK_TAGS = [
-  { label: '🏃 Спорт',      query: 'спорт' },
-  { label: '🍽 Столовая',   query: 'столовая' },
-  { label: '🚻 Туалет',     query: 'туалет' },
-  { label: '📚 Библиотека', query: 'библиотека' }
+  { label: '📅 Группы и преподаватели', action: 'directory' },
+  { label: '🍽 Столовая и буфет', query: 'столовая' },
+  { label: '🏃 Спортзал',         query: 'спорт' },
+  { label: '🚻 Туалет',           query: 'туалет' },
+  { label: '🎓 Деканаты',         query: 'деканат' },
+  { label: '🧥 Гардероб',         query: 'гардероб' },
+  { label: '⚕️ Медпункт',         query: 'медпункт' }
+];
+
+const AI_QUICK_PROMPTS = [
+  'В каких аудиториях на этой неделе у Устюкова будут пары?',
+  'Какие аудитории сейчас свободны на 1 этаже?',
+  'Расписание группы 445 на этой неделе',
+  'Где поесть в Главном корпусе?',
+  'Как пройти от входа до 100 аудитории?',
+  'Где находится деканат ФВТ?'
 ];
 
 // ================ TELEGRAM ================
@@ -59,17 +111,17 @@ const tg = window.Telegram?.WebApp;
 let telegramUser = null;
 
 function initTelegram() {
-  if (!tg) return;
+  if (!tg || !tg.initData) return;
   try {
     tg.ready();
     tg.expand();
     telegramUser = tg.initDataUnsafe?.user || null;
-    if (!localStorage.getItem('theme')) {
-      document.documentElement.dataset.theme = tg.colorScheme === 'light' ? 'light' : 'dark';
+    if (!localStorage.getItem('theme') && tg.colorScheme) {
+      document.documentElement.dataset.theme = tg.colorScheme === 'dark' ? 'dark' : 'light';
     }
     tg.onEvent?.('themeChanged', () => {
       if (localStorage.getItem('theme')) return;
-      document.documentElement.dataset.theme = tg.colorScheme === 'light' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = tg.colorScheme === 'dark' ? 'dark' : 'light';
     });
   } catch (e) {
     console.warn('[telegram] init failed', e);
@@ -128,7 +180,7 @@ let hoveredRoomId = null;
 
 let currentSvgViewBox = { W: 1000, H: 1000 };
 
-let panelMode = null;
+let panelMode = null; // 'room' | 'free' | 'route' | 'ai' | null
 let currentRoomPanelId = null;
 
 let freeModeOn = false;
@@ -150,7 +202,23 @@ let routeState = {
   toRoomId: null,
   path: null
 };
-let routePickSide = 'from';    // 'from' | 'to' — в какое поле попадёт следующий клик по карте
+let routePickSide = 'from';
+
+// ИИ-навигатор
+let aiMessages = [];
+let aiLoading = false;
+
+// Справочник расписания (Группы и Преподаватели)
+let scheduleDirectory = { ready: false, groups: [], lecturers: [] };
+let directoryActiveTab = 'groups'; // 'groups' | 'lecturers'
+let directoryFilterQuery = '';
+let currentEntitySchedule = null; // { type: 'group'|'lecturer', name: string }
+let scheduleViewOpen = false;
+let scheduleMobileStep = 'list'; // 'list' | 'detail'
+let scheduleDayFilter = 'all';   // 'all' | date string
+let currentEntityData = null;
+let entityLoading = false;
+let entityError = null;
 
 // Кэш для SVG документов при кросс-этажных запросах
 const svgCache = {};
@@ -175,6 +243,33 @@ map.getPane('routePane').style.zIndex = 450;
 routeLayer = L.layerGroup().addTo(map);
 routePickLayer = L.layerGroup().addTo(map);
 
+// ================ СИНХРОНИЗАЦИЯ КНОПОК РЕЖИМОВ ================
+
+function syncModeUI() {
+  const freeTopBtn = document.getElementById('free-top-btn');
+  const freeMapBtn = document.querySelector('.free-toggle');
+  const schedDirBtn = document.querySelector('.schedule-dir-toggle');
+  const routeTopBtn = document.getElementById('route-toggle');
+  const routeMapBtn = document.querySelector('.map-route-btn');
+  const aiTopBtn = document.getElementById('ai-toggle');
+  const omniAiBtn = document.getElementById('omni-ai-btn');
+
+  if (freeTopBtn) freeTopBtn.classList.toggle('active-free', freeModeOn);
+  if (freeMapBtn) freeMapBtn.classList.toggle('active', freeModeOn);
+
+  const isSchedDir = scheduleViewOpen || panelMode === 'directory' || panelMode === 'entity';
+  if (schedDirBtn) schedDirBtn.classList.toggle('active', isSchedDir);
+
+  const isRoute = panelMode === 'route';
+  if (routeTopBtn) routeTopBtn.classList.toggle('active', isRoute);
+  if (routeMapBtn) routeMapBtn.classList.toggle('active', isRoute);
+
+  // Кнопка «ИИ» остаётся синей в режиме ИИ даже когда правая панель свёрнута язычком
+  const isAiActive = panelMode === 'ai';
+  if (aiTopBtn) aiTopBtn.classList.toggle('active-ai', isAiActive);
+  if (omniAiBtn) omniAiBtn.classList.toggle('active', isAiActive);
+}
+
 // ================ ПАНЕЛЬ ================
 
 function smoothInvalidateSize(duration = 260) {
@@ -193,6 +288,7 @@ function openPanel() {
   document.getElementById('panel').classList.add('open');
   smoothInvalidateSize(260);
   setTimeout(updatePanelHandle, 260);
+  syncModeUI();
 }
 
 function closePanel() {
@@ -201,8 +297,10 @@ function closePanel() {
   updateURL(null, { push: false });
   panelMode = null;
   currentRoomPanelId = null;
+  currentEntitySchedule = null;
   smoothInvalidateSize(260);
   updatePanelHandle();
+  syncModeUI();
 }
 
 function closeRoomPanel() {
@@ -214,44 +312,90 @@ function closeRoomPanel() {
     panelMode = 'free';
     renderFreePanel();
     scheduleLabelRefresh();
+    syncModeUI();
   } else {
     closePanel();
   }
 }
 
 function collapseFreePanel() {
-  freePanelCollapsed = true;
+  if (panelMode === 'free') freePanelCollapsed = true;
   document.getElementById('panel').classList.remove('open');
   smoothInvalidateSize(260);
   updatePanelHandle();
+  syncModeUI();
 }
 
 function expandFreePanel() {
-  freePanelCollapsed = false;
-  panelMode = 'free';
-  currentRoomPanelId = null;
-  clearSelectedRoom();
-  openPanel();
-  renderFreePanel();
+  if (panelMode === 'free' || (freeModeOn && !panelMode)) {
+    freePanelCollapsed = false;
+    panelMode = 'free';
+    currentRoomPanelId = null;
+    clearSelectedRoom();
+    openPanel();
+    renderFreePanel();
+  } else if (panelMode === 'room' || panelMode === 'directory' || panelMode === 'entity') {
+    openPanel();
+  } else if (panelMode === 'route') {
+    openPanel();
+    renderRoutePanel();
+  } else if (panelMode === 'ai') {
+    openPanel();
+    renderAiPanel();
+  }
   updatePanelHandle();
+  syncModeUI();
 }
 
 function disableFreeMode() {
   freeModeOn = false;
   freePanelCollapsed = false;
   try { localStorage.setItem('free_mode', '0'); } catch (e) {}
-  const btn = document.querySelector('.free-toggle');
-  if (btn) btn.classList.remove('active');
   applyFreeHighlight();
-  closePanel();
+  if (panelMode === 'free') {
+    closePanel();
+  }
   updatePanelHandle();
+  syncModeUI();
+}
+
+async function toggleFreeMode() {
+  if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
+  if (!freeModeOn) {
+    if (panelMode === 'route') {
+      clearRoute();
+    }
+    freeModeOn = true;
+    freePanelCollapsed = false;
+    try { localStorage.setItem('free_mode', '1'); } catch (e) {}
+    panelMode = 'free';
+    currentRoomPanelId = null;
+    clearSelectedRoom();
+    syncModeUI();
+    openPanel();
+    renderFreePanelLoading();
+    await refreshFreeMode();
+  } else {
+    disableFreeMode();
+  }
+}
+
+function isAnyCollapsiblePanelMode() {
+  if (scheduleViewOpen) return false;
+  return (
+    panelMode === 'room' ||
+    panelMode === 'free' ||
+    panelMode === 'route' ||
+    panelMode === 'ai' ||
+    freeModeOn
+  );
 }
 
 function updatePanelHandle() {
   const h = document.getElementById('panel-handle');
   if (!h) return;
 
-  if (!freeModeOn || panelMode === 'room' || panelMode === 'route') {
+  if (!isAnyCollapsiblePanelMode()) {
     h.classList.add('hidden');
     h.classList.remove('open-panel');
     return;
@@ -377,13 +521,13 @@ async function refreshFreeMode() {
   const result = await fetchFreeRooms();
   if (!freeModeOn) return;
   if (result.warming) {
-    if (!freePanelCollapsed) renderFreePanelWarming(result.progress);
+    if (!freePanelCollapsed && panelMode === 'free') renderFreePanelWarming(result.progress);
     pollCacheStatus();
   } else if (result.ok) {
     applyFreeHighlight();
-    if (!freePanelCollapsed) renderFreePanel();
+    if (!freePanelCollapsed && panelMode === 'free') renderFreePanel();
   } else {
-    if (!freePanelCollapsed) renderFreePanelError(result.error);
+    if (!freePanelCollapsed && panelMode === 'free') renderFreePanelError(result.error);
   }
 }
 
@@ -399,7 +543,7 @@ function pollCacheStatus() {
         clearInterval(warmingPollInterval);
         warmingPollInterval = null;
         refreshFreeMode();
-      } else if (!freePanelCollapsed) {
+      } else if (!freePanelCollapsed && panelMode === 'free') {
         renderFreePanelWarming(st.progress);
       }
     } catch (e) { console.error('[cache-status]', e); }
@@ -416,9 +560,24 @@ function setupFreeToggle() {
 
       const btn = document.createElement('button');
       btn.className = 'free-toggle';
-      btn.innerHTML = `
-        <span class="checkbox"><i class="mdi mdi-check"></i></span>
-        <span>Свободны сейчас</span>
+      btn.title = 'Показать свободные аудитории';
+      btn.innerHTML = `<span>Свободные</span>`;
+
+      const schedBtn = document.createElement('button');
+      schedBtn.className = 'schedule-dir-toggle';
+      schedBtn.title = 'Расписание групп и преподавателей';
+      schedBtn.innerHTML = `<span>Расписание</span>`;
+
+      const routeBtn = document.createElement('button');
+      routeBtn.className = 'map-route-btn';
+      routeBtn.title = 'Построить маршрут';
+      routeBtn.setAttribute('aria-label', 'Построить маршрут');
+      routeBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="12.5" cy="18.2" r="2.7" fill="currentColor"/>
+          <path d="M16.2 15.4C18.2 14.0 18.4 10.6 15.6 9.9C13.1 9.3 10.9 13.7 8.1 13.1C5.9 12.6 5.8 9.8 7.5 8.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M8.6 5.9C8.1 5.4 8.3 4.6 9.0 4.4L12.7 3.5C13.4 3.3 14.0 3.9 13.8 4.6L12.7 8.3C12.5 9.0 11.6 9.2 11.1 8.6L8.6 5.9Z" fill="currentColor"/>
+        </svg>
       `;
 
       const saved = localStorage.getItem('free_mode');
@@ -427,30 +586,28 @@ function setupFreeToggle() {
         btn.classList.add('active');
       }
 
-      btn.addEventListener('click', async () => {
-        if (!freeModeOn) {
-          freeModeOn = true;
-          freePanelCollapsed = false;
-          btn.classList.add('active');
-          try { localStorage.setItem('free_mode', '1'); } catch (e) {}
-          panelMode = 'free';
-          currentRoomPanelId = null;
-          clearSelectedRoom();
-          openPanel();
-          renderFreePanelLoading();
-          await refreshFreeMode();
-        } else {
-          disableFreeMode();
-        }
+      btn.addEventListener('click', () => {
+        toggleFreeMode();
+      });
+
+      schedBtn.addEventListener('click', () => {
+        openScheduleDirectory();
+      });
+
+      routeBtn.addEventListener('click', () => {
+        openRoutePanel();
       });
 
       wrap.appendChild(btn);
+      wrap.appendChild(schedBtn);
+      wrap.appendChild(routeBtn);
 
       if (freeModeOn) {
         setTimeout(async () => {
           panelMode = 'free';
           currentRoomPanelId = null;
           clearSelectedRoom();
+          syncModeUI();
           openPanel();
           renderFreePanelLoading();
           await refreshFreeMode();
@@ -467,7 +624,7 @@ function setupPanelHandle() {
   const h = document.getElementById('panel-handle');
   if (!h) return;
   h.addEventListener('click', () => {
-    if (!freeModeOn || panelMode === 'room' || panelMode === 'route') return;
+    if (!isAnyCollapsiblePanelMode()) return;
     const panel = document.getElementById('panel');
     if (panel.classList.contains('open')) {
       collapseFreePanel();
@@ -483,6 +640,7 @@ function renderFreePanelLoading() {
   const panel = document.getElementById('panel');
   const header = `
     <div class="panel-header">
+      <button class="close" onclick="disableFreeMode()" title="Выключить режим">✕</button>
       <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
       <h2>Свободны сейчас</h2>
     </div>
@@ -497,6 +655,7 @@ function renderFreePanelWarming(progress) {
   if (!panel.classList.contains('open')) return;
   const header = `
     <div class="panel-header">
+      <button class="close" onclick="disableFreeMode()" title="Выключить режим">✕</button>
       <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
       <h2>Свободны сейчас</h2>
     </div>
@@ -516,6 +675,7 @@ function renderFreePanelError(msg) {
   const panel = document.getElementById('panel');
   const header = `
     <div class="panel-header">
+      <button class="close" onclick="disableFreeMode()" title="Выключить режим">✕</button>
       <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
       <h2>Свободны сейчас</h2>
     </div>
@@ -543,6 +703,7 @@ function renderFreePanel() {
 
   const header = `
     <div class="panel-header">
+      <button class="close" onclick="disableFreeMode()" title="Выключить режим">✕</button>
       <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
       <h2>Свободны сейчас</h2>
     </div>
@@ -644,7 +805,7 @@ window.addEventListener('popstate', () => {
       onRoomClick(roomId, { pushHistory: false });
     } else {
       if (panelMode === 'room') closeRoomPanel();
-      else if (panelMode === 'free' || panelMode === 'route') { /* оставляем */ }
+      else if (panelMode === 'free' || panelMode === 'route' || panelMode === 'ai') { /* оставляем */ }
       else closePanel();
     }
   } finally {
@@ -656,60 +817,17 @@ window.addEventListener('popstate', () => {
 
 function buildBuildingsUI() {
   const container = document.getElementById('buildings');
-  container.innerHTML = '';
-  const tabs = document.createElement('div');
-  tabs.className = 'tabs';
-
-  Object.entries(BUILDINGS).forEach(([code, b]) => {
-    const tab = document.createElement('button');
-    tab.className = 'tab';
-    tab.dataset.code = code;
-    tab.textContent = b.name;
-    tab.addEventListener('click', (e) => {
-      e.stopPropagation();
-      onTabClick(code);
-    });
-    tabs.appendChild(tab);
-  });
-
-  const underline = document.createElement('div');
-  underline.className = 'tab-underline';
-  tabs.appendChild(underline);
-  container.appendChild(tabs);
-
-  requestAnimationFrame(() => {
-    updateTabActive();
-    requestAnimationFrame(() => { underline.style.transition = ''; });
-  });
+  if (!container) return;
+  container.innerHTML = `
+    <div class="building-context" title="Главный учебный корпус РГРТУ">
+      <i class="mdi mdi-domain"></i>
+      <span>Главный корпус</span>
+    </div>
+  `;
 }
 
 function updateTabActive() {
-  const tabs = document.querySelectorAll('.tab');
-  let activeTab = null;
-  tabs.forEach(tab => {
-    const isActive = tab.dataset.code === currentBuilding;
-    tab.classList.toggle('active', isActive);
-    if (isActive) activeTab = tab;
-  });
-  const underline = document.querySelector('.tab-underline');
-  if (underline && activeTab) {
-    underline.style.left = activeTab.offsetLeft + 'px';
-    underline.style.width = activeTab.offsetWidth + 'px';
-  }
-}
-
-function onTabClick(code) {
-  if (code === currentBuilding) return;
-  const b = BUILDINGS[code];
-  if (!b) return;
-  const floors = Object.keys(b.floors).map(Number).sort((a, b) => a - b);
-  if (floors.length === 0) {
-    showToast(`Этажи корпуса «${b.name}» ещё не добавлены`);
-    return;
-  }
-  currentBuilding = code;
-  updateTabActive();
-  showFloor(code, floors[0]);
+  // Единственный активный корпус — Главный корпус
 }
 
 // ================ ПЕРЕКЛЮЧАТЕЛЬ ЭТАЖЕЙ ================
@@ -746,7 +864,7 @@ function updateFloorSwitcher() {
   wrap.appendChild(sw);
 }
 
-// ================ ПОИСК ================
+// ================ УМНЫЙ ПОИСК БЕЗ ЛОЖНЫХ СРАБАТЫВАНИЙ ================
 
 function levenshtein(a, b) {
   if (a === b) return 0;
@@ -766,56 +884,157 @@ function levenshtein(a, b) {
   return prev[b.length];
 }
 
-function expandQuery(query) {
-  const q = query.toLowerCase().trim();
-  for (const variants of Object.values(SEARCH_SYNONYMS)) {
-    for (const v of variants) {
-      if (q === v || (q.length >= 4 && levenshtein(q, v) <= 1)) return variants;
+function tokenizeWords(str) {
+  return String(str || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .split(/[^a-zа-я0-9]+/i)
+    .filter(Boolean);
+}
+
+function wordMatchesToken(words, queryToken) {
+  for (const w of words) {
+    if (w === queryToken) return true;
+    // Защита: слово «кафе» не должно совпадать с «кафедра» / «кафедры»
+    if (queryToken === 'кафе' && w.startsWith('кафедр')) continue;
+    if (queryToken.length >= 3 && w.startsWith(queryToken)) {
+      if (queryToken.length <= 4 && w.length > queryToken.length + 2) continue;
+      return true;
     }
   }
-  return [q];
+  return false;
 }
 
 function searchRooms(query, limit = 20) {
-  const q = query.toLowerCase().trim();
+  const q = String(query || '').toLowerCase().replace(/ё/g, 'е').trim();
   if (!q) return [];
-  const expanded = expandQuery(q);
-  const exact = [], fuzzy = [], seen = new Set();
+
+  // 1. Проверяем семантическую категорию (столовая/буфет, спортзал, туалет, деканат и т.д.)
+  const matchedRule = SEARCH_CATEGORY_RULES.find(rule =>
+    rule.triggers.some(t => q === t || (q.length >= 4 && levenshtein(q, t) <= 1))
+  );
+
+  if (matchedRule) {
+    const results = [];
+    for (const [id, meta] of Object.entries(roomsMeta)) {
+      const typeMatch = matchedRule.types.includes(meta.type);
+      const textWords = tokenizeWords(`${meta.name || ''} ${meta.shortName || ''} ${meta.description || ''}`);
+      const kwMatch = matchedRule.keywords.some(kw => wordMatchesToken(textWords, kw.toLowerCase()));
+      if (typeMatch || kwMatch) {
+        if (matchedRule.types.includes('buffet') && meta.type === 'lab') continue;
+        results.push({ id, meta });
+      }
+    }
+    return results.slice(0, limit);
+  }
+
+  // 2. Поиск по номеру аудитории, названию и описанию с учётом границ слов
+  const queryTokens = tokenizeWords(q);
+  const exact = [];
+  const prefix = [];
+  const fuzzy = [];
+  const seen = new Set();
 
   for (const [id, meta] of Object.entries(roomsMeta)) {
-    const name = (meta.name || '').toLowerCase();
-    const haystack = name + ' ' + id.toLowerCase() + ' ' + (meta.shortName || '').toLowerCase();
-    if (expanded.some(v => haystack.includes(v))) {
-      exact.push({ id, meta }); seen.add(id); continue;
+    const name = (meta.name || '').toLowerCase().replace(/ё/g, 'е');
+    const shortName = (meta.shortName || '').toLowerCase().replace(/ё/g, 'е');
+    const desc = (meta.description || '').toLowerCase().replace(/ё/g, 'е');
+    const classroom = String(meta.classroom || '').toLowerCase();
+
+    if (shortName === q || classroom === q || id.toLowerCase() === q) {
+      exact.push({ id, meta });
+      seen.add(id);
+      continue;
     }
-    if (q.length >= 4) {
-      const parts = name.split(/\s+/).filter(p => p.length >= 3);
-      for (const part of parts) {
-        if (levenshtein(q, part) <= 2) {
-          if (!seen.has(id)) { fuzzy.push({ id, meta }); seen.add(id); }
+
+    const words = tokenizeWords(`${name} ${shortName} ${desc} ${classroom}`);
+    if (queryTokens.length > 0 && queryTokens.every(qt => wordMatchesToken(words, qt))) {
+      prefix.push({ id, meta });
+      seen.add(id);
+      continue;
+    }
+
+    if (q.length >= 4 && queryTokens.length === 1) {
+      const qt = queryTokens[0];
+      for (const w of words) {
+        if (w.length >= 4 && Math.abs(w.length - qt.length) <= 1 && levenshtein(qt, w) <= 1) {
+          if (qt === 'кафе' && w.startsWith('кафедр')) continue;
+          if (!seen.has(id)) {
+            fuzzy.push({ id, meta });
+            seen.add(id);
+          }
           break;
         }
       }
     }
   }
-  return [...exact, ...fuzzy].slice(0, limit);
+
+  return [...exact, ...prefix, ...fuzzy].slice(0, limit);
+}
+
+function searchEntitiesLocal(query, limit = 5) {
+  const q = String(query || '').toLowerCase().replace(/ё/g, 'е').trim();
+  if (!q || !scheduleDirectory.ready) return { lecturers: [], groups: [] };
+
+  const lecturers = scheduleDirectory.lecturers
+    .filter(l => l.name.toLowerCase().replace(/ё/g, 'е').includes(q) || l.shortName.toLowerCase().replace(/ё/g, 'е').includes(q))
+    .slice(0, limit);
+
+  const cleanGroupQ = q.replace(/^(?:гр\.?|группа)\s*/i, '').trim();
+  const groups = cleanGroupQ
+    ? scheduleDirectory.groups
+        .filter(g => g.name.toLowerCase().replace(/ё/g, 'е').startsWith(cleanGroupQ) || g.name.toLowerCase() === cleanGroupQ)
+        .slice(0, limit)
+    : [];
+
+  return { lecturers, groups };
+}
+
+function isLikelyAiQuestion(raw, foundCount) {
+  const q = raw.toLowerCase().trim();
+  if (!q) return false;
+  if (q.includes('?')) return true;
+  if (/^(где|как|какие|какая|какой|в каких|у кого|куда|почему|сколько|покажи|найди|подскажи|расскажи|свободн|маршрут|пройти|дойти)\b/i.test(q)) {
+    return true;
+  }
+  const words = q.split(/\s+/);
+  if (words.length >= 3) return true;
+  if (foundCount === 0 && q.length >= 3) return true;
+  return false;
 }
 
 function setupSearch() {
-  const wrap    = document.getElementById('search-wrap');
-  const toggle  = document.getElementById('search-toggle');
-  const input   = document.getElementById('search-input');
-  const results = document.getElementById('search-results');
-  const tagsEl  = document.getElementById('quick-tags');
-  const historyEl = document.getElementById('search-history');
+  const wrap          = document.getElementById('search-wrap');
+  const input         = document.getElementById('search-input');
+  const clearBtn      = document.getElementById('search-clear');
+  const omniAiBtn     = document.getElementById('omni-ai-btn');
+  const inlineAiBtn   = document.getElementById('ai-inline-trigger');
+  const inlineAiQuery = document.getElementById('ai-inline-query');
+  const results       = document.getElementById('search-results');
+  const tagsEl        = document.getElementById('quick-tags');
+  const historyEl     = document.getElementById('search-history');
 
   let history = [];
   try { history = JSON.parse(localStorage.getItem('search_history') || '[]'); } catch (e) { history = []; }
 
   function saveHistory(q) {
-    q = (q || '').trim(); if (!q) return;
+    q = (q || '').trim();
+    if (!q) return;
     history = [q, ...history.filter(h => h !== q)].slice(0, 5);
     try { localStorage.setItem('search_history', JSON.stringify(history)); } catch (e) {}
+  }
+
+  function updateClearAndInlineAi() {
+    const raw = input.value.trim();
+    if (clearBtn) clearBtn.classList.toggle('hidden', !raw);
+    if (inlineAiBtn && inlineAiQuery) {
+      if (raw.length >= 2) {
+        inlineAiQuery.textContent = raw;
+        inlineAiBtn.classList.remove('hidden');
+      } else {
+        inlineAiBtn.classList.add('hidden');
+      }
+    }
   }
 
   function renderTags() {
@@ -826,7 +1045,13 @@ function setupSearch() {
       btn.textContent = t.label;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (t.action === 'directory') {
+          wrap.classList.remove('open');
+          openScheduleDirectory();
+          return;
+        }
         input.value = t.query;
+        updateClearAndInlineAi();
         renderResults();
       });
       tagsEl.appendChild(btn);
@@ -836,13 +1061,14 @@ function setupSearch() {
   function renderHistory() {
     historyEl.innerHTML = '';
     if (input.value.trim()) return;
-    history.slice(0, 3).forEach(h => {
+    history.slice(0, 4).forEach(h => {
       const btn = document.createElement('button');
       btn.className = 'history-item';
-      btn.textContent = h;
+      btn.innerHTML = `<i class="mdi mdi-history" style="margin-right:4px"></i>${escapeHtml(h)}`;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         input.value = h;
+        updateClearAndInlineAi();
         renderResults();
       });
       historyEl.appendChild(btn);
@@ -851,46 +1077,173 @@ function setupSearch() {
 
   function renderResults() {
     const raw = input.value.trim();
+    updateClearAndInlineAi();
     results.innerHTML = '';
-    if (!raw) { renderHistory(); return; }
+    if (!raw) {
+      renderHistory();
+      return;
+    }
     historyEl.innerHTML = '';
-    const found = searchRooms(raw, 20);
-    if (!found.length) {
+    const entities = searchEntitiesLocal(raw, 4);
+    const found = searchRooms(raw, 16);
+
+    if (!found.length && !entities.lecturers.length && !entities.groups.length) {
       const li = document.createElement('li');
       li.className = 'res-empty';
-      li.textContent = 'ничего не найдено';
+      li.innerHTML = `По прямому совпадению не найдено — нажмите <strong>Enter</strong> или кнопку выше, чтобы спросить ИИ-навигатора`;
       results.appendChild(li);
       return;
     }
+
+    // Преподаватели
+    entities.lecturers.forEach(lec => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <div class="res-main">
+          <div class="res-name">${escapeHtml(lec.name)}</div>
+          <div class="res-meta">Преподаватель · ${lec.lessonsCount} пар · ${lec.roomsCount} ауд.</div>
+        </div>
+        <span class="res-badge-entity"><i class="mdi mdi-calendar-clock"></i> Расписание</span>
+      `;
+      li.addEventListener('click', () => {
+        saveHistory(raw);
+        wrap.classList.remove('open');
+        openEntitySchedule('lecturer', lec.name);
+      });
+      results.appendChild(li);
+    });
+
+    // Группы
+    entities.groups.forEach(grp => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <div class="res-main">
+          <div class="res-name">Группа ${escapeHtml(grp.name)}</div>
+          <div class="res-meta">Учебная группа · ${grp.lessonsCount} пар · ${grp.roomsCount} ауд.</div>
+        </div>
+        <span class="res-badge-entity"><i class="mdi mdi-account-group-outline"></i> Расписание</span>
+      `;
+      li.addEventListener('click', () => {
+        saveHistory(raw);
+        wrap.classList.remove('open');
+        openEntitySchedule('group', grp.name);
+      });
+      results.appendChild(li);
+    });
+
+    // Аудитории и места
     found.forEach(({ id, meta }) => {
       const bName = BUILDINGS[meta.building]?.name || meta.building || '?';
       const li = document.createElement('li');
       li.innerHTML = `
-        <div class="res-name">${escapeHtml(formatRoomName(meta.name))}</div>
-        <div class="res-meta">${escapeHtml(bName)}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}</div>
+        <div class="res-main">
+          <div class="res-name">${escapeHtml(formatRoomName(meta.name))}</div>
+          <div class="res-meta">${escapeHtml(bName)}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}${meta.description ? ' · ' + escapeHtml(meta.description.split('\n')[0]) : ''}</div>
+        </div>
+        <button class="res-route-btn" type="button" title="Построить маршрут сюда">
+          <i class="mdi mdi-directions"></i> Маршрут
+        </button>
       `;
-      li.addEventListener('click', () => {
+      li.addEventListener('click', (e) => {
+        if (e.target.closest('.res-route-btn')) return;
         saveHistory(raw);
         navigateToRoom(id);
         wrap.classList.remove('open');
       });
+      const rBtn = li.querySelector('.res-route-btn');
+      if (rBtn) {
+        rBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          saveHistory(raw);
+          wrap.classList.remove('open');
+          startRouteToRoom(id);
+        });
+      }
       results.appendChild(li);
     });
   }
 
   renderTags();
   renderHistory();
+  updateClearAndInlineAi();
 
-  toggle.addEventListener('click', (e) => {
+  input.addEventListener('focus', () => {
+    wrap.classList.add('open');
+    if (input.value.trim()) renderResults();
+    else renderHistory();
+  });
+
+  input.addEventListener('click', (e) => {
     e.stopPropagation();
-    const isOpen = wrap.classList.toggle('open');
-    if (isOpen) {
-      input.focus();
-      if (input.value.trim()) renderResults(); else renderHistory();
+    wrap.classList.add('open');
+  });
+
+  input.addEventListener('input', () => {
+    wrap.classList.add('open');
+    renderResults();
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const raw = input.value.trim();
+      if (!raw) return;
+      const entities = searchEntitiesLocal(raw, 2);
+      const found = searchRooms(raw, 5);
+      saveHistory(raw);
+      wrap.classList.remove('open');
+      input.blur();
+      if (isLikelyAiQuestion(raw, found.length + entities.lecturers.length + entities.groups.length)) {
+        openAiPanel(raw);
+      } else if (entities.lecturers.length === 1 && found.length === 0) {
+        openEntitySchedule('lecturer', entities.lecturers[0].name);
+      } else if (entities.groups.length === 1 && found.length === 0) {
+        openEntitySchedule('group', entities.groups[0].name);
+      } else if (found.length > 0) {
+        navigateToRoom(found[0].id);
+      } else if (entities.lecturers.length > 0) {
+        openEntitySchedule('lecturer', entities.lecturers[0].name);
+      } else if (entities.groups.length > 0) {
+        openEntitySchedule('group', entities.groups[0].name);
+      } else {
+        openAiPanel(raw);
+      }
     }
   });
 
-  input.addEventListener('input', renderResults);
+  if (clearBtn) {
+    clearBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      input.value = '';
+      updateClearAndInlineAi();
+      results.innerHTML = '';
+      renderHistory();
+      input.focus();
+    });
+  }
+
+  if (omniAiBtn) {
+    omniAiBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const raw = input.value.trim();
+      wrap.classList.remove('open');
+      openAiPanel(raw || null);
+    });
+  }
+
+  if (inlineAiBtn) {
+    inlineAiBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const raw = input.value.trim();
+      wrap.classList.remove('open');
+      if (raw) {
+        saveHistory(raw);
+        openAiPanel(raw);
+      } else {
+        openAiPanel(null);
+      }
+    });
+  }
 
   document.addEventListener('click', (e) => {
     if (!wrap.contains(e.target)) wrap.classList.remove('open');
@@ -905,19 +1258,358 @@ function setupSearch() {
   }
 }
 
+// ================ ИИ-НАВИГАТОР КАМПУСА ================
+
+function openAiPanel(initialQuery = null) {
+  if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
+  const panel = document.getElementById('panel');
+  if (panelMode === 'ai' && !initialQuery) {
+    if (panel && !panel.classList.contains('open')) {
+      openPanel();
+      renderAiPanel();
+      syncModeUI();
+    } else {
+      closeAiPanel();
+    }
+    return;
+  }
+  if (freeModeOn) disableFreeMode();
+  if (panelMode === 'route') clearRoute();
+
+  panelMode = 'ai';
+  currentRoomPanelId = null;
+  clearSelectedRoom();
+  openPanel();
+  renderAiPanel();
+  syncModeUI();
+
+  if (initialQuery && initialQuery.trim()) {
+    submitAiQuery(initialQuery.trim());
+  }
+}
+
+function closeAiPanel() {
+  panelMode = null;
+  closePanel();
+  syncModeUI();
+}
+
+function renderAiPanel() {
+  const panel = document.getElementById('panel');
+
+  const headerHtml = `
+    <div class="ai-panel-header">
+      <div class="panel-header">
+        <button class="close" onclick="closeAiPanel()" title="Закрыть чат">✕</button>
+        <div class="panel-crumbs"><i class="mdi mdi-creation" style="color:var(--text-accent)"></i> Умный помощник кампуса</div>
+        <h2>Чат с ИИ</h2>
+      </div>
+    </div>
+  `;
+
+  let feedHtml = '';
+  if (aiMessages.length === 0 && !aiLoading) {
+    feedHtml = `
+      <div class="ai-empty-state">
+        <div class="ai-empty-icon">
+          <i class="mdi mdi-robot-happy-outline"></i>
+        </div>
+        <div class="ai-empty-title">ИИ-навигатор по РГРТУ</div>
+        <div class="ai-empty-desc">
+          Спросите про свободные аудитории, расписание, деканаты, столовые или попросите построить маршрут до нужного кабинета.
+        </div>
+      </div>
+    `;
+  } else {
+    const messagesInner = aiMessages.map((msg, idx) => {
+      if (msg.role === 'user') {
+        return `<div class="ai-user-msg">${escapeHtml(msg.text)}</div>`;
+      }
+      const roomsHtml = (msg.rooms || []).map(r => {
+        const meta = roomsMeta[r.id];
+        if (!meta) return '';
+        const floorText = meta.floor != null ? `${meta.floor} этаж` : '';
+        return `
+          <div class="ai-room-card" data-room-id="${escapeHtml(r.id)}">
+            <div class="ai-room-info">
+              <div class="ai-room-title">${escapeHtml(formatRoomName(meta.name))}</div>
+              <div class="ai-room-sub">${escapeHtml(floorText)}${meta.description ? ' · ' + escapeHtml(meta.description.split('\n')[0]) : ''}</div>
+            </div>
+            <div class="ai-room-actions">
+              <button type="button" class="ai-room-btn primary" data-action="locate" data-room-id="${escapeHtml(r.id)}" title="Показать на карте" aria-label="Показать на карте">
+                <i class="mdi mdi-map-marker-radius-outline"></i>
+              </button>
+              <button type="button" class="ai-room-btn" data-action="route" data-room-id="${escapeHtml(r.id)}" title="Построить маршрут сюда">
+                <i class="mdi mdi-directions"></i> Маршрут
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      let routeCtaHtml = '';
+      if (msg.route && msg.route.fromRoomId && msg.route.toRoomId) {
+        const fromMeta = roomsMeta[msg.route.fromRoomId];
+        const toMeta = roomsMeta[msg.route.toRoomId];
+        if (fromMeta && toMeta) {
+          routeCtaHtml = `
+            <button type="button" class="ai-route-cta" data-from="${escapeHtml(msg.route.fromRoomId)}" data-to="${escapeHtml(msg.route.toRoomId)}">
+              <i class="mdi mdi-routes"></i>
+              <span>Показать маршрут: ${escapeHtml(formatRoomName(fromMeta.name))} → ${escapeHtml(formatRoomName(toMeta.name))}</span>
+            </button>
+          `;
+        }
+      }
+
+      let entityCtaHtml = '';
+      if (msg.entitySchedule && msg.entitySchedule.type && msg.entitySchedule.name) {
+        const label = msg.entitySchedule.type === 'lecturer'
+          ? `Открыть расписание: ${msg.entitySchedule.name}`
+          : `Открыть расписание группы ${msg.entitySchedule.name}`;
+        entityCtaHtml = `
+          <button type="button" class="ai-entity-cta" data-entity-type="${escapeHtml(msg.entitySchedule.type)}" data-entity-name="${escapeHtml(msg.entitySchedule.name)}">
+            <i class="mdi mdi-calendar-clock"></i>
+            <span>${escapeHtml(label)}</span>
+          </button>
+        `;
+      }
+
+      return `
+        <div class="ai-bot-card" data-msg-idx="${idx}">
+          <div class="ai-bot-header">
+            <i class="mdi mdi-creation"></i>
+            <span>ИИ-навигатор</span>
+          </div>
+          <div class="ai-bot-answer">${renderMultiline(msg.answer || '')}</div>
+          ${entityCtaHtml}
+          ${routeCtaHtml}
+          ${roomsHtml ? `<div class="ai-suggested-rooms">${roomsHtml}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    const loadingHtml = aiLoading
+      ? `
+        <div class="ai-loading">
+          <div class="spinner"></div>
+          <span>Анализирую карту и расписание…</span>
+        </div>
+      `
+      : '';
+
+    feedHtml = `<div class="ai-feed" id="ai-feed">${messagesInner}${loadingHtml}</div>`;
+  }
+
+  const promptsHtml = AI_QUICK_PROMPTS.map(p =>
+    `<button type="button" class="ai-prompt-chip" data-prompt="${escapeHtml(p)}">${escapeHtml(p)}</button>`
+  ).join('');
+
+  const dockHtml = `
+    <div class="ai-chat-dock">
+      <div class="ai-suggestions-strip" id="ai-suggestions-strip">${promptsHtml}</div>
+      <form class="ai-composer-form" id="ai-panel-form">
+        <div class="ai-input-wrap">
+          <input type="text" class="ai-input" id="ai-panel-input" placeholder="Напишите вопрос ИИ…" autocomplete="off" ${aiLoading ? 'disabled' : ''}>
+          <button type="button" class="input-clear-btn hidden" id="ai-input-clear" title="Очистить" aria-label="Очистить">
+            <i class="mdi mdi-close"></i>
+          </button>
+        </div>
+        <button type="submit" class="ai-send-btn" id="ai-panel-send" ${aiLoading ? 'disabled' : ''} title="Отправить сообщение">
+          <i class="mdi mdi-send"></i>
+        </button>
+      </form>
+    </div>
+  `;
+
+  panel.innerHTML = `${headerHtml}<div class="ai-chat-scroll" id="ai-chat-scroll">${feedHtml}</div>${dockHtml}`;
+
+  const strip = document.getElementById('ai-suggestions-strip');
+  if (strip) {
+    strip.addEventListener('wheel', (e) => {
+      if (e.deltaY !== 0) {
+        e.preventDefault();
+        strip.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
+  }
+
+  const form = document.getElementById('ai-panel-form');
+  const input = document.getElementById('ai-panel-input');
+  const aiClearBtn = document.getElementById('ai-input-clear');
+  if (form && input) {
+    const syncAiClear = () => {
+      if (aiClearBtn) aiClearBtn.classList.toggle('hidden', !input.value);
+    };
+    input.addEventListener('input', syncAiClear);
+    if (aiClearBtn) {
+      aiClearBtn.addEventListener('click', () => {
+        input.value = '';
+        syncAiClear();
+        input.focus();
+      });
+    }
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const q = input.value.trim();
+      if (!q || aiLoading) return;
+      submitAiQuery(q);
+    });
+  }
+
+  panel.querySelectorAll('.ai-prompt-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (aiLoading) return;
+      submitAiQuery(btn.dataset.prompt);
+    });
+  });
+
+  panel.querySelectorAll('.ai-room-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const roomId = btn.dataset.roomId;
+      const action = btn.dataset.action;
+      if (!roomId) return;
+      if (action === 'route') {
+        startRouteToRoom(roomId);
+      } else {
+        focusRoomFromAi(roomId);
+      }
+    });
+  });
+
+  panel.querySelectorAll('.ai-room-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.ai-room-btn')) return;
+      const roomId = card.dataset.roomId;
+      if (roomId) focusRoomFromAi(roomId);
+    });
+  });
+
+  panel.querySelectorAll('.ai-route-cta').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const fromId = btn.dataset.from;
+      const toId = btn.dataset.to;
+      if (fromId && toId) {
+        executeRouteBetween(fromId, toId);
+      }
+    });
+  });
+
+  panel.querySelectorAll('.ai-entity-cta').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const type = btn.dataset.entityType;
+      const name = btn.dataset.entityName;
+      if (type && name) {
+        openEntitySchedule(type, name);
+      }
+    });
+  });
+
+  const scrollContainer = document.getElementById('ai-chat-scroll');
+  if (scrollContainer) {
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+  }
+
+  updatePanelHandle();
+  syncModeUI();
+}
+
+function panToRoom(roomId) {
+  const centroid = getShapeCentroidSvg(roomId);
+  if (!centroid) return;
+  const { H } = currentSvgViewBox;
+  const targetLatLng = [H - centroid.y, centroid.x];
+  const targetZoom = Math.max(map.getZoom(), 0.25);
+  map.flyTo(targetLatLng, targetZoom, { animate: true, duration: 0.45 });
+  scheduleLabelRefresh();
+}
+
+async function focusRoomFromAi(roomId) {
+  if (scheduleViewOpen) {
+    closeScheduleView({ updateHistory: false });
+  }
+  const meta = roomsMeta[roomId];
+  if (!meta) return;
+  const b = BUILDINGS[meta.building];
+  if (!b) return;
+  const availableFloors = Object.keys(b.floors).map(Number);
+  const targetFloor = (meta.floor != null && availableFloors.includes(meta.floor)) ? meta.floor : availableFloors[0];
+
+  if (currentBuilding !== meta.building || currentFloor !== targetFloor) {
+    await showFloor(meta.building, targetFloor);
+  }
+  selectRoom(roomId);
+  panToRoom(roomId);
+  const shapes = roomShapes[roomId];
+  if (shapes && shapes.length) {
+    shapes.forEach(s => { s.style.opacity = '0.7'; });
+    setTimeout(() => shapes.forEach(s => { s.style.opacity = ''; }), 1500);
+  }
+  haptic('light');
+}
+
+async function submitAiQuery(query) {
+  aiMessages.push({ role: 'user', text: query });
+  aiLoading = true;
+  renderAiPanel();
+
+  try {
+    const res = await fetch('/api/ai-assistant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, currentFloor })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    const validRooms = (data.roomIds || [])
+      .filter(id => roomsMeta[id])
+      .map(id => ({ id }));
+
+    aiMessages.push({
+      role: 'assistant',
+      answer: data.answer || 'Готово!',
+      rooms: validRooms,
+      route: data.route || null,
+      entitySchedule: data.entitySchedule || null
+    });
+
+    // Если найдена ровно одна целевая комната и нет маршрута — сразу подсвечиваем и перемещаем к ней карту
+    if (validRooms.length === 1 && !data.route) {
+      focusRoomFromAi(validRooms[0].id);
+    }
+    haptic('success');
+  } catch (err) {
+    console.error('[ai-assistant]', err);
+    aiMessages.push({
+      role: 'assistant',
+      answer: 'Не удалось связаться с сервером помощника. Попробуйте ещё раз.',
+      rooms: [],
+      route: null,
+      entitySchedule: null
+    });
+    haptic('error');
+  } finally {
+    aiLoading = false;
+    if (panelMode === 'ai') {
+      renderAiPanel();
+    }
+  }
+}
+
 // ================ ТЕМА ================
 
 function setupThemeToggle() {
   const btn = document.getElementById('theme-toggle');
   const updateIcon = () => {
-    const theme = document.documentElement.dataset.theme || 'dark';
+    const theme = document.documentElement.dataset.theme || 'light';
     btn.innerHTML = theme === 'dark'
       ? '<i class="mdi mdi-weather-sunny"></i>'
       : '<i class="mdi mdi-weather-night"></i>';
   };
   updateIcon();
   btn.addEventListener('click', () => {
-    const current = document.documentElement.dataset.theme || 'dark';
+    const current = document.documentElement.dataset.theme || 'light';
     const next = current === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = next;
     try { localStorage.setItem('theme', next); } catch (e) {}
@@ -954,6 +1646,9 @@ function resetView() {
 // ================ НАВИГАЦИЯ ================
 
 async function navigateToRoom(roomId) {
+  if (scheduleViewOpen) {
+    closeScheduleView({ updateHistory: false });
+  }
   const meta = roomsMeta[roomId];
   if (!meta) return;
   const b = BUILDINGS[meta.building];
@@ -964,7 +1659,7 @@ async function navigateToRoom(roomId) {
 
   if (targetFloor == null || !availableFloors.includes(targetFloor)) {
     if (!availableFloors.length) {
-      alert(`Этажи корпуса «${b.name}» ещё не добавлены на карту`);
+      showToast(`Этажи корпуса «${b.name}» ещё не добавлены на карту`);
       return;
     }
     targetFloor = availableFloors[0];
@@ -974,6 +1669,7 @@ async function navigateToRoom(roomId) {
   currentBuilding = meta.building;
   await showFloor(meta.building, targetFloor);
   onRoomClick(roomId);
+  setTimeout(() => panToRoom(roomId), 270);
 }
 
 // ================ ОТРИСОВКА ЭТАЖА ================
@@ -1222,6 +1918,33 @@ function renderNowStatus(status) {
   return `<div class="now-status free"><div class="now-dot"></div><div class="now-body"><div class="now-title">Аудитория свободна</div><div class="now-details">${status.untilText ? 'до ' + status.untilText : 'до конца дня'}</div></div></div>`;
 }
 
+function buildRoomActionBar(roomId) {
+  return `
+    <div class="room-action-bar">
+      <button type="button" class="room-action-btn primary" data-route-to="${escapeHtml(roomId)}">
+        <i class="mdi mdi-directions"></i>
+        <span>Маршрут сюда</span>
+      </button>
+      <button type="button" class="room-action-btn" data-route-from="${escapeHtml(roomId)}">
+        <i class="mdi mdi-ray-start-arrow"></i>
+        <span>Отсюда</span>
+      </button>
+    </div>
+  `;
+}
+
+function attachRoomActionListeners(panel, id) {
+  attachShareListener(panel, id);
+  const toBtn = panel.querySelector('[data-route-to]');
+  if (toBtn) {
+    toBtn.addEventListener('click', () => startRouteToRoom(id));
+  }
+  const fromBtn = panel.querySelector('[data-route-from]');
+  if (fromBtn) {
+    fromBtn.addEventListener('click', () => startRouteFromRoom(id));
+  }
+}
+
 // ================ КЛИК ПО АУДИТОРИИ ================
 
 async function onRoomClick(id, { pushHistory = true } = {}) {
@@ -1242,6 +1965,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
   selectRoom(id);
   updateURL(id, { push: pushHistory });
   updatePanelHandle();
+  syncModeUI();
 
   const title = formatRoomName(meta?.name || id);
   const b = meta ? BUILDINGS[meta.building] : null;
@@ -1258,6 +1982,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
       ${crumbs ? `<div class="panel-crumbs">${escapeHtml(crumbs)}</div>` : ''}
       <h2>${escapeHtml(title)}${shareIcon}</h2>
     </div>
+    ${buildRoomActionBar(id)}
   `;
 
   const descriptionBlock = meta?.description
@@ -1268,7 +1993,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
     const block = descriptionBlock ||
       `<div class="room-notes empty">У этого помещения нет заметок.</div>`;
     panel.innerHTML = buildPanelLayout(`${header}${block}`, '');
-    attachShareListener(panel, id);
+    attachRoomActionListeners(panel, id);
     return;
   }
 
@@ -1276,7 +2001,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
     `${header}${descriptionBlock}`,
     `<p class="muted-text">Загрузка расписания…</p>`
   );
-  attachShareListener(panel, id);
+  attachRoomActionListeners(panel, id);
 
   const today = new Date();
   const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -1304,11 +2029,11 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
         `${header}${descriptionBlock}`,
         `<div class="no-schedule-msg">У этой аудитории нет расписания занятий</div>`
       );
-      attachShareListener(panel, id);
+      attachRoomActionListeners(panel, id);
       return;
     }
     renderSchedule(panel, title, data, header, descriptionBlock);
-    attachShareListener(panel, id);
+    attachRoomActionListeners(panel, id);
     haptic('success');
   } catch (err) {
     if (token !== roomRequestToken) return;
@@ -1318,7 +2043,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
       `${header}${descriptionBlock}`,
       `<p style="color:#f87171">Ошибка загрузки: ${escapeHtml(err.message)}</p>`
     );
-    attachShareListener(panel, id);
+    attachRoomActionListeners(panel, id);
     haptic('error');
   }
 }
@@ -1345,7 +2070,7 @@ function attachShareListener(panel, id) {
       document.body.appendChild(ta);
       ta.select();
       try { document.execCommand('copy'); showToast('Ссылка скопирована'); }
-      catch (err) { alert('Не удалось скопировать. Ссылка: ' + url); }
+      catch (err) { showToast('Не удалось скопировать ссылку'); }
       document.body.removeChild(ta);
     }
   });
@@ -1354,6 +2079,7 @@ function attachShareListener(panel, id) {
 // ================ TOAST ================
 
 function showToast(text) {
+  document.querySelectorAll('#map-wrap .toast').forEach(el => el.remove());
   const t = document.createElement('div');
   t.className = 'toast';
   t.textContent = text;
@@ -1377,6 +2103,39 @@ function parseWeekType(doc) {
   if (text.includes('числ')) return 'числитель';
   if (text.includes('знам')) return 'знаменатель';
   return null;
+}
+
+function splitGroupAndLecturerClient(rawTail) {
+  const combined = String(rawTail || '').trim();
+  if (!combined) return { group: '', lecturer: '' };
+
+  const tokens = combined.split(',').map(t => t.trim()).filter(Boolean);
+  const groupTokens = [];
+  const lecturerTokens = [];
+  let hitLecturer = false;
+
+  const isGroupLike = (tok) => {
+    if (/^(доц\.|проф\.|ст\.\s*преп\.|преп\.|асс\.|зав\.|к\.т\.н\.|д\.т\.н\.)/i.test(tok)) return false;
+    if (/[А-ЯЁ][а-яё]+\s+[А-ЯЁ]\.\s*[А-ЯЁ]\./.test(tok)) return false;
+    if (/^\d/.test(tok)) return true;
+    if (/п\.?\s*г\.?/i.test(tok) || /подгр/i.test(tok)) return true;
+    if (/^[А-ЯЁA-Z0-9-]{2,8}$/i.test(tok) && /\d/.test(tok)) return true;
+    return false;
+  };
+
+  for (const tok of tokens) {
+    if (!hitLecturer && isGroupLike(tok)) {
+      groupTokens.push(tok);
+    } else {
+      hitLecturer = true;
+      lecturerTokens.push(tok);
+    }
+  }
+
+  return {
+    group: groupTokens.join(', '),
+    lecturer: lecturerTokens.join(', ')
+  };
 }
 
 function parseSchedule(html) {
@@ -1428,11 +2187,12 @@ function parseSchedule(html) {
         if (badgeClone) badgeClone.remove();
         const text = (clone.textContent || '').replace(/\s+/g, ' ').trim();
         let subject = text, group = '', lecturer = '';
-        const m = text.match(/^(.*?),?\s*гр\.\s*([^,]+),\s*(.+)$/);
+        const m = text.match(/^(.*?),?\s*гр\.\s*(.+)$/);
         if (m) {
-          subject  = m[1].replace(/,\s*$/, '').trim();
-          group    = m[2].trim();
-          lecturer = m[3].trim();
+          subject = m[1].replace(/,\s*$/, '').trim();
+          const parsedTail = splitGroupAndLecturerClient(m[2]);
+          group = parsedTail.group;
+          lecturer = parsedTail.lecturer;
         }
         days[d].lessons.push({ time, type, subject, group, lecturer });
       });
@@ -1454,6 +2214,35 @@ function parseSchedule(html) {
   });
 
   return { empty: false, days, weekType };
+}
+
+function formatInteractiveGroupAndLecturerHtml(groupStr, lecturerStr) {
+  let groupPart = '';
+  if (groupStr) {
+    const renderedGroups = String(groupStr).replace(/\b(\d{2,5}[а-яa-z]?)\b/gi, (match) =>
+      `<span class="entity-inline-link" data-entity-type="group" data-entity-name="${escapeHtml(match)}" title="Открыть расписание группы ${escapeHtml(match)}">${escapeHtml(match)}</span>`
+    );
+    groupPart = `гр. ${renderedGroups}`;
+  }
+  let lecPart = '';
+  if (lecturerStr) {
+    lecPart = `<span class="entity-inline-link" data-entity-type="lecturer" data-entity-name="${escapeHtml(lecturerStr)}" title="Открыть расписание преподавателя">${escapeHtml(lecturerStr)}</span>`;
+  }
+  return `${groupPart}${groupPart && lecPart ? ' · ' : ''}${lecPart}`;
+}
+
+function attachEntityInlineLinks(container) {
+  if (!container) return;
+  container.querySelectorAll('.entity-inline-link').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const type = el.dataset.entityType;
+      const name = el.dataset.entityName;
+      if (type && name) {
+        openEntitySchedule(type, name);
+      }
+    });
+  });
 }
 
 // ================ РЕНДЕР РАСПИСАНИЯ ================
@@ -1507,11 +2296,11 @@ function renderSchedule(panel, title, data, header, descriptionBlock = '') {
           if (l.subgroups && l.subgroups.length > 1) {
             metaHtml = l.subgroups.map(sg => `
               <div class="subgroup">
-                ${sg.group ? 'гр. ' + escapeHtml(sg.group) : ''}${sg.group && sg.lecturer ? ' · ' : ''}${escapeHtml(sg.lecturer || '')}
+                ${formatInteractiveGroupAndLecturerHtml(sg.group, sg.lecturer)}
               </div>
             `).join('');
           } else {
-            metaHtml = `<div class="meta">${l.group ? 'гр. ' + escapeHtml(l.group) : ''}${l.group && l.lecturer ? ' · ' : ''}${escapeHtml(l.lecturer || '')}</div>`;
+            metaHtml = `<div class="meta">${formatInteractiveGroupAndLecturerHtml(l.group, l.lecturer)}</div>`;
           }
 
           return `
@@ -1530,6 +2319,531 @@ function renderSchedule(panel, title, data, header, descriptionBlock = '') {
   }).join('');
 
   panel.innerHTML = buildPanelLayout(fixedHtml, daysHtml);
+  attachEntityInlineLinks(panel);
+}
+
+// ================ ПОЛНОЭКРАННЫЙ РАЗДЕЛ РАСПИСАНИЯ (ГРУППЫ И ПРЕПОДАВАТЕЛИ) ================
+
+async function loadScheduleDirectory() {
+  try {
+    const res = await fetch('/api/schedule-directory');
+    if (!res.ok) return;
+    const data = await res.json();
+    scheduleDirectory = {
+      ready: Boolean(data.ready),
+      groups: data.groups || [],
+      lecturers: data.lecturers || []
+    };
+  } catch (e) {
+    console.warn('[schedule-directory]', e.message);
+  }
+}
+
+function updateScheduleURL({ push = false } = {}) {
+  if (isPoppingState) return;
+  const url = new URL(location);
+  if (scheduleViewOpen) {
+    url.searchParams.set('view', 'schedule');
+    url.searchParams.delete('room');
+    if (currentEntitySchedule && currentEntitySchedule.type && currentEntitySchedule.name) {
+      url.searchParams.set('type', currentEntitySchedule.type);
+      url.searchParams.set('name', currentEntitySchedule.name);
+    } else {
+      url.searchParams.delete('type');
+      url.searchParams.delete('name');
+    }
+  } else {
+    url.searchParams.delete('view');
+    url.searchParams.delete('type');
+    url.searchParams.delete('name');
+  }
+  const currentUrl = location.pathname + location.search;
+  const newUrl = url.pathname + url.search;
+  if (currentUrl === newUrl) return;
+  if (push) history.pushState({}, '', url);
+  else history.replaceState({}, '', url);
+}
+
+function closeScheduleView({ updateHistory = true } = {}) {
+  const view = document.getElementById('schedule-view');
+  if (!view) return;
+  scheduleViewOpen = false;
+  view.classList.add('hidden');
+  document.body.classList.remove('schedule-view-active');
+  if (updateHistory) updateScheduleURL({ push: false });
+  updatePanelHandle();
+  syncModeUI();
+  setTimeout(() => {
+    map.invalidateSize({ animate: false });
+    scheduleLabelRefresh();
+  }, 60);
+}
+
+async function openScheduleDirectory(tab = null) {
+  if (scheduleViewOpen && !tab) {
+    closeScheduleView();
+    return;
+  }
+
+  if (tab) directoryActiveTab = tab;
+  scheduleViewOpen = true;
+  scheduleMobileStep = 'list';
+  document.body.classList.add('schedule-view-active');
+
+  const view = document.getElementById('schedule-view');
+  if (view) view.classList.remove('hidden');
+
+  updatePanelHandle();
+  syncModeUI();
+
+  if (!scheduleDirectory.ready || (scheduleDirectory.groups.length === 0 && scheduleDirectory.lecturers.length === 0)) {
+    renderScheduleWorkspace();
+    await loadScheduleDirectory();
+  }
+
+  // На десктопе сразу открываем выбранную ранее группу/преподавателя или первую группу в списке,
+  // чтобы правая часть страницы сразу показывала полноценное расписание
+  if (!currentEntitySchedule && window.innerWidth > 768) {
+    if (directoryActiveTab === 'lecturers' && scheduleDirectory.lecturers.length > 0) {
+      await selectScheduleEntity('lecturer', scheduleDirectory.lecturers[0].name, { switchMobileToDetail: false });
+      return;
+    } else if (scheduleDirectory.groups.length > 0) {
+      const preferred = scheduleDirectory.groups.find(g => g.name === '445') || scheduleDirectory.groups[0];
+      await selectScheduleEntity('group', preferred.name, { switchMobileToDetail: false });
+      return;
+    }
+  }
+
+  updateScheduleURL({ push: false });
+  renderScheduleWorkspace();
+}
+
+async function openEntitySchedule(type, name) {
+  scheduleViewOpen = true;
+  scheduleMobileStep = 'detail';
+  directoryActiveTab = type === 'group' ? 'groups' : 'lecturers';
+  document.body.classList.add('schedule-view-active');
+
+  const view = document.getElementById('schedule-view');
+  if (view) view.classList.remove('hidden');
+
+  updatePanelHandle();
+  syncModeUI();
+
+  if (!scheduleDirectory.ready || (scheduleDirectory.groups.length === 0 && scheduleDirectory.lecturers.length === 0)) {
+    await loadScheduleDirectory();
+  }
+
+  await selectScheduleEntity(type, name, { switchMobileToDetail: true });
+}
+
+async function selectScheduleEntity(type, name, { switchMobileToDetail = true } = {}) {
+  currentEntitySchedule = { type, name };
+  scheduleDayFilter = 'all';
+  if (switchMobileToDetail) scheduleMobileStep = 'detail';
+  entityLoading = true;
+  entityError = null;
+  updateScheduleURL({ push: false });
+  renderScheduleWorkspace();
+
+  try {
+    const res = await fetch(`/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error('Расписание не найдено');
+    const data = await res.json();
+    currentEntityData = data;
+    currentEntitySchedule = { type: data.entityType || type, name: data.name || name };
+    entityLoading = false;
+    renderScheduleWorkspace();
+    haptic('success');
+  } catch (e) {
+    entityLoading = false;
+    entityError = e.message || 'Ошибка загрузки расписания';
+    renderScheduleWorkspace();
+  }
+}
+
+function renderScheduleWorkspace() {
+  const view = document.getElementById('schedule-view');
+  if (!view) return;
+
+  view.dataset.mobileStep = scheduleMobileStep;
+
+  const q = directoryFilterQuery.toLowerCase().replace(/ё/g, 'е').trim();
+  const filteredGroups = scheduleDirectory.groups.filter(g =>
+    !q || g.name.toLowerCase().replace(/ё/g, 'е').includes(q)
+  );
+  const filteredLecturers = scheduleDirectory.lecturers.filter(l =>
+    !q || l.name.toLowerCase().replace(/ё/g, 'е').includes(q) || l.shortName.toLowerCase().replace(/ё/g, 'е').includes(q)
+  );
+
+  const listItems = directoryActiveTab === 'groups' ? filteredGroups : filteredLecturers;
+  let sidebarListHtml = '';
+
+  if (!scheduleDirectory.ready) {
+    sidebarListHtml = `<div class="free-warming"><div class="spinner"></div><div>Загружаем справочник расписания…</div></div>`;
+  } else if (listItems.length === 0) {
+    sidebarListHtml = `<div class="free-panel-empty">Ничего не найдено по запросу «${escapeHtml(directoryFilterQuery)}»</div>`;
+  } else {
+    sidebarListHtml = listItems.map(item => {
+      const itemType = directoryActiveTab === 'groups' ? 'group' : 'lecturer';
+      const isActive = currentEntitySchedule &&
+        currentEntitySchedule.type === itemType &&
+        currentEntitySchedule.name === item.name;
+      const titleText = itemType === 'group' ? `Группа ${item.name}` : item.name;
+      return `
+        <button type="button" class="sched-dir-item ${isActive ? 'active' : ''}" data-entity-type="${itemType}" data-entity-name="${escapeHtml(item.name)}">
+          <div class="sched-dir-main">
+            <div class="sched-dir-title">${escapeHtml(titleText)}</div>
+            <div class="sched-dir-sub">${item.lessonsCount} пар в неделю · ${item.roomsCount} ауд.</div>
+          </div>
+          <i class="mdi mdi-chevron-right sched-dir-arrow"></i>
+        </button>
+      `;
+    }).join('');
+  }
+
+  const mainHtml = renderScheduleMainPane();
+
+  view.innerHTML = `
+    <div class="schedule-workspace">
+      <aside class="schedule-sidebar">
+        <div class="schedule-sidebar-top">
+          <div class="schedule-sidebar-title-row">
+            <div>
+              <div class="panel-crumbs">РГРТУ · Главный корпус</div>
+              <h2 class="schedule-sidebar-heading">Расписание</h2>
+            </div>
+            <button type="button" class="schedule-back-map-btn" id="schedule-close-btn" title="Вернуться на интерактивную карту">
+              <i class="mdi mdi-map-outline"></i>
+              <span>На карту</span>
+            </button>
+          </div>
+
+          <div class="sched-tabs">
+            <button type="button" class="sched-tab ${directoryActiveTab === 'groups' ? 'active' : ''}" data-tab="groups">
+              <span>Группы</span>
+              <span class="sched-tab-count">${filteredGroups.length}</span>
+            </button>
+            <button type="button" class="sched-tab ${directoryActiveTab === 'lecturers' ? 'active' : ''}" data-tab="lecturers">
+              <span>Преподаватели</span>
+              <span class="sched-tab-count">${filteredLecturers.length}</span>
+            </button>
+          </div>
+
+          <div class="sched-filter-wrap">
+            <i class="mdi mdi-magnify sched-filter-icon"></i>
+            <input type="text" class="sched-filter-input" id="sched-view-search"
+                   placeholder="${directoryActiveTab === 'groups' ? 'Поиск группы (например, 445)…' : 'Поиск преподавателя (например, Устюков)…'}"
+                   value="${escapeHtml(directoryFilterQuery)}" autocomplete="off">
+            <button type="button" class="input-clear-btn ${directoryFilterQuery ? '' : 'hidden'}" id="sched-view-clear" title="Очистить поиск" aria-label="Очистить поиск">
+              <i class="mdi mdi-close"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="schedule-sidebar-list" id="schedule-sidebar-list">
+          ${sidebarListHtml}
+        </div>
+      </aside>
+
+      <main class="schedule-main" id="schedule-main">
+        ${mainHtml}
+      </main>
+    </div>
+  `;
+
+  attachScheduleWorkspaceListeners(view);
+}
+
+function renderScheduleMainPane() {
+  if (entityLoading) {
+    return `
+      <div class="schedule-main-empty">
+        <div class="spinner"></div>
+        <div class="schedule-empty-title">Загружаем расписание…</div>
+      </div>
+    `;
+  }
+
+  if (entityError) {
+    return `
+      <div class="schedule-main-empty">
+        <button type="button" class="sched-mobile-back-btn" id="sched-mobile-back">
+          <i class="mdi mdi-arrow-left"></i> К списку
+        </button>
+        <div class="schedule-empty-title">Не удалось загрузить расписание</div>
+        <div class="schedule-empty-sub">${escapeHtml(entityError)}</div>
+      </div>
+    `;
+  }
+
+  if (!currentEntityData) {
+    return `
+      <div class="schedule-main-empty">
+        <div class="schedule-empty-icon"><i class="mdi mdi-calendar-clock-outline"></i></div>
+        <div class="schedule-empty-title">Выберите группу или преподавателя</div>
+        <div class="schedule-empty-sub">В списке слева доступно расписание всех учебных групп и преподавателей Главного корпуса с быстрым переходом к любой аудитории на карте.</div>
+      </div>
+    `;
+  }
+
+  const data = currentEntityData;
+  const isGroup = data.entityType === 'group';
+  const title = isGroup ? `Группа ${data.name}` : data.name;
+  const badgeLabel = isGroup ? 'Учебная группа' : 'Преподаватель';
+
+  const st = data.nowStatus || { type: 'free', title: 'Сейчас пар нет', details: '' };
+  const statusCardHtml = `
+    <div class="now-status ${st.type === 'busy' ? 'busy' : 'free'} schedule-hero-status" ${st.roomId ? `data-room-id="${escapeHtml(st.roomId)}" style="cursor:pointer" title="Показать аудиторию на карте"` : ''}>
+      <div class="now-dot"></div>
+      <div class="now-body">
+        <div class="now-title">${escapeHtml(st.title)}</div>
+        <div class="now-details">${escapeHtml(st.details)}</div>
+      </div>
+      ${st.roomId ? `<span class="schedule-status-map-link"><i class="mdi mdi-map-marker-radius-outline"></i> На карте</span>` : ''}
+    </div>
+  `;
+
+  const roomsChipsHtml = (data.rooms || []).map(r => `
+    <button type="button" class="entity-room-chip" data-room-id="${escapeHtml(r.id)}" title="Показать ${escapeHtml(formatRoomName(r.name))} на карте (${r.floor} этаж)">
+      <i class="mdi mdi-map-marker-radius-outline"></i>
+      <span>ауд. ${escapeHtml(r.shortName)} · ${r.floor} эт.</span>
+    </button>
+  `).join('');
+
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const todayISO = `${yyyy}-${mm}-${dd}`;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+
+  const days = data.days || [];
+  const totalLessonsCount = data.lessonsCount || days.reduce((acc, d) => acc + ((d.lessons && d.lessons.length) || 0), 0);
+
+  const dayFilterPillsHtml = `
+    <div class="schedule-day-filters">
+      <button type="button" class="schedule-day-pill ${scheduleDayFilter === 'all' ? 'active' : ''}" data-day-filter="all">
+        Вся неделя
+      </button>
+      ${days.map(d => {
+        const isToday = d.date === todayISO;
+        const count = (d.lessons || []).length;
+        return `
+          <button type="button" class="schedule-day-pill ${scheduleDayFilter === d.date ? 'active' : ''} ${isToday ? 'today' : ''}" data-day-filter="${escapeHtml(d.date)}">
+            <span>${escapeHtml(d.dayName)}</span>
+            ${count > 0 ? `<span class="schedule-day-pill-count">${count}</span>` : ''}
+          </button>
+        `;
+      }).join('')}
+    </div>
+  `;
+
+  const visibleDays = scheduleDayFilter === 'all'
+    ? days
+    : days.filter(d => d.date === scheduleDayFilter);
+
+  const daysGridHtml = visibleDays.map(day => {
+    const isToday = day.date === todayISO;
+    const [, mStr, dStr] = (day.date || '').split('-');
+    const dateLabel = dStr && mStr ? `${parseInt(dStr, 10)} ${MONTH_NAMES[parseInt(mStr, 10) - 1] || ''}` : '';
+
+    const lessonsHtml = (!day.lessons || day.lessons.length === 0)
+      ? `<div class="lesson empty">Пар нет</div>`
+      : day.lessons.map(l => {
+          const m = l.time.match(/(\d{1,2}):(\d{2})[–-](\d{1,2}):(\d{2})/);
+          let isNow = false;
+          if (isToday && m) {
+            const s = +m[1] * 60 + +m[2];
+            const e = +m[3] * 60 + +m[4];
+            if (nowMin >= s && nowMin <= e) isNow = true;
+          }
+          const cls = isNow ? 'lesson now' : 'lesson';
+
+          let badgeHtml = '';
+          if (l.type && LESSON_TYPES[l.type]) {
+            const t = LESSON_TYPES[l.type];
+            badgeHtml = `<span class="badge ${t.cls}"><i class="mdi ${t.icon}"></i>${l.type}</span>`;
+          } else if (l.type) {
+            badgeHtml = `<span class="badge pr">${escapeHtml(l.type)}</span>`;
+          }
+
+          let breakText = '';
+          const mStart = l.time.match(/^(\d{1,2}:\d{2})/);
+          if (mStart && BREAKS[mStart[1]]) {
+            breakText = ` · перерыв ${BREAKS[mStart[1]]}`;
+          }
+
+          const metaLine = isGroup
+            ? formatInteractiveGroupAndLecturerHtml('', l.lecturer)
+            : formatInteractiveGroupAndLecturerHtml(l.group, '');
+
+          return `
+            <div class="${cls}" data-room-id="${escapeHtml(l.roomId)}">
+              <div class="lesson-top-row">
+                <div class="time" style="margin-bottom:0">${escapeHtml(l.time)}${breakText}</div>
+                <button type="button" class="lesson-room-badge" data-room-id="${escapeHtml(l.roomId)}" title="Показать аудиторию на карте">
+                  <i class="mdi mdi-map-marker-radius-outline"></i>
+                  <span>ауд. ${escapeHtml(l.roomShort)} · ${l.floor} эт.</span>
+                </button>
+              </div>
+              <div class="subject">${badgeHtml}${escapeHtml(l.subject)}</div>
+              ${metaLine ? `<div class="meta">${metaLine}</div>` : ''}
+            </div>
+          `;
+        }).join('');
+
+    return `
+      <div class="schedule-day-card ${isToday ? 'today' : ''}">
+        <div class="schedule-day-card-header">
+          <span class="schedule-day-name">${escapeHtml(day.dayName)}</span>
+          <span class="schedule-day-date">${escapeHtml(dateLabel)}${isToday ? ' · сегодня' : ''}</span>
+        </div>
+        <div class="schedule-day-lessons">
+          ${lessonsHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="schedule-main-header">
+      <div class="schedule-mobile-nav">
+        <button type="button" class="sched-mobile-back-btn" id="sched-mobile-back">
+          <i class="mdi mdi-arrow-left"></i>
+          <span>К списку</span>
+        </button>
+        <button type="button" class="schedule-back-map-btn" id="sched-mobile-close-map">
+          <i class="mdi mdi-map-outline"></i>
+          <span>На карту</span>
+        </button>
+      </div>
+
+      <div class="schedule-hero-top">
+        <div>
+          <div class="panel-crumbs">${escapeHtml(badgeLabel)} · ${totalLessonsCount} пар на неделе</div>
+          <h1 class="schedule-entity-title">
+            <span>${escapeHtml(title)}</span>
+            <button type="button" class="schedule-share-btn" id="schedule-share-btn" title="Скопировать прямую ссылку на расписание">
+              <i class="mdi mdi-link-variant"></i>
+            </button>
+          </h1>
+        </div>
+      </div>
+
+      ${statusCardHtml}
+
+      ${roomsChipsHtml ? `
+        <div class="schedule-rooms-section">
+          <span class="schedule-rooms-label">Аудитории на карте:</span>
+          <div class="entity-rooms-strip">${roomsChipsHtml}</div>
+        </div>
+      ` : ''}
+
+      ${dayFilterPillsHtml}
+    </div>
+
+    <div class="schedule-days-grid">
+      ${daysGridHtml}
+    </div>
+  `;
+}
+
+function attachScheduleWorkspaceListeners(view) {
+  const closeBtn = view.querySelector('#schedule-close-btn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => closeScheduleView());
+  }
+
+  const mobileCloseMapBtn = view.querySelector('#sched-mobile-close-map');
+  if (mobileCloseMapBtn) {
+    mobileCloseMapBtn.addEventListener('click', () => closeScheduleView());
+  }
+
+  const mobileBackBtn = view.querySelector('#sched-mobile-back');
+  if (mobileBackBtn) {
+    mobileBackBtn.addEventListener('click', () => {
+      scheduleMobileStep = 'list';
+      view.dataset.mobileStep = 'list';
+    });
+  }
+
+  const shareBtn = view.querySelector('#schedule-share-btn');
+  if (shareBtn && currentEntitySchedule) {
+    shareBtn.addEventListener('click', async () => {
+      const url = new URL(location);
+      url.searchParams.set('view', 'schedule');
+      url.searchParams.set('type', currentEntitySchedule.type);
+      url.searchParams.set('name', currentEntitySchedule.name);
+      try {
+        await navigator.clipboard.writeText(url.toString());
+        showToast('Ссылка на расписание скопирована');
+      } catch (e) {
+        showToast('Ссылка обновлена в адресной строке');
+      }
+    });
+  }
+
+  view.querySelectorAll('.sched-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      directoryActiveTab = btn.dataset.tab;
+      renderScheduleWorkspace();
+    });
+  });
+
+  const searchInput = view.querySelector('#sched-view-search');
+  const clearBtn = view.querySelector('#sched-view-clear');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      directoryFilterQuery = searchInput.value;
+      const pos = searchInput.selectionStart;
+      renderScheduleWorkspace();
+      const nextInput = document.getElementById('sched-view-search');
+      if (nextInput) {
+        nextInput.focus();
+        try { nextInput.setSelectionRange(pos, pos); } catch (e) {}
+      }
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      directoryFilterQuery = '';
+      renderScheduleWorkspace();
+      const nextInput = document.getElementById('sched-view-search');
+      if (nextInput) nextInput.focus();
+    });
+  }
+
+  view.querySelectorAll('.sched-dir-item').forEach(item => {
+    item.addEventListener('click', () => {
+      selectScheduleEntity(item.dataset.entityType, item.dataset.entityName, { switchMobileToDetail: true });
+    });
+  });
+
+  view.querySelectorAll('[data-day-filter]').forEach(pill => {
+    pill.addEventListener('click', () => {
+      scheduleDayFilter = pill.dataset.dayFilter || 'all';
+      renderScheduleWorkspace();
+    });
+  });
+
+  view.querySelectorAll('[data-room-id]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.entity-inline-link')) return;
+      if (el.classList.contains('lesson') && !e.target.closest('.lesson-room-badge')) {
+        // Клик по карточке занятия или по бейджу аудитории переносит на карту к этой аудитории
+      }
+      e.stopPropagation();
+      const roomId = el.dataset.roomId;
+      if (roomId) {
+        closeScheduleView();
+        focusRoomFromAi(roomId);
+      }
+    });
+  });
+
+  attachEntityInlineLinks(view);
 }
 
 // ================ ГРАФ И МАРШРУТЫ ================
@@ -1550,7 +2864,6 @@ async function loadGraph() {
   }
 }
 
-// Дейкстра. Возвращает массив id узлов от startId до endId или null.
 function dijkstra(startId, endId) {
   if (!graph.nodes[startId] || !graph.nodes[endId]) return null;
   if (startId === endId) return [startId];
@@ -1559,7 +2872,7 @@ function dijkstra(startId, endId) {
   for (const id of Object.keys(graph.nodes)) adj[id] = [];
   for (const e of graph.edges) {
     if (adj[e.from] && adj[e.to]) {
-      const weight = Number(e.weight) || 1; // Защита от NaN
+      const weight = Number(e.weight) || 1;
       adj[e.from].push({ to: e.to, weight });
       adj[e.to].push({ to: e.from, weight });
     }
@@ -1604,7 +2917,6 @@ function dijkstra(startId, endId) {
   return path;
 }
 
-// Центроид фигуры в SVG-координатах (для текущего этажа)
 function getShapeCentroidSvg(id) {
   const shapes = roomShapes[id];
   if (!shapes || !shapes.length) return null;
@@ -1629,7 +2941,6 @@ function getShapeCentroidSvg(id) {
   return { x: latlng.lng, y: H - latlng.lat };
 }
 
-// Получение центроида комнаты из SVG на любом этаже (с кэшированием файла)
 async function fetchSvgCentroid(building, floor, roomId) {
   const b = BUILDINGS[building];
   const svgUrl = b?.floors?.[floor];
@@ -1657,11 +2968,11 @@ async function fetchSvgCentroid(building, floor, roomId) {
     tempDiv.style.width = W + 'px';
     tempDiv.style.height = H + 'px';
     tempDiv.innerHTML = svgText;
-    
+
     const svgNode = tempDiv.querySelector('svg');
     svgNode.style.width = '100%';
     svgNode.style.height = '100%';
-    
+
     document.body.appendChild(tempDiv);
 
     const el = tempDiv.querySelector(`[id="${roomId}"]`);
@@ -1685,7 +2996,6 @@ async function fetchSvgCentroid(building, floor, roomId) {
   }
 }
 
-// Универсальный поиск ближайшего узла для комнаты (на любом этаже)
 async function getRoomNode(roomId) {
   const meta = roomsMeta[roomId];
   if (!meta) return null;
@@ -1705,7 +3015,6 @@ async function getRoomNode(roomId) {
   return findNearestNode(centroid, meta.building, meta.floor);
 }
 
-// Ближайший узел графа на указанном корпусе и этаже
 function findNearestNode(point, building, floor) {
   let best = null, bestDist = Infinity;
   for (const [id, node] of Object.entries(graph.nodes)) {
@@ -1720,7 +3029,6 @@ function findNearestNode(point, building, floor) {
   return best;
 }
 
-// Длина маршрута (сумма весов рёбер)
 function computeRouteLength(path) {
   if (!path || path.length < 2) return 0;
   let total = 0;
@@ -1734,7 +3042,6 @@ function computeRouteLength(path) {
   return Math.round(total);
 }
 
-// Сглаживание пути алгоритмом Чайкина (corner cutting)
 function smoothPath(latlngs, iterations = 2) {
   if (!latlngs || latlngs.length < 3) return latlngs;
   let pts = latlngs.map(p => ({ lat: p[0], lng: p[1] }));
@@ -1753,7 +3060,6 @@ function smoothPath(latlngs, iterations = 2) {
   return pts.map(p => [p.lat, p.lng]);
 }
 
-// Отрисовка маршрута (поддерживает мультиэтажность)
 function drawRoute(path) {
   if (!routeLayer) return;
   routeLayer.clearLayers();
@@ -1784,67 +3090,61 @@ function drawRoute(path) {
   }
   if (currentSegment.length > 0) allSegments.push(currentSegment);
 
-  // Рисуем линии между узлами
   allSegments.forEach(seg => {
     if (seg.length < 2) return;
     const latlngs = seg.map(p => p.latlng);
     const smooth = smoothPath(latlngs, 2);
     L.polyline(smooth, {
       pane: 'routePane',
-      color: routeColor, weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round'
+      color: routeColor, weight: 3, opacity: 0.92, lineCap: 'round', lineJoin: 'round'
     }).addTo(routeLayer);
   });
 
-  // Добавляем пунктир от комнаты до первого узла, если это старт/финиш
   const fromMeta = roomsMeta[routeState.fromRoomId];
   const toMeta = roomsMeta[routeState.toRoomId];
 
-  // Рисуем стартовую комнату
   if (fromMeta && fromMeta.building === currentBuilding && fromMeta.floor === currentFloor) {
     const startNode = graph.nodes[path[0]];
     if (startNode && startNode.building === currentBuilding && startNode.floor === currentFloor) {
       const centroid = getShapeCentroidSvg(routeState.fromRoomId);
       if (centroid) {
         L.polyline([[H - centroid.y, centroid.x], [H - startNode.y, startNode.x]], {
-          pane: 'routePane', color: startColor, weight: 3, dashArray: '5, 5', opacity: 0.8
+          pane: 'routePane', color: startColor, weight: 2, dashArray: '4, 4', opacity: 0.82
         }).addTo(routeLayer);
 
         L.circleMarker([H - centroid.y, centroid.x], {
-          pane: 'routePane', radius: 9, color: '#ffffff', weight: 3, fillColor: startColor, fillOpacity: 1
+          pane: 'routePane', radius: 6, color: '#ffffff', weight: 2, fillColor: startColor, fillOpacity: 1
         }).addTo(routeLayer);
       }
     }
   }
 
-  // Рисуем конечную комнату
   if (toMeta && toMeta.building === currentBuilding && toMeta.floor === currentFloor) {
     const endNode = graph.nodes[path[path.length - 1]];
     if (endNode && endNode.building === currentBuilding && endNode.floor === currentFloor) {
       const centroid = getShapeCentroidSvg(routeState.toRoomId);
       if (centroid) {
         L.polyline([[H - centroid.y, centroid.x], [H - endNode.y, endNode.x]], {
-          pane: 'routePane', color: endColor, weight: 3, dashArray: '5, 5', opacity: 0.8
+          pane: 'routePane', color: endColor, weight: 2, dashArray: '4, 4', opacity: 0.82
         }).addTo(routeLayer);
 
         L.circleMarker([H - centroid.y, centroid.x], {
-          pane: 'routePane', radius: 9, color: '#ffffff', weight: 3, fillColor: endColor, fillOpacity: 1
+          pane: 'routePane', radius: 6, color: '#ffffff', weight: 2, fillColor: endColor, fillOpacity: 1
         }).addTo(routeLayer);
       }
     }
   }
 
-  // Отмечаем лестницы на текущем этаже
   path.forEach(id => {
     const node = graph.nodes[id];
     if (node && node.type === 'stairs' && node.building === currentBuilding && node.floor === currentFloor) {
-      // Проверяем, есть ли переход на другой этаж через эту лестницу
       const isTransition = path.some(otherId => {
         const other = graph.nodes[otherId];
         return other && other.type === 'stairs' && other.floor !== currentFloor;
       });
       if (isTransition) {
         L.circleMarker([H - node.y, node.x], {
-          pane: 'routePane', radius: 7, color: '#fff', weight: 2, fillColor: stairColor, fillOpacity: 1
+          pane: 'routePane', radius: 5.5, color: '#fff', weight: 2, fillColor: stairColor, fillOpacity: 1
         }).addTo(routeLayer);
       }
     }
@@ -1864,29 +3164,95 @@ function clearRoute() {
 // ================ ПАНЕЛЬ МАРШРУТА ================
 
 function openRoutePanel() {
+  if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
+  const panel = document.getElementById('panel');
   if (panelMode === 'route') {
-    closeRoutePanel();
+    if (panel && !panel.classList.contains('open')) {
+      openPanel();
+      renderRoutePanel();
+      syncModeUI();
+    } else {
+      closeRoutePanel();
+    }
     return;
   }
   if (freeModeOn) disableFreeMode();
 
   panelMode = 'route';
-  routePickSide = 'from';
+  routePickSide = routeState.fromRoomId && !routeState.toRoomId ? 'to' : 'from';
   clearSelectedRoom();
-  document.getElementById('route-toggle').classList.add('active');
   openPanel();
   renderRoutePanel();
   refreshRoutePickHighlight();
+  syncModeUI();
 }
 
 function closeRoutePanel() {
   panelMode = null;
   closePanel();
   clearRoute();
-  document.getElementById('route-toggle').classList.remove('active');
+  syncModeUI();
 }
 
-// Обработка клика по помещению в режиме маршрута
+function startRouteToRoom(toRoomId) {
+  if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
+  if (freeModeOn) disableFreeMode();
+  panelMode = 'route';
+  clearSelectedRoom();
+  routeState.toRoomId = toRoomId;
+  routeState.path = null;
+  if (routeLayer) routeLayer.clearLayers();
+  routePickSide = routeState.fromRoomId ? 'to' : 'from';
+  openPanel();
+  renderRoutePanel();
+  refreshRoutePickHighlight();
+  syncModeUI();
+  if (routeState.fromRoomId && routeState.toRoomId) {
+    onBuildRouteClick();
+  }
+}
+
+function startRouteFromRoom(fromRoomId) {
+  if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
+  if (freeModeOn) disableFreeMode();
+  panelMode = 'route';
+  clearSelectedRoom();
+  routeState.fromRoomId = fromRoomId;
+  routeState.path = null;
+  if (routeLayer) routeLayer.clearLayers();
+  routePickSide = 'to';
+  openPanel();
+  renderRoutePanel();
+  refreshRoutePickHighlight();
+  syncModeUI();
+  if (routeState.fromRoomId && routeState.toRoomId) {
+    onBuildRouteClick();
+  }
+}
+
+async function executeRouteBetween(fromRoomId, toRoomId) {
+  if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
+  if (freeModeOn) disableFreeMode();
+  panelMode = 'route';
+  clearSelectedRoom();
+  routeState.fromRoomId = fromRoomId;
+  routeState.toRoomId = toRoomId;
+  routeState.path = null;
+  openPanel();
+  renderRoutePanel();
+  refreshRoutePickHighlight();
+  syncModeUI();
+
+  const fromMeta = roomsMeta[fromRoomId];
+  if (fromMeta && (fromMeta.building !== currentBuilding || fromMeta.floor !== currentFloor)) {
+    const b = BUILDINGS[fromMeta.building];
+    if (b && b.floors[fromMeta.floor]) {
+      await showFloor(fromMeta.building, fromMeta.floor);
+    }
+  }
+  await onBuildRouteClick();
+}
+
 function handleRouteMapPick(id) {
   const meta = roomsMeta[id];
   if (!meta) return;
@@ -1916,21 +3282,27 @@ function renderRoutePanel() {
     <div class="route-field">
       <label>Откуда <span class="label-hint">${routePickSide === 'from' ? '← или ткните на карте' : ''}</span></label>
       <div class="route-input-wrap">
-        <input class="route-input ${fromValue ? 'filled' : ''}" id="route-from" placeholder="Аудитория, вход…" value="${escapeHtml(fromValue)}" autocomplete="off">
+        <input class="route-input has-clear ${fromValue ? 'filled' : ''}" id="route-from" placeholder="Аудитория, вход…" value="${escapeHtml(fromValue)}" autocomplete="off">
+        <button type="button" class="input-clear-btn ${fromValue ? '' : 'hidden'}" id="route-from-clear" title="Очистить" aria-label="Очистить поле Откуда">
+          <i class="mdi mdi-close"></i>
+        </button>
         <ul class="route-results" id="route-from-results"></ul>
       </div>
     </div>
     <div class="route-field">
       <label>Куда <span class="label-hint">${routePickSide === 'to' ? '← или ткните на карте' : ''}</span></label>
       <div class="route-input-wrap">
-        <input class="route-input ${toValue ? 'filled' : ''}" id="route-to" placeholder="Аудитория, вход…" value="${escapeHtml(toValue)}" autocomplete="off">
+        <input class="route-input has-clear ${toValue ? 'filled' : ''}" id="route-to" placeholder="Аудитория, вход…" value="${escapeHtml(toValue)}" autocomplete="off">
+        <button type="button" class="input-clear-btn ${toValue ? '' : 'hidden'}" id="route-to-clear" title="Очистить" aria-label="Очистить поле Куда">
+          <i class="mdi mdi-close"></i>
+        </button>
         <ul class="route-results" id="route-to-results"></ul>
       </div>
     </div>
     <button class="route-build-btn" id="route-build-btn" ${routeState.fromRoomId && routeState.toRoomId ? '' : 'disabled'}>
       <i class="mdi mdi-directions"></i> Построить маршрут
     </button>
-    ${routeState.path ? `<button class="route-clear-btn" id="route-clear-btn">Очистить маршрут</button>` : ''}
+    ${routeState.path ? `<button class="route-clear-btn" id="route-clear-btn">Сбросить маршрут</button>` : ''}
   `;
 
   let scroll = '';
@@ -1939,7 +3311,7 @@ function renderRoutePanel() {
   } else {
     scroll = `
       <div class="route-hint">
-        Введи начальную и конечную точки в поля выше, либо кликни по ним на карте. Активное поле подсвечено зелёным.
+        Выберите начальную и конечную точки в полях выше или просто кликните по нужным аудиториям на карте.
       </div>
     `;
   }
@@ -1961,8 +3333,9 @@ function renderRoutePanel() {
 
   panel.querySelectorAll('.step-floor-link').forEach(btn => {
     btn.addEventListener('click', (e) => {
-      const b = e.target.dataset.building;
-      const f = parseInt(e.target.dataset.floor);
+      const target = e.currentTarget;
+      const b = target.dataset.building;
+      const f = parseInt(target.dataset.floor, 10);
       if (b && !isNaN(f)) {
         showFloor(b, f);
       }
@@ -1974,10 +3347,35 @@ function renderRoutePanel() {
 
 function setupRouteInput(side) {
   const inputId = side === 'from' ? 'route-from' : 'route-to';
+  const clearId = side === 'from' ? 'route-from-clear' : 'route-to-clear';
   const resultsId = side === 'from' ? 'route-from-results' : 'route-to-results';
   const input = document.getElementById(inputId);
+  const clearBtn = document.getElementById(clearId);
   const results = document.getElementById(resultsId);
   if (!input || !results) return;
+
+  const syncClearVisibility = () => {
+    if (clearBtn) clearBtn.classList.toggle('hidden', !input.value);
+  };
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      input.value = '';
+      input.classList.remove('filled');
+      syncClearVisibility();
+      if (side === 'from') routeState.fromRoomId = null;
+      else routeState.toRoomId = null;
+      routeState.path = null;
+      if (routeLayer) routeLayer.clearLayers();
+      results.classList.remove('open');
+      results.innerHTML = '';
+      const buildBtn = document.getElementById('route-build-btn');
+      if (buildBtn) buildBtn.disabled = !(routeState.fromRoomId && routeState.toRoomId);
+      refreshRoutePickHighlight();
+      input.focus();
+    });
+  }
 
   input.addEventListener('focus', () => {
     routePickSide = side;
@@ -1988,8 +3386,15 @@ function setupRouteInput(side) {
   });
 
   input.addEventListener('input', () => {
+    syncClearVisibility();
     const q = input.value.trim();
     if (!q) {
+      if (side === 'from') routeState.fromRoomId = null;
+      else routeState.toRoomId = null;
+      input.classList.remove('filled');
+      const buildBtn = document.getElementById('route-build-btn');
+      if (buildBtn) buildBtn.disabled = !(routeState.fromRoomId && routeState.toRoomId);
+      refreshRoutePickHighlight();
       results.classList.remove('open');
       results.innerHTML = '';
       return;
@@ -2033,10 +3438,15 @@ function setRoutePoint(side, roomId, name) {
   if (routeLayer) routeLayer.clearLayers();
 
   const inputId = side === 'from' ? 'route-from' : 'route-to';
+  const clearId = side === 'from' ? 'route-from-clear' : 'route-to-clear';
   const input = document.getElementById(inputId);
+  const clearBtn = document.getElementById(clearId);
   if (input) {
     input.value = name;
     input.classList.add('filled');
+  }
+  if (clearBtn) {
+    clearBtn.classList.toggle('hidden', !name);
   }
 
   const resultsId = side === 'from' ? 'route-from-results' : 'route-to-results';
@@ -2057,24 +3467,29 @@ async function onBuildRouteClick() {
     return;
   }
 
-  panel.querySelector('.panel-scroll').innerHTML = '<p class="muted-text">Строим маршрут…</p>';
+  const scrollEl = panel.querySelector('.panel-scroll');
+  if (scrollEl) scrollEl.innerHTML = '<p class="muted-text">Строим маршрут…</p>';
 
   const fromNode = await getRoomNode(routeState.fromRoomId);
   const toNode = await getRoomNode(routeState.toRoomId);
 
   if (!fromNode || !toNode) {
-    panel.querySelector('.panel-scroll').innerHTML = `
-      <div class="route-warning">Не удалось определить положение выбранных помещений на карте.</div>
-    `;
+    if (scrollEl) {
+      scrollEl.innerHTML = `
+        <div class="route-warning">Не удалось определить положение выбранных помещений на графе этого этажа (сейчас граф проложен по 0 и 1 этажам Главного корпуса).</div>
+      `;
+    }
     return;
   }
 
   const path = dijkstra(fromNode, toNode);
 
   if (!path) {
-    panel.querySelector('.panel-scroll').innerHTML = `
-      <div class="route-warning">Между этими точками нет пути по графу.</div>
-    `;
+    if (scrollEl) {
+      scrollEl.innerHTML = `
+        <div class="route-warning">Между этими точками пока нет связанного пути по графу.</div>
+      `;
+    }
     return;
   }
 
@@ -2084,9 +3499,47 @@ async function onBuildRouteClick() {
   haptic('success');
 }
 
+function calculateRouteMetricsClient(path) {
+  if (!path || path.length < 2) {
+    return { meters: 0, seconds: 0, timeText: '< 1 мин', stairsCount: 0, floorsVisited: [] };
+  }
+  let rawPixels = 0;
+  let stairsTransitions = 0;
+  const floorsVisited = [];
+
+  for (let i = 0; i < path.length; i++) {
+    const n = graph.nodes[path[i]];
+    if (n && typeof n.floor === 'number' && floorsVisited[floorsVisited.length - 1] !== n.floor) {
+      floorsVisited.push(n.floor);
+    }
+    if (i < path.length - 1) {
+      const a = path[i], b = path[i + 1];
+      const na = graph.nodes[a], nb = graph.nodes[b];
+      if (na && nb && na.floor !== nb.floor) {
+        stairsTransitions += Math.abs((nb.floor || 0) - (na.floor || 0)) || 1;
+      } else {
+        const edge = graph.edges.find(e =>
+          (e.from === a && e.to === b) || (e.from === b && e.to === a)
+        );
+        if (edge) rawPixels += (Number(edge.weight) || 1);
+      }
+    }
+  }
+
+  // 10 пикселей на плане этажа ≈ 1 метр + ~8 м на каждый межэтажный лестничный марш
+  const meters = Math.max(5, Math.round(rawPixels / 10 + stairsTransitions * 8));
+  // Средняя скорость ходьбы ~1.25 м/с + ~22 сек на подъём/спуск по лестнице между этажами
+  const walkSeconds = (rawPixels / 10) / 1.25;
+  const stairSeconds = stairsTransitions * 22;
+  const seconds = Math.max(10, Math.round(walkSeconds + stairSeconds));
+  const minutes = Math.round(seconds / 60);
+  const timeText = seconds < 45 ? '< 1 мин' : `~${Math.max(1, minutes)} мин`;
+
+  return { meters, seconds, timeText, stairsCount: stairsTransitions, floorsVisited };
+}
+
 function renderRouteResult(path) {
-  const length = computeRouteLength(path);
-  const steps = path.length - 1;
+  const metrics = calculateRouteMetricsClient(path);
 
   let currentFloorGroup = [];
   const floorGroups = [];
@@ -2110,91 +3563,77 @@ function renderRouteResult(path) {
   }
   if (currentFloorGroup.length > 0) floorGroups.push(currentFloorGroup);
 
-  let stepsHtml = '';
-  let stepNum = 1;
+  const fromMeta = roomsMeta[routeState.fromRoomId];
+  const toMeta = roomsMeta[routeState.toRoomId];
+  const fromTitle = fromMeta ? formatRoomName(fromMeta.name) : 'Начальная точка';
+  const toTitle = toMeta ? formatRoomName(toMeta.name) : 'Конечная точка';
+  const fromFloor = fromMeta?.floor ?? floorGroups[0]?.[0]?.node?.floor ?? currentFloor;
+  const toFloor = toMeta?.floor ?? floorGroups[floorGroups.length - 1]?.[0]?.node?.floor ?? currentFloor;
+
+  let milestonesHtml = `
+    <li class="route-step route-milestone start">
+      <span class="step-num start-dot">A</span>
+      <div class="step-body">
+        <div class="step-title">${escapeHtml(fromTitle)}</div>
+        <div class="step-meta">${fromFloor} этаж · старт маршрута</div>
+      </div>
+      ${fromFloor !== currentFloor ? `
+        <button type="button" class="step-floor-link" data-building="${escapeHtml(fromMeta?.building || currentBuilding)}" data-floor="${fromFloor}">
+          ${fromFloor} эт.
+        </button>
+      ` : ''}
+    </li>
+  `;
 
   floorGroups.forEach((group, groupIdx) => {
     if (groupIdx > 0) {
       const prevNode = floorGroups[groupIdx - 1][floorGroups[groupIdx - 1].length - 1].node;
       const currNode = group[0].node;
-      const dir = currNode.floor > prevNode.floor ? 'Поднимитесь' : 'Спуститесь';
-      const bName = BUILDINGS[currNode.building]?.name || currNode.building;
-      
-      stepsHtml += `
-        <li class="route-step" style="background: var(--btn-bg); border-left: 3px solid #a855f7;">
-          <span class="step-num" style="background: #a855f7;">↕</span>
+      const dir = currNode.floor > prevNode.floor ? 'Поднимитесь по лестнице' : 'Спуститесь по лестнице';
+
+      milestonesHtml += `
+        <li class="route-step route-milestone stairs">
+          <span class="step-num stairs-dot">↕</span>
           <div class="step-body">
-            <strong>${dir} на ${currNode.floor} этаж</strong> (${bName})
-            <div class="step-meta">по лестнице</div>
-            <button class="step-floor-link" data-building="${currNode.building}" data-floor="${currNode.floor}" style="margin-top: 8px; padding: 4px 8px; font-size: 12px; background: var(--btn-bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">
-              Перейти на ${currNode.floor} этаж
-            </button>
+            <div class="step-title">${dir} на ${currNode.floor} этаж</div>
+            <div class="step-meta">переход с ${prevNode.floor} на ${currNode.floor} этаж</div>
           </div>
+          <button type="button" class="step-floor-link" data-building="${escapeHtml(currNode.building)}" data-floor="${currNode.floor}">
+            Показать ${currNode.floor} эт.
+          </button>
         </li>
       `;
-      stepNum++;
-    }
-
-    for (let i = 1; i < group.length; i++) {
-      const prevItem = group[i - 1];
-      const currItem = group[i];
-      const a = prevItem.node;
-      const b = currItem.node;
-
-      if (a.x === b.x && a.y === b.y) continue;
-
-      const dist = Math.round(Math.hypot(a.x - b.x, a.y - b.y));
-      const prevId = path[currItem.index - 1];
-      const nextId = path[currItem.index + 1];
-      const angle = computeTurn(prevId, currItem.id, nextId);
-      const turnText = angle ? ` · ${angle}` : '';
-
-      stepsHtml += `
-        <li class="route-step">
-          <span class="step-num">${stepNum}</span>
-          <div class="step-body">
-            Пройдите <strong>${dist}</strong> ед.${turnText}
-          </div>
-        </li>
-      `;
-      stepNum++;
     }
   });
+
+  milestonesHtml += `
+    <li class="route-step route-milestone finish">
+      <span class="step-num finish-dot">B</span>
+      <div class="step-body">
+        <div class="step-title">${escapeHtml(toTitle)}</div>
+        <div class="step-meta">${toFloor} этаж · пункт назначения</div>
+      </div>
+      ${toFloor !== currentFloor ? `
+        <button type="button" class="step-floor-link" data-building="${escapeHtml(toMeta?.building || currentBuilding)}" data-floor="${toFloor}">
+          ${toFloor} эт.
+        </button>
+      ` : ''}
+    </li>
+  `;
 
   return `
     <div class="route-summary">
       <div class="metric">
-        <span class="metric-value">${steps}</span>
-        <span class="metric-label">шагов</span>
+        <span class="metric-value">~${metrics.meters} м</span>
+        <span class="metric-label">расстояние</span>
       </div>
       <div class="metric">
-        <span class="metric-value">${length}</span>
-        <span class="metric-label">ед. длины</span>
+        <span class="metric-value">${metrics.timeText}</span>
+        <span class="metric-label">пешком${metrics.stairsCount > 0 ? ' (с лестницей)' : ''}</span>
       </div>
     </div>
-    <ol class="route-steps">${stepsHtml}</ol>
+    <ol class="route-steps">${milestonesHtml}</ol>
   `;
-}
-
-function computeTurn(prevId, curId, nextId) {
-  if (!nextId) return null;
-  const p = graph.nodes[prevId], c = graph.nodes[curId], n = graph.nodes[nextId];
-  if (!p || !c || !n) return null;
-  
-  if (p.floor !== c.floor || c.floor !== n.floor) return null;
-
-  const v1 = { x: c.x - p.x, y: c.y - p.y };
-  const v2 = { x: n.x - c.x, y: n.y - c.y };
-  const a1 = Math.atan2(v1.y, v1.x);
-  const a2 = Math.atan2(v2.y, v2.x);
-  let diff = (a2 - a1) * 180 / Math.PI;
-  while (diff > 180) diff -= 360;
-  while (diff < -180) diff += 360;
-
-  const abs = Math.abs(diff);
-  if (abs < 20) return 'прямо';
-  if (abs > 150) return 'разворот';
-  return diff > 0 ? 'поверните налево' : 'поверните направо';
 }
 
 // ================ ГОРЯЧИЕ КЛАВИШИ ================
@@ -2205,16 +3644,21 @@ function setupHotkeys() {
     const isInput = tag === 'input' || tag === 'textarea';
 
     if (e.key === 'Escape') {
-      const wrap = document.querySelector('.search-wrap');
-      if (wrap.classList.contains('open')) {
+      const wrap = document.getElementById('search-wrap');
+      if (wrap && wrap.classList.contains('open')) {
         wrap.classList.remove('open');
         if (isInput) e.target.blur();
+        return;
+      }
+      if (scheduleViewOpen) {
+        closeScheduleView();
         return;
       }
       if (document.getElementById('panel').classList.contains('open')) {
         if (panelMode === 'room') closeRoomPanel();
         else if (panelMode === 'free') collapseFreePanel();
         else if (panelMode === 'route') closeRoutePanel();
+        else if (panelMode === 'ai') closeAiPanel();
         else closePanel();
       }
       return;
@@ -2222,11 +3666,12 @@ function setupHotkeys() {
     if (isInput) return;
     if (e.key === '/') {
       e.preventDefault();
-      const wrap = document.querySelector('.search-wrap');
-      const toggle = document.getElementById('search-toggle');
+      const wrap = document.getElementById('search-wrap');
       const input = document.getElementById('search-input');
-      if (!wrap.classList.contains('open')) toggle.click();
-      else input.focus();
+      if (wrap && input) {
+        wrap.classList.add('open');
+        input.focus();
+      }
       return;
     }
     if (e.key === '+' || e.key === '=') { e.preventDefault(); map.zoomIn(); return; }
@@ -2239,7 +3684,7 @@ function setupHotkeys() {
 (async function init() {
   initTelegram();
   roomsMeta = await fetch('data/rooms.json').then(r => r.json());
-  await loadGraph();
+  await Promise.all([loadGraph(), loadScheduleDirectory()]);
 
   buildBuildingsUI();
   setupSearch();
@@ -2250,15 +3695,43 @@ function setupHotkeys() {
   setupPanelHandle();
   setupHotkeys();
 
-  document.getElementById('route-toggle').addEventListener('click', openRoutePanel);
+  const freeTopBtn = document.getElementById('free-top-btn');
+  if (freeTopBtn) freeTopBtn.addEventListener('click', toggleFreeMode);
+
+  const routeTopBtn = document.getElementById('route-toggle');
+  if (routeTopBtn) routeTopBtn.addEventListener('click', openRoutePanel);
+
+  const aiTopBtn = document.getElementById('ai-toggle');
+  if (aiTopBtn) aiTopBtn.addEventListener('click', () => openAiPanel(null));
+
+  const brandEl = document.querySelector('.topbar-brand');
+  if (brandEl) {
+    brandEl.style.cursor = 'pointer';
+    brandEl.addEventListener('click', () => {
+      if (scheduleViewOpen) closeScheduleView();
+    });
+  }
+
+  syncModeUI();
 
   const params = new URLSearchParams(location.search);
+  const viewParam = params.get('view');
+  const entityTypeParam = params.get('type');
+  const entityNameParam = params.get('name');
   const roomId = params.get('room');
+
   if (roomId && roomsMeta[roomId]) {
     isPoppingState = true;
     await navigateToRoom(roomId);
     isPoppingState = false;
   } else {
-    showFloor('C', 1);
+    await showFloor('C', 1);
+    if (viewParam === 'schedule') {
+      if (entityTypeParam && entityNameParam) {
+        await openEntitySchedule(entityTypeParam, entityNameParam);
+      } else {
+        await openScheduleDirectory();
+      }
+    }
   }
 })();
