@@ -6,13 +6,17 @@ const { URL } = require('url');
 const cheerio = require('cheerio');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 const { searchRoomsInMeta } = require('./js/graph-utils.js');
+const { splitGroupAndLecturer, UserStore, verifyTelegramWebAppInitData } = require('./js/user-store.js');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const ROOT = __dirname;
 const CACHE_FILE = path.join(ROOT, 'data', 'cache.json');
 const GRAPH_FILE = path.join(ROOT, 'data', 'graph.json');
 const GRAPH_BACKUP_FILE = path.join(ROOT, 'data', 'graph.backup.json');
+const USERS_FILE = path.join(ROOT, 'data', 'users.json');
 const REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+
+const userStore = new UserStore(USERS_FILE);
 
 function getEditorPassword() {
   return String(process.env.EDITOR_PASSWORD || process.env.ADMIN_TOKEN || 'radik-admin-2026').trim();
@@ -63,11 +67,13 @@ const MIME = {
 };
 
 let roomsMeta = {};
+let raspDirectoryMeta = { lecturersInRasp: [], deptByFullFio: {}, facultyByGroup: {} };
+let lecturersReportList = [];
 let scheduleCache = {};
 let cacheStatus = { ready: false, warming: false, progress: '0/0', lastUpdate: null };
 let scheduleIndex = {
-  lecturers: new Map(), // name -> { name, shortName, surname, rooms: Set, lessonsCount, daysMap: Map }
-  groups: new Map(),    // group -> { name, rooms: Set, lessonsCount, daysMap: Map }
+  lecturers: new Map(), // name -> { name, shortName, fullName, regalia, department, surname, rooms: Set, lessonsCount, daysMap: Map }
+  groups: new Map(),    // group -> { name, faculty, rooms: Set, lessonsCount, daysMap: Map }
   orderedDates: []      // [{ date, dayName }]
 };
 
@@ -79,60 +85,97 @@ try {
   console.error('[init] Не удалось загрузить rooms.json:', e.message);
 }
 
-// Разделение строки после "гр." на список групп и ФИО преподавателя
-function splitGroupAndLecturer(groupStr, lecturerStr) {
-  const combined = [groupStr, lecturerStr]
-    .map(s => String(s || '').trim())
-    .filter(Boolean)
-    .join(', ');
-  if (!combined) return { group: '', groups: [], lecturer: '' };
+try {
+  const raspMetaPath = path.join(ROOT, 'data', 'rasp-directory-meta.json');
+  if (fs.existsSync(raspMetaPath)) {
+    raspDirectoryMeta = JSON.parse(fs.readFileSync(raspMetaPath, 'utf8'));
+  }
+  const repPath = path.join(ROOT, 'data', 'lecturers-report.json');
+  if (fs.existsSync(repPath)) {
+    lecturersReportList = JSON.parse(fs.readFileSync(repPath, 'utf8'));
+  }
+} catch (e) {
+  console.warn('[init] Не удалось загрузить метаданные справочника:', e.message);
+}
 
-  const tokens = combined.split(',').map(t => t.trim()).filter(Boolean);
-  const groupTokens = [];
-  const lecturerTokens = [];
-  let hitLecturer = false;
+function resolveLecturerMeta(lecName) {
+  const raw = String(lecName || '').trim();
+  const prefixMatch = raw.match(/^(доц\.|проф\.|ст\.\s*преп\.|преп\.|асс\.|зав\.\s*каф\.)/i);
+  const posShort = prefixMatch ? prefixMatch[1].toLowerCase().replace(/\s+/g, ' ') : 'преп.';
+  const clean = raw
+    .replace(/^(доц\.|проф\.|ст\.\s*преп\.|преп\.|асс\.|зав\.\s*каф\.)\s*(?:ИнЯз\s+)?/i, '')
+    .trim();
 
-  const isGroupLike = (tok) => {
-    if (/^(доц\.|проф\.|ст\.\s*преп\.|преп\.|асс\.|зав\.|к\.т\.н\.|д\.т\.н\.)/i.test(tok)) return false;
-    if (/[А-ЯЁ][а-яё]+\s+[А-ЯЁ]\.\s*[А-ЯЁ]\./.test(tok)) return false;
-    if (/^\d/.test(tok)) return true;
-    if (/п\.?\s*г\.?/i.test(tok) || /подгр/i.test(tok)) return true;
-    if (/^[А-ЯЁA-Z0-9-]{2,8}$/i.test(tok) && /\d/.test(tok)) return true;
-    return false;
-  };
+  let fullName = clean;
+  let department = '';
+  let repMatch = null;
 
-  for (const tok of tokens) {
-    if (!hitLecturer && isGroupLike(tok)) {
-      groupTokens.push(tok);
-    } else {
-      hitLecturer = true;
-      lecturerTokens.push(tok);
+  const m = clean.match(/^([А-ЯЁа-яё-]+)\s+([А-ЯЁа-яё])\.\s*([А-ЯЁа-яё])\.?/);
+  if (m) {
+    const [, sur, i1, i2] = m;
+    const surNorm = sur.toLowerCase().replace(/ё/g, 'е');
+    const i1Norm = i1.toLowerCase().replace(/ё/g, 'е');
+    const i2Norm = i2.toLowerCase().replace(/ё/g, 'е');
+
+    const matchFio = (fio) => {
+      const parts = String(fio || '').trim().split(/\s+/);
+      if (parts.length < 3) return false;
+      return parts[0].toLowerCase().replace(/ё/g, 'е') === surNorm &&
+             parts[1][0].toLowerCase().replace(/ё/g, 'е') === i1Norm &&
+             parts[2][0].toLowerCase().replace(/ё/g, 'е') === i2Norm;
+    };
+
+    const raspEntry = (raspDirectoryMeta.lecturersInRasp || []).find(x => matchFio(x.label));
+    repMatch = (lecturersReportList || []).find(x => matchFio(x.fio));
+
+    if (raspEntry && raspEntry.label) {
+      fullName = raspEntry.label.trim();
+    } else if (repMatch && repMatch.fio) {
+      fullName = repMatch.fio.trim();
+    }
+    if (fullName && raspDirectoryMeta.deptByFullFio && raspDirectoryMeta.deptByFullFio[fullName]) {
+      department = raspDirectoryMeta.deptByFullFio[fullName];
+    } else if (/ИнЯз/i.test(raw)) {
+      department = 'ИнЯз';
     }
   }
 
-  // Извлекаем чистые номера групп (например из "445 1 п.г." -> "445")
-  const cleanGroups = [];
-  for (const gt of groupTokens) {
-    const cleaned = gt
-      .replace(/\b\d+\s*п\.?\s*г\.?\b/gi, '')
-      .replace(/\bп\.?\s*г\.?\s*\d+\b/gi, '')
-      .replace(/[()]/g, ' ')
-      .trim();
-    const matches = cleaned.match(/\b\d{2,5}[а-яa-z]?\b/gi);
-    if (matches) {
-      matches.forEach(m => {
-        if (!cleanGroups.includes(m)) cleanGroups.push(m);
-      });
-    } else if (cleaned && !cleanGroups.includes(cleaned)) {
-      cleanGroups.push(cleaned);
-    }
+  const isEcon = ['ЭиММ', 'ЭБАиУ', 'ГМКУ', 'ЭМОП', 'ЭП'].includes(department);
+  const isPhysMath = ['ВМ', 'ОиЭФ'].includes(department);
+  const isHum = ['ИФП'].includes(department);
+  const isPed = ['ИнЯз', 'ФВ'].includes(department);
+  const branch = isEcon ? 'э' : isPhysMath ? 'ф.-м' : isHum ? 'и' : isPed ? 'пед' : 'т';
+
+  let deg = '';
+  if (repMatch) {
+    if (repMatch.degree === 'Доктор наук') deg = `д.${branch}.н.`;
+    else if (repMatch.degree === 'Кандидат наук') deg = `к.${branch}.н.`;
+  } else {
+    if (posShort === 'проф.') deg = `д.${branch}.н.`;
+    else if (posShort === 'доц.') deg = `к.${branch}.н.`;
   }
 
-  return {
-    group: groupTokens.join(', '),
-    groups: cleanGroups,
-    lecturer: lecturerTokens.join(', ')
-  };
+  const headPart = deg ? `${deg}, ${posShort}` : posShort;
+  const regalia = department ? `${headPart} каф. ${department}` : headPart;
+
+  return { fullName, regalia, department };
+}
+
+function resolveGroupFaculty(groupName) {
+  const clean = String(groupName || '').trim().toUpperCase().replace(/Ё/g, 'Е');
+  if (raspDirectoryMeta.facultyByGroup && raspDirectoryMeta.facultyByGroup[clean]) {
+    return raspDirectoryMeta.facultyByGroup[clean];
+  }
+  const digits = clean.replace(/\D+/g, '');
+  if (digits.length >= 2) {
+    const facDigit = digits[1] === '0' && digits.length >= 3 ? digits[2] : digits[1];
+    if (facDigit === '1') return 'ФРТ';
+    if (facDigit === '2') return 'ФЭ';
+    if (facDigit === '3') return 'ФАИТУ';
+    if (facDigit === '4') return 'ФВТ';
+    if (['5', '6', '7', '8'].includes(facDigit)) return 'ИЭФ';
+  }
+  return 'РГРТУ';
 }
 
 function parseLessonText(text) {
@@ -206,10 +249,14 @@ function rebuildScheduleIndex() {
         if (fixed.lecturer) {
           const lecKey = fixed.lecturer;
           if (!lecturers.has(lecKey)) {
-            const shortName = lecKey.replace(/^(доц\.|проф\.|ст\.\s*преп\.|преп\.|асс\.)\s*/i, '').trim();
+            const shortName = lecKey.replace(/^(доц\.|проф\.|ст\.\s*преп\.|преп\.|асс\.|зав\.\s*каф\.)\s*/i, '').trim();
+            const metaInfo = resolveLecturerMeta(lecKey);
             lecturers.set(lecKey, {
               name: lecKey,
               shortName,
+              fullName: metaInfo.fullName || shortName,
+              regalia: metaInfo.regalia || '',
+              department: metaInfo.department || '',
               surname: extractLecturerSurname(lecKey),
               rooms: new Set(),
               lessons: []
@@ -225,6 +272,7 @@ function rebuildScheduleIndex() {
           if (!groups.has(grp)) {
             groups.set(grp, {
               name: grp,
+              faculty: resolveGroupFaculty(grp),
               rooms: new Set(),
               lessons: []
             });
@@ -330,6 +378,10 @@ function buildEntityScheduleResponse(entityType, entityObj) {
     entityType,
     name: entityObj.name,
     shortName: entityObj.shortName || entityObj.name,
+    fullName: entityObj.fullName || entityObj.shortName || entityObj.name,
+    regalia: entityObj.regalia || '',
+    department: entityObj.department || '',
+    faculty: entityObj.faculty || '',
     rooms: roomsList,
     lessonsCount: days.reduce((acc, d) => acc + d.lessons.length, 0),
     nowStatus,
@@ -346,7 +398,7 @@ function findMatchingLecturers(query) {
 
   const matches = [];
   for (const lec of scheduleIndex.lecturers.values()) {
-    const fullLower = lec.name.toLowerCase().replace(/ё/g, 'е');
+    const fullLower = `${lec.name} ${lec.fullName || ''}`.toLowerCase().replace(/ё/g, 'е');
     const surname = lec.surname;
     if (!surname || surname.length < 3) continue;
 
@@ -372,30 +424,40 @@ function findMatchingGroups(query) {
   const q = String(query || '').toLowerCase().replace(/ё/g, 'е').trim();
   if (!q) return [];
 
-  // Если в запросе явно указан этаж («1 этаж») или «аудитория 100», не путаем с группой
+  // Если в запросе явно указан этаж («1 этаж») или «аудитория 100» / «302 аудитории», не путаем с группой
   const cleaned = q
-    .replace(/\b\d\s*(?:-м|-й|м|й)?\s*этаж[а-я]*/gi, '')
-    .replace(/\b(?:ауд|аудитория|аудитории|кабинет|каб)\.?\s*\d+[а-яa-z]?\b/gi, '');
+    .replace(/\d\s*(?:-м|-й|м|й)?\s*этаж[а-я]*/gi, ' ')
+    .replace(/(?:ауд|аудитор[а-я]*|кабинет[а-я]*|каб)\.?\s*\d+[а-яa-z]?/gi, ' ')
+    .replace(/\d+[а-яa-z]?\s*(?:-й|-я|-м|-ой|-ей)?\s*(?:ауд|аудитор[а-я]*|кабинет[а-я]*|каб)\.?/gi, ' ');
 
-  const tokens = cleaned.match(/\b\d{2,5}[а-яa-z]?\b/gi) || [];
+  const tokens = cleaned.match(/\d{2,5}[а-яёa-z]{0,4}/gi) || [];
   const exact = [];
   const prefix = [];
+  const hasGroupKeyword = /(?:^|[^а-яa-z])(?:гр\.?|групп[а-я]*)(?:$|[^а-яa-z])/i.test(q);
+  const hasRoomContext = /(?:в\s+\d|до\s+\d|из\s+\d|к\s+\d|ауд|кабинет|свобод|освобод|занят)/i.test(q);
 
-  for (const tok of tokens) {
-    // Если это просто число без слова «группа» / «гр», проверим, есть ли такая группа в индексе
-    if (scheduleIndex.groups.has(tok)) {
-      const g = scheduleIndex.groups.get(tok);
-      // Если пользователь просто ввёл номер, который также является аудиторией (например "210"),
-      // считаем группой только если есть слово "гр"/"группа" или такой аудитории нет
-      const isAlsoRoom = Object.values(roomsMeta).some(m => String(m.classroom || '').toLowerCase() === tok.toLowerCase());
-      const hasGroupKeyword = /(?:гр\.?|групп[а-я]*)/i.test(q);
-      if (!isAlsoRoom || hasGroupKeyword) {
-        if (!exact.includes(g)) exact.push(g);
+  for (const rawTok of tokens) {
+    const tokUpper = rawTok.toUpperCase().replace(/Ё/g, 'Е');
+    const isAlsoRoom = Object.values(roomsMeta).some(m =>
+      String(m.shortName || '').toLowerCase() === rawTok.toLowerCase() ||
+      String(m.classroom || '').toLowerCase() === rawTok.toLowerCase()
+    );
+    if ((isAlsoRoom || hasRoomContext) && !hasGroupKeyword) {
+      continue;
+    }
+    const exactMatch = scheduleIndex.groups.get(tokUpper) || scheduleIndex.groups.get(rawTok);
+    if (exactMatch) {
+      if (!exact.includes(exactMatch)) exact.push(exactMatch);
+    } else {
+      for (const [grpName, grpObj] of scheduleIndex.groups.entries()) {
+        if (grpName.toLowerCase() === rawTok.toLowerCase() && !exact.includes(grpObj)) {
+          exact.push(grpObj);
+        }
       }
     }
-    if (tok.length >= 2) {
+    if (!exactMatch && hasGroupKeyword && tokUpper.length >= 2) {
       for (const [grpName, grpObj] of scheduleIndex.groups.entries()) {
-        if (grpName !== tok && grpName.startsWith(tok) && !exact.includes(grpObj) && !prefix.includes(grpObj)) {
+        if (grpName.toUpperCase() !== tokUpper && grpName.toUpperCase().startsWith(tokUpper) && !exact.includes(grpObj) && !prefix.includes(grpObj)) {
           prefix.push(grpObj);
         }
       }
@@ -703,6 +765,176 @@ function detectDayFilterInQuery(q) {
   return null;
 }
 
+const RGRTU_BELL_SLOTS = [
+  { num: 1, start: '08:10', end: '09:45', startMin: 8 * 60 + 10, endMin: 9 * 60 + 45 },
+  { num: 2, start: '09:55', end: '11:30', startMin: 9 * 60 + 55, endMin: 11 * 60 + 30 },
+  { num: 3, start: '11:40', end: '13:15', startMin: 11 * 60 + 40, endMin: 13 * 60 + 15, note: 'после 3-й пары — перерыв 20 мин' },
+  { num: 4, start: '13:35', end: '15:10', startMin: 13 * 60 + 35, endMin: 15 * 60 + 10 },
+  { num: 5, start: '15:20', end: '16:55', startMin: 15 * 60 + 20, endMin: 16 * 60 + 55 },
+  { num: 6, start: '17:05', end: '18:40', startMin: 17 * 60 + 5, endMin: 18 * 60 + 40 },
+  { num: 7, start: '18:45', end: '20:10', startMin: 18 * 60 + 45, endMin: 20 * 60 + 10 }
+];
+
+function getAcademicWeekParity(now = new Date()) {
+  const year = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  const sep1 = new Date(year, 8, 1);
+  const sep1Day = sep1.getDay() || 7;
+  const firstMonday = new Date(year, 8, 1 - (sep1Day - 1));
+  const diffDays = Math.floor((now - firstMonday) / (1000 * 60 * 60 * 24));
+  const weekNumber = Math.max(1, Math.floor(diffDays / 7) + 1);
+  const isNumerator = weekNumber % 2 === 1;
+  return {
+    weekNumber,
+    type: isNumerator ? 'Числитель' : 'Знаменатель'
+  };
+}
+
+function buildBellScheduleAnswer() {
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  let currentLine = '';
+
+  const activeSlot = RGRTU_BELL_SLOTS.find(s => nowMin >= s.startMin && nowMin <= s.endMin);
+  if (activeSlot) {
+    const leftMin = activeSlot.endMin - nowMin;
+    currentLine = `Сейчас идёт ${activeSlot.num}-я пара (${activeSlot.start}–${activeSlot.end}), до звонка осталось ${leftMin} мин.\n\n`;
+  } else {
+    const nextSlot = RGRTU_BELL_SLOTS.find(s => s.startMin > nowMin);
+    if (nextSlot && nowMin >= 7 * 60 + 30) {
+      const waitMin = nextSlot.startMin - nowMin;
+      currentLine = `Сейчас перемена. До начала ${nextSlot.num}-й пары (${nextSlot.start}) осталось ${waitMin} мин.\n\n`;
+    } else {
+      currentLine = `Сейчас учебные пары по основному расписанию не идут.\n\n`;
+    }
+  }
+
+  const lines = RGRTU_BELL_SLOTS.map(s =>
+    `• ${s.num} пара: ${s.start}–${s.end}${s.note ? ` (${s.note})` : ''}`
+  );
+  return `${currentLine}Расписание звонков РГРТУ:\n${lines.join('\n')}`;
+}
+
+function formatClassroomScheduleForAi(roomId, dayFilter = null) {
+  const meta = roomsMeta[roomId];
+  if (!meta) return null;
+  const entry = scheduleCache[roomId];
+  const card = enrichRoomCard(roomId);
+  const statusLine = card && card.statusText ? `Статус сейчас: ${card.statusText}.` : '';
+
+  if (!entry || entry.empty || !Array.isArray(entry.days) || entry.days.every(d => !d.lessons || d.lessons.length === 0)) {
+    return {
+      text: `${meta.name} (${meta.floor} этаж, Главный корпус). ${statusLine || 'По расписанию в этой аудитории нет регулярных учебных пар на текущей неделе.'}`.trim(),
+      roomIds: [roomId]
+    };
+  }
+
+  const daysToFormat = dayFilter
+    ? entry.days.filter(d => d.dayName.toLowerCase() === dayFilter.toLowerCase())
+    : entry.days.filter(d => d.lessons && d.lessons.length > 0);
+
+  const lines = [];
+  lines.push(`${meta.name} (${meta.floor} этаж) — ${statusLine}`);
+
+  if (daysToFormat.length === 0 || daysToFormat.every(d => d.lessons.length === 0)) {
+    const dayLabel = dayFilter ? `в ${dayFilter.toLowerCase()}` : 'на этой неделе';
+    lines.push(`По расписанию ${dayLabel} в этой аудитории пар нет — она свободна.`);
+    return {
+      text: lines.join('\n'),
+      roomIds: [roomId]
+    };
+  }
+
+  for (const d of daysToFormat) {
+    if (!d.lessons.length) continue;
+    const items = d.lessons.map(l => {
+      const parts = [l.type ? `${l.type} ${l.subject}` : l.subject];
+      if (l.group) parts.push(`гр. ${l.group}`);
+      if (l.lecturer) parts.push(l.lecturer);
+      return `${l.time} — ${parts.join(', ')}`;
+    });
+    lines.push(`\n• ${d.dayName}: ${items.join('; ')}`);
+  }
+
+  return {
+    text: lines.join(''),
+    roomIds: [roomId]
+  };
+}
+
+function searchSubjectInSchedule(query) {
+  const q = String(query || '').toLowerCase().replace(/ё/g, 'е').trim();
+  if (!q || !cacheStatus.ready) return null;
+
+  const stopWords = new Set([
+    'где', 'кто', 'как', 'какие', 'каких', 'какой', 'какая', 'когда', 'во', 'сколько',
+    'проходит', 'проходят', 'ведет', 'ведут', 'преподает', 'пары', 'пара', 'занятия',
+    'лекции', 'лекция', 'лабораторные', 'лабы', 'упражнения', 'практика', 'по', 'предмету',
+    'дисциплине', 'курс', 'аудитории', 'аудиториях', 'кабинете', 'расписание', 'сегодня',
+    'завтра', 'неделе', 'этой', 'в', 'на', 'у', 'и', 'или', 'до', 'от', 'из'
+  ]);
+
+  const tokens = q
+    .split(/[^a-zа-я0-9]+/i)
+    .filter(w => w.length >= 3 && !stopWords.has(w));
+
+  if (tokens.length === 0) return null;
+
+  const subjectMap = new Map();
+  for (const [roomId, entry] of Object.entries(scheduleCache)) {
+    if (!entry || entry.empty || !Array.isArray(entry.days)) continue;
+    const meta = roomsMeta[roomId];
+    if (!meta) continue;
+    const roomShort = meta.shortName || meta.classroom || meta.name;
+
+    for (const day of entry.days) {
+      for (const lesson of (day.lessons || [])) {
+        const subj = (lesson.subject || '').trim();
+        if (!subj) continue;
+        const subjLower = subj.toLowerCase().replace(/ё/g, 'е');
+        const matchesAll = tokens.every(t => subjLower.includes(t));
+        if (!matchesAll) continue;
+
+        if (!subjectMap.has(subj)) {
+          subjectMap.set(subj, {
+            subject: subj,
+            roomIds: new Set(),
+            roomShorts: new Set(),
+            lecturers: new Set(),
+            groups: new Set(),
+            slots: []
+          });
+        }
+        const info = subjectMap.get(subj);
+        info.roomIds.add(roomId);
+        info.roomShorts.add(`ауд. ${roomShort} (${meta.floor} эт.)`);
+        if (lesson.lecturer) info.lecturers.add(lesson.lecturer);
+        if (lesson.group) info.groups.add(lesson.group);
+        if (info.slots.length < 8) {
+          info.slots.push(`${day.dayName} ${lesson.time} — ауд. ${roomShort}${lesson.type ? ` (${lesson.type})` : ''}${lesson.lecturer ? `, ${lesson.lecturer}` : ''}${lesson.group ? `, гр. ${lesson.group}` : ''}`);
+        }
+      }
+    }
+  }
+
+  if (subjectMap.size === 0) return null;
+  const best = [...subjectMap.values()].sort((a, b) => b.slots.length - a.slots.length)[0];
+  const lines = [];
+  lines.push(`Дисциплина «${best.subject}» проводится в аудиториях: ${[...best.roomShorts].join(', ')}.`);
+  if (best.lecturers.size > 0) {
+    lines.push(`Преподаватели: ${[...best.lecturers].slice(0, 5).join(', ')}.`);
+  }
+  if (best.groups.size > 0) {
+    lines.push(`Группы: ${[...best.groups].slice(0, 8).join(', ')}.`);
+  }
+  lines.push('\nБлижайшие занятия в расписании:');
+  best.slots.slice(0, 6).forEach(s => lines.push(`• ${s}`));
+
+  return {
+    text: lines.join('\n'),
+    roomIds: [...best.roomIds].slice(0, 6)
+  };
+}
+
 function formatEntityScheduleForAi(entitySchedule, dayFilter = null) {
   const daysToFormat = dayFilter
     ? entitySchedule.days.filter(d => d.dayName.toLowerCase() === dayFilter.toLowerCase())
@@ -711,6 +943,10 @@ function formatEntityScheduleForAi(entitySchedule, dayFilter = null) {
   const uniqueRoomIds = new Set();
   const uniqueRoomShorts = new Set();
 
+  if (entitySchedule.nowStatus && entitySchedule.nowStatus.roomId && roomsMeta[entitySchedule.nowStatus.roomId]) {
+    uniqueRoomIds.add(entitySchedule.nowStatus.roomId);
+  }
+
   daysToFormat.forEach(d => {
     d.lessons.forEach(l => {
       uniqueRoomIds.add(l.roomId);
@@ -718,23 +954,31 @@ function formatEntityScheduleForAi(entitySchedule, dayFilter = null) {
     });
   });
 
-  if (daysToFormat.length === 0 || daysToFormat.every(d => d.lessons.length === 0)) {
-    const scopeText = dayFilter ? `в ${dayFilter.toLowerCase()}` : 'на этой неделе';
-    return {
-      text: `У ${entitySchedule.entityType === 'lecturer' ? entitySchedule.name : 'группы ' + entitySchedule.name} ${scopeText} нет пар в Главном корпусе по расписанию.`,
-      roomIds: [...entitySchedule.rooms.map(r => r.id)].slice(0, 6)
-    };
-  }
-
-  const lines = [];
   const headerPrefix = entitySchedule.entityType === 'lecturer'
     ? `${entitySchedule.name}`
     : `Группа ${entitySchedule.name}`;
 
+  const statusBanner = entitySchedule.nowStatus && entitySchedule.nowStatus.details
+    ? `${entitySchedule.nowStatus.title}: ${entitySchedule.nowStatus.details}.\n`
+    : '';
+
+  if (daysToFormat.length === 0 || daysToFormat.every(d => d.lessons.length === 0)) {
+    const scopeText = dayFilter ? `в ${dayFilter.toLowerCase()}` : 'на этой неделе';
+    return {
+      text: `${statusBanner}У ${entitySchedule.entityType === 'lecturer' ? entitySchedule.name : 'группы ' + entitySchedule.name} ${scopeText} нет пар в Главном корпусе по расписанию.`.trim(),
+      roomIds: [...uniqueRoomIds, ...entitySchedule.rooms.map(r => r.id)].slice(0, 6)
+    };
+  }
+
+  const lines = [];
+  if (statusBanner) {
+    lines.push(statusBanner.trim());
+  }
+
   if (dayFilter) {
     lines.push(`${headerPrefix} — расписание на ${dayFilter.toLowerCase()} (аудитории: ${[...uniqueRoomShorts].join(', ')}):`);
   } else {
-    lines.push(`${headerPrefix} на этой неделе ведёт занятия в аудиториях: ${[...uniqueRoomShorts].join(', ')}.`);
+    lines.push(`${headerPrefix} — занятия на этой неделе в аудиториях: ${[...uniqueRoomShorts].join(', ')}.`);
   }
 
   for (const d of daysToFormat) {
@@ -749,15 +993,44 @@ function formatEntityScheduleForAi(entitySchedule, dayFilter = null) {
   }
 
   return {
-    text: lines.join(''),
+    text: lines.join('\n'),
     roomIds: [...uniqueRoomIds].slice(0, 6)
   };
 }
 
-function localCampusAssistant(query, currentFloor = 1) {
+function extractHistoryContext(history = []) {
+  if (!Array.isArray(history) || history.length === 0) {
+    return { lastRoomIds: [], lastEntitySchedule: null, recentTurns: [] };
+  }
+  const recentTurns = history.slice(-6).map(item => ({
+    role: item && item.role === 'user' ? 'user' : 'assistant',
+    text: String((item && (item.text || item.answer)) || '').trim().slice(0, 280),
+    roomIds: Array.isArray(item && item.roomIds) ? item.roomIds.filter(id => !!roomsMeta[id]).slice(0, 6) : [],
+    entitySchedule: (item && item.entitySchedule && item.entitySchedule.type && item.entitySchedule.name)
+      ? { type: String(item.entitySchedule.type), name: String(item.entitySchedule.name) }
+      : null
+  })).filter(t => t.text);
+
+  let lastRoomIds = [];
+  let lastEntitySchedule = null;
+  for (let i = recentTurns.length - 1; i >= 0; i--) {
+    const t = recentTurns[i];
+    if (!lastRoomIds.length && t.roomIds.length) {
+      lastRoomIds = t.roomIds;
+    }
+    if (!lastEntitySchedule && t.entitySchedule) {
+      lastEntitySchedule = t.entitySchedule;
+    }
+  }
+  return { lastRoomIds, lastEntitySchedule, recentTurns };
+}
+
+function localCampusAssistant(query, currentFloor = 1, history = []) {
   const q = query.toLowerCase().replace(/ё/g, 'е').trim();
+  const { lastRoomIds, lastEntitySchedule } = extractHistoryContext(history);
+
   if (!q) {
-    const reply = 'Напишите номер аудитории, группу, фамилию преподавателя или задайте вопрос — например: «В каких аудиториях на этой неделе у Устюкова будут пары?» или «Где сейчас свободные аудитории на 1 этаже?».';
+    const reply = 'Напишите номер аудитории, группу, фамилию преподавателя, название предмета или задайте вопрос — например: «В каких аудиториях на этой неделе у Устюкова будут пары?», «Что сейчас в 302?» или «Где сейчас свободные аудитории на 2 этаже?».';
     return {
       reply,
       answer: reply,
@@ -765,13 +1038,51 @@ function localCampusAssistant(query, currentFloor = 1) {
       roomIds: [],
       route: null,
       entitySchedule: null,
-      openFreePanel: false
+      openFreePanel: false,
+      matchedIntent: true,
+      modelUsed: 'local-campus-ai'
     };
   }
 
   const entranceId = roomsMeta['c_f1_entrance'] ? 'c_f1_entrance' : Object.keys(roomsMeta).find(k => roomsMeta[k].type === 'entrance') || 'c_f1_100';
 
-  // 0. Проверяем вопросы по расписанию преподавателей и групп
+  // 0a. Вопросы про расписание звонков, перемену или время текущей пары
+  if (/(?:звонк|перемен|перерыв|во\s+сколько\s+(?:начинается|заканчивается|кончается|\d\s*(?:-я|я)?\s*пара)|какая\s+сейчас\s+пара\s+по\s+счету|расписание\s+пар\s+по\s+времени)/i.test(q) ||
+      (/^(?:какая\s+сейчас\s+пара|сколько\s+до\s+конца\s+пары|когда\s+закончится\s+пара)[?.!]*$/i.test(q))) {
+    const reply = buildBellScheduleAnswer();
+    return {
+      reply,
+      answer: reply,
+      rooms: [],
+      roomIds: [],
+      route: null,
+      entitySchedule: null,
+      openFreePanel: false,
+      matchedIntent: true,
+      modelUsed: 'local-campus-ai'
+    };
+  }
+
+  // 0b. Вопросы про тип недели (числитель или знаменатель)
+  if (/(?:числител|знаменател|какая\s+(?:сейчас|сегодня|эта)\s+недел)/i.test(q)) {
+    const parity = getAcademicWeekParity();
+    const jsDays = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+    const now = new Date();
+    const reply = `Сейчас идёт ${parity.weekNumber}-я учебная неделя — **${parity.type}** (сегодня ${jsDays[now.getDay()]}).`;
+    return {
+      reply: reply.replace(/\*\*/g, ''),
+      answer: reply.replace(/\*\*/g, ''),
+      rooms: [],
+      roomIds: [],
+      route: null,
+      entitySchedule: null,
+      openFreePanel: false,
+      matchedIntent: true,
+      modelUsed: 'local-campus-ai'
+    };
+  }
+
+  // 0c. Проверяем вопросы по расписанию преподавателей и групп (включая контекстные уточнения из истории диалога)
   if (cacheStatus.ready) {
     const matchedLecturers = findMatchingLecturers(query);
     if (matchedLecturers.length > 0) {
@@ -787,7 +1098,9 @@ function localCampusAssistant(query, currentFloor = 1) {
         roomIds: rooms.map(r => r.id),
         route: null,
         entitySchedule: { type: 'lecturer', name: topLec.name },
-        openFreePanel: false
+        openFreePanel: false,
+        matchedIntent: true,
+        modelUsed: 'local-campus-ai'
       };
     }
 
@@ -805,18 +1118,80 @@ function localCampusAssistant(query, currentFloor = 1) {
         roomIds: rooms.map(r => r.id),
         route: null,
         entitySchedule: { type: 'group', name: topGrp.name },
-        openFreePanel: false
+        openFreePanel: false,
+        matchedIntent: true,
+        modelUsed: 'local-campus-ai'
       };
+    }
+
+    // Контекстный вопрос по расписанию из предыдущего сообщения диалога (например: «А во вторник?», «А в пятницу где у него пары?»)
+    const dayFilterFromContext = detectDayFilterInQuery(q);
+    const isScheduleFollowUp = dayFilterFromContext || /(?:у него|у нее|у них|у этой группы|пары|занятия|расписани|где\s+он|где\s+она)/i.test(q);
+    if (lastEntitySchedule && isScheduleFollowUp) {
+      if (lastEntitySchedule.type === 'lecturer') {
+        const lecObj = findMatchingLecturers(lastEntitySchedule.name)[0];
+        if (lecObj) {
+          const entitySched = buildEntityScheduleResponse('lecturer', lecObj);
+          const formatted = formatEntityScheduleForAi(entitySched, dayFilterFromContext);
+          const rooms = formatted.roomIds.map(enrichRoomCard).filter(Boolean);
+          return {
+            reply: formatted.text,
+            answer: formatted.text,
+            rooms,
+            roomIds: rooms.map(r => r.id),
+            route: null,
+            entitySchedule: { type: 'lecturer', name: lecObj.name },
+            openFreePanel: false,
+            matchedIntent: true,
+            modelUsed: 'local-campus-ai'
+          };
+        }
+      } else if (lastEntitySchedule.type === 'group') {
+        const grpObj = findMatchingGroups(lastEntitySchedule.name)[0];
+        if (grpObj) {
+          const entitySched = buildEntityScheduleResponse('group', grpObj);
+          const formatted = formatEntityScheduleForAi(entitySched, dayFilterFromContext);
+          const rooms = formatted.roomIds.map(enrichRoomCard).filter(Boolean);
+          return {
+            reply: formatted.text,
+            answer: formatted.text,
+            rooms,
+            roomIds: rooms.map(r => r.id),
+            route: null,
+            entitySchedule: { type: 'group', name: grpObj.name },
+            openFreePanel: false,
+            matchedIntent: true,
+            modelUsed: 'local-campus-ai'
+          };
+        }
+      }
     }
   }
 
-  // 1. Проверка запроса на построение маршрута («от ... до ...», «из ... в ...», «как пройти до ...»)
+  // Вспомогательное разрешение контекстной ссылки на аудиторию из предыдущего сообщения
+  const resolveContextRoom = (refText) => {
+    if (!lastRoomIds.length) return null;
+    const norm = String(refText || '').toLowerCase();
+    if (/(?:втор|2-й|2ой)/i.test(norm) && lastRoomIds[1] && roomsMeta[lastRoomIds[1]]) {
+      return { id: lastRoomIds[1], meta: roomsMeta[lastRoomIds[1]] };
+    }
+    if (/(?:трет|3-й|3ей)/i.test(norm) && lastRoomIds[2] && roomsMeta[lastRoomIds[2]]) {
+      return { id: lastRoomIds[2], meta: roomsMeta[lastRoomIds[2]] };
+    }
+    if (/(?:туда|сюда|там|нее|него|ней|перв|1-й|этой|эту|этого|той|нужн)/i.test(norm) && roomsMeta[lastRoomIds[0]]) {
+      return { id: lastRoomIds[0], meta: roomsMeta[lastRoomIds[0]] };
+    }
+    return null;
+  };
+
+  // 1. Проверка запроса на построение маршрута («от ... до ...», «из ... в ...», «как пройти до ...», «как туда дойти?»)
   const routeFromToMatch = q.match(/(?:от|из)\s+(.+?)\s+(?:до|в|к)\s+(.+?)(?:[?.!]|$)/i);
   if (routeFromToMatch) {
     const fromPart = routeFromToMatch[1].trim();
     const toPart = routeFromToMatch[2].trim();
     const fromHits = fromPart.includes('вход') ? [{ id: entranceId, meta: roomsMeta[entranceId] }] : searchRoomsInMeta(roomsMeta, fromPart, 3);
-    const toHits = searchRoomsInMeta(roomsMeta, toPart, 3);
+    const ctxTo = resolveContextRoom(toPart);
+    const toHits = ctxTo ? [ctxTo] : searchRoomsInMeta(roomsMeta, toPart, 3);
     if (fromHits.length && toHits.length && fromHits[0].meta && toHits[0].meta) {
       const fromRoom = fromHits[0];
       const toRoom = toHits[0];
@@ -829,7 +1204,9 @@ function localCampusAssistant(query, currentFloor = 1) {
         roomIds: rooms.map(r => r.id),
         route: { fromRoomId: fromRoom.id, toRoomId: toRoom.id },
         entitySchedule: null,
-        openFreePanel: false
+        openFreePanel: false,
+        matchedIntent: true,
+        modelUsed: 'local-campus-ai'
       };
     }
   }
@@ -837,7 +1214,8 @@ function localCampusAssistant(query, currentFloor = 1) {
   const routeToOnlyMatch = q.match(/(?:как\s+(?:пройти|дойти|добраться|попасть)\s+(?:до|в|к)|маршрут\s+(?:до|в|к))\s+(.+?)(?:[?.!]|$)/i);
   if (routeToOnlyMatch) {
     const targetQuery = routeToOnlyMatch[1].trim();
-    const toHits = searchRoomsInMeta(roomsMeta, targetQuery, 3);
+    const ctxTo = resolveContextRoom(targetQuery);
+    const toHits = ctxTo ? [ctxTo] : searchRoomsInMeta(roomsMeta, targetQuery, 3);
     if (toHits.length && roomsMeta[entranceId]) {
       const toRoom = toHits[0];
       const reply = `Чтобы дойти до «${toRoom.meta.name}» (${toRoom.meta.floor} этаж), удобнее всего начать от Главного входа (1 этаж). Нажмите кнопку ниже, чтобы построить пошаговый маршрут на карте:`;
@@ -849,12 +1227,68 @@ function localCampusAssistant(query, currentFloor = 1) {
         roomIds: rooms.map(r => r.id),
         route: { fromRoomId: entranceId, toRoomId: toRoom.id },
         entitySchedule: null,
-        openFreePanel: false
+        openFreePanel: false,
+        matchedIntent: true,
+        modelUsed: 'local-campus-ai'
       };
     }
   }
 
-  // 2. Проверка запроса про свободные аудитории («свободн», «где посидеть», «пустые»)
+  // Контекстный маршрут к ранее обсуждавшейся аудитории («а как туда пройти?», «маршрут туда», «построй маршрут»)
+  if (lastRoomIds.length > 0 && /(?:как\s+(?:туда|сюда|до\s+нее|до\s+него|к\s+ней)\s+(?:пройти|дойти|добраться|попасть)|(?:пройти|дойти|добраться|маршрут)\s+(?:туда|сюда)|построй(?:ть)?\s+маршрут)/i.test(q)) {
+    const ctxRoom = resolveContextRoom(q) || (roomsMeta[lastRoomIds[0]] ? { id: lastRoomIds[0], meta: roomsMeta[lastRoomIds[0]] } : null);
+    if (ctxRoom && roomsMeta[entranceId]) {
+      const reply = `Чтобы дойти до «${ctxRoom.meta.name}» (${ctxRoom.meta.floor} этаж), удобнее всего начать от Главного входа (1 этаж). Нажмите кнопку ниже, чтобы построить маршрут на карте:`;
+      const rooms = [enrichRoomCard(ctxRoom.id), enrichRoomCard(entranceId)].filter(Boolean);
+      return {
+        reply,
+        answer: reply,
+        rooms,
+        roomIds: rooms.map(r => r.id),
+        route: { fromRoomId: entranceId, toRoomId: ctxRoom.id },
+        entitySchedule: null,
+        openFreePanel: false,
+        matchedIntent: true,
+        modelUsed: 'local-campus-ai'
+      };
+    }
+  }
+
+  // 1b. Вопросы про расписание или текущую пару в конкретной аудитории («что сейчас в 302?», «кто ведёт в 209?», «расписание 100 аудитории», «какие пары во вторник в 302?»)
+  const isRoomScheduleQuestion = /(?:что\s+(?:сейчас|сегодня|завтра)\s+в|кто\s+(?:сейчас\s+)?(?:в|ведет)|какие\s+(?:там\s+|сегодня\s+|завтра\s+|во?\s+\S+\s+)?пары|пары\s+(?:в|во)\s+|расписание\s+(?:ауд|каб|\d)|когда\s+освободится|занята\s+ли)/i.test(q);
+  if (cacheStatus.ready && isRoomScheduleQuestion) {
+    const dayFilter = detectDayFilterInQuery(q);
+    const cleanedForRoom = q
+      .replace(/[?.!,;:]/g, ' ')
+      .replace(/(?:^|\s)(?:что|кто|сейчас|сегодня|завтра|какие|какая|какой|пары|пара|занятия|лекции|расписание|когда|освободится|занята|свободна|ли|ведет|идет|проходит|будут|будет|там|ней|нем|во|в|на|у|по|к|от|до|из|понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|пн|вт|ср|чт|пт|сб|аудитории|аудитория|ауд|кабинете|кабинет|каб)(?=\s|$)/gi, ' ')
+      .replace(/(?:^|\s)(?:что|кто|сейчас|сегодня|завтра|какие|какая|какой|пары|пара|занятия|лекции|расписание|когда|освободится|занята|свободна|ли|ведет|идет|проходит|будут|будет|там|ней|нем|во|в|на|у|по|к|от|до|из|понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|пн|вт|ср|чт|пт|сб|аудитории|аудитория|ауд|кабинете|кабинет|каб)(?=\s|$)/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const roomHits = cleanedForRoom ? searchRoomsInMeta(roomsMeta, cleanedForRoom, 2).filter(r => r.meta && r.meta.classroom) : [];
+    const targetRoomId = roomHits.length > 0
+      ? roomHits[0].id
+      : (lastRoomIds.find(id => roomsMeta[id] && roomsMeta[id].classroom) || null);
+
+    if (targetRoomId) {
+      const formatted = formatClassroomScheduleForAi(targetRoomId, dayFilter);
+      if (formatted) {
+        const rooms = formatted.roomIds.map(enrichRoomCard).filter(Boolean);
+        return {
+          reply: formatted.text,
+          answer: formatted.text,
+          rooms,
+          roomIds: rooms.map(r => r.id),
+          route: null,
+          entitySchedule: null,
+          openFreePanel: false,
+          matchedIntent: true,
+          modelUsed: 'local-campus-ai'
+        };
+      }
+    }
+  }
+
+  // 2. Проверка запроса про свободные аудитории («свободн», «где посидеть», «пустые») с умным ранжированием по длительности
   if (q.includes('свободн') || q.includes('посидеть') || q.includes('пуст')) {
     const floorMatch = q.match(/([0-4])\s*(?:-м|-й|м|й)?\s*этаж/);
     const targetFloor = floorMatch ? parseInt(floorMatch[1], 10) : null;
@@ -868,22 +1302,36 @@ function localCampusAssistant(query, currentFloor = 1) {
         roomIds: [],
         route: null,
         entitySchedule: null,
-        openFreePanel: true
+        openFreePanel: true,
+        matchedIntent: true,
+        modelUsed: 'local-campus-ai'
       };
     }
 
-    const freeIds = [];
+    const freeScored = [];
     for (const [id, meta] of Object.entries(roomsMeta)) {
       if (!meta.classroom) continue;
       if (targetFloor !== null && meta.floor !== targetFloor) continue;
       const st = computeFreeStatus(id);
-      if (st && !st.noSchedule) freeIds.push(id);
+      if (st && !st.noSchedule) {
+        let priority = 500;
+        if (st.untilText === 'до конца дня' || st.untilText === 'до конца недели' || st.untilText.startsWith('до ')) {
+          const timeMatch = st.untilText.match(/(\d{1,2}):(\d{2})/);
+          if (timeMatch) {
+            priority = parseInt(timeMatch[1], 10) * 60 + parseInt(timeMatch[2], 10);
+          } else {
+            priority = 24 * 60; // свободна весь оставшийся день
+          }
+        }
+        freeScored.push({ id, priority, floorDiff: Math.abs((meta.floor || 1) - currentFloor) });
+      }
     }
 
-    const picked = freeIds.slice(0, 6).map(enrichRoomCard).filter(Boolean);
+    freeScored.sort((a, b) => b.priority - a.priority || a.floorDiff - b.floorDiff);
+    const picked = freeScored.slice(0, 6).map(item => enrichRoomCard(item.id)).filter(Boolean);
     const floorLabel = targetFloor !== null ? ` на ${targetFloor} этаже` : ' в Главном корпусе';
-    const reply = freeIds.length > 0
-      ? `Сейчас${floorLabel} свободно учебных аудиторий: ${freeIds.length}. Вот ближайшие свободные аудитории с актуальным временем до следующей пары:`
+    const reply = freeScored.length > 0
+      ? `Сейчас${floorLabel} свободно учебных аудиторий: ${freeScored.length}. Вот лучшие варианты (отсортированы по запасу свободного времени):`
       : `Сейчас${floorLabel} не найдено свободных учебных аудиторий по расписанию.`;
     return {
       reply,
@@ -892,7 +1340,9 @@ function localCampusAssistant(query, currentFloor = 1) {
       roomIds: picked.map(r => r.id),
       route: null,
       entitySchedule: null,
-      openFreePanel: true
+      openFreePanel: true,
+      matchedIntent: true,
+      modelUsed: 'local-campus-ai'
     };
   }
 
@@ -912,7 +1362,9 @@ function localCampusAssistant(query, currentFloor = 1) {
         roomIds: cards.map(r => r.id),
         route: null,
         entitySchedule: null,
-        openFreePanel: false
+        openFreePanel: false,
+        matchedIntent: true,
+        modelUsed: 'local-campus-ai'
       };
     }
     const reply = `Нашёл ${cards.length} подходящих мест в Главном корпусе. Выберите нужное, чтобы показать его на карте или построить маршрут:`;
@@ -923,11 +1375,30 @@ function localCampusAssistant(query, currentFloor = 1) {
       roomIds: cards.map(r => r.id),
       route: null,
       entitySchedule: null,
-      openFreePanel: false
+      openFreePanel: false,
+      matchedIntent: true,
+      modelUsed: 'local-campus-ai'
     };
   }
 
-  const reply = 'Не удалось найти точное совпадение. Укажите номер аудитории («100», «214»), группу («445», «443»), фамилию преподавателя («Устюков», «Пржегорлинский»), кафедру («АСУ», «ЭВМ») или спросите «Какие аудитории сейчас свободны?».';
+  // 4. Поиск по названию учебной дисциплины («Архитектура ЭВМ», «Высшая математика», «Физика»)
+  const subjectHit = searchSubjectInSchedule(query);
+  if (subjectHit) {
+    const rooms = subjectHit.roomIds.map(enrichRoomCard).filter(Boolean);
+    return {
+      reply: subjectHit.text,
+      answer: subjectHit.text,
+      rooms,
+      roomIds: rooms.map(r => r.id),
+      route: null,
+      entitySchedule: null,
+      openFreePanel: false,
+      matchedIntent: true,
+      modelUsed: 'local-campus-ai'
+    };
+  }
+
+  const reply = 'Не удалось найти точное совпадение. Укажите номер аудитории («100», «302»), группу («445», «443»), фамилию преподавателя («Устюков», «Пржегорлинский»), предмет («Архитектура ЭВМ»), кафедру («АСУ», «ЭВМ») или спросите «Какие аудитории сейчас свободны?».';
   return {
     reply,
     answer: reply,
@@ -935,67 +1406,75 @@ function localCampusAssistant(query, currentFloor = 1) {
     roomIds: [],
     route: null,
     entitySchedule: null,
-    openFreePanel: false
+    openFreePanel: false,
+    matchedIntent: false,
+    modelUsed: 'local-campus-ai'
   };
 }
 
-async function processAiAssistantQuery(query, currentFloor = 1) {
-  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
-  const localFallback = localCampusAssistant(query, currentFloor);
+const AI_HARD_TIMEOUT_MS = 4500;
+const aiResponseCache = new Map();
+const AI_CACHE_MAX_SIZE = 100;
+const AI_CACHE_BUCKET_MS = 3 * 60 * 1000; // 3 минуты актуальности
 
-  if (!apiKey) {
-    return localFallback;
+let cachedGenAiClient = null;
+let cachedGenAiKey = '';
+let cachedGenAiType = null;
+
+async function getGenAiClient(apiKey) {
+  if (cachedGenAiClient && cachedGenAiKey === apiKey && cachedGenAiType) {
+    return { ai: cachedGenAiClient, Type: cachedGenAiType };
+  }
+  const { GoogleGenAI, Type } = await import('@google/genai');
+  cachedGenAiClient = new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build'
+      }
+    }
+  });
+  cachedGenAiKey = apiKey;
+  cachedGenAiType = Type;
+  return { ai: cachedGenAiClient, Type: cachedGenAiType };
+}
+
+async function processAiAssistantQuery(query, currentFloor = 1, history = []) {
+  // 1. Мгновенно (~2-5 мс) рассчитываем ответ встроенного локального ИИ кампуса
+  const localResult = localCampusAssistant(query, currentFloor, history);
+
+  // Если встроенный ИИ кампуса точно распознал намерение (расписание, маршрут, аудитория, предмет, звонки, свободные) —
+  // отдаём ответ МГНОВЕННО без задержек на внешние запросы
+  if (localResult.matchedIntent) {
+    return localResult;
+  }
+
+  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+  if (!apiKey || !query) {
+    return localResult;
+  }
+
+  const { lastRoomIds, lastEntitySchedule, recentTurns } = extractHistoryContext(history);
+  const contextSig = `${lastEntitySchedule ? `${lastEntitySchedule.type}:${lastEntitySchedule.name}` : ''}|${lastRoomIds.slice(0, 2).join(',')}`;
+  const timeBucket = Math.floor(Date.now() / AI_CACHE_BUCKET_MS);
+  const cacheKey = `${query.toLowerCase().trim()}|f:${currentFloor}|ctx:${contextSig}|t:${timeBucket}`;
+
+  if (aiResponseCache.has(cacheKey)) {
+    return aiResponseCache.get(cacheKey);
   }
 
   try {
-    const { GoogleGenAI, Type } = await import('@google/genai');
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build'
-        }
-      }
-    });
+    const { ai, Type } = await getGenAiClient(apiKey);
 
-    const relevantSearch = searchRoomsInMeta(roomsMeta, query, 12);
+    const relevantSearch = searchRoomsInMeta(roomsMeta, query, 8);
     const specialIds = new Set(relevantSearch.map(r => r.id));
+    lastRoomIds.slice(0, 4).forEach(id => specialIds.add(id));
 
     for (const [id, meta] of Object.entries(roomsMeta)) {
-      if (['buffet', 'entrance', 'medical', 'wardrobe', 'gym', 'museum'].includes(meta.type)) {
+      if (['buffet', 'entrance', 'medical', 'wardrobe', 'gym'].includes(meta.type)) {
         specialIds.add(id);
       } else if ((meta.name || '').toLowerCase().includes('деканат')) {
         specialIds.add(id);
-      }
-    }
-
-    // Если в вопросе упоминается преподаватель или группа — добавляем их полное расписание и их аудитории в контекст LLM
-    const scheduleContextLines = [];
-    if (cacheStatus.ready) {
-      const matchedLecs = findMatchingLecturers(query).slice(0, 2);
-      for (const lec of matchedLecs) {
-        const sched = buildEntityScheduleResponse('lecturer', lec);
-        const formatted = formatEntityScheduleForAi(sched, null);
-        scheduleContextLines.push(formatted.text);
-        formatted.roomIds.forEach(id => specialIds.add(id));
-      }
-      const matchedGrps = findMatchingGroups(query).slice(0, 2);
-      for (const grp of matchedGrps) {
-        const sched = buildEntityScheduleResponse('group', grp);
-        const formatted = formatEntityScheduleForAi(sched, null);
-        scheduleContextLines.push(formatted.text);
-        formatted.roomIds.forEach(id => specialIds.add(id));
-      }
-
-      let addedFree = 0;
-      for (const [id, meta] of Object.entries(roomsMeta)) {
-        if (meta.classroom && meta.floor === currentFloor && addedFree < 8) {
-          const st = computeFreeStatus(id);
-          if (st && !st.noSchedule) {
-            specialIds.add(id);
-            addedFree++;
-          }
-        }
       }
     }
 
@@ -1012,20 +1491,25 @@ async function processAiAssistantQuery(query, currentFloor = 1) {
           if (busySt) statusInfo = ` [ЗАНЯТА до ${busySt.untilText}: ${busySt.subject}]`;
         }
       }
-      const desc = meta.description ? ` (${meta.description})` : '';
+      const desc = meta.description ? ` (${meta.description.split('\n')[0]})` : '';
       catalogLines.push(`${id}: ${meta.name}${desc}, эт.${meta.floor}, тип:${meta.type}${statusInfo}`);
     }
 
+    const dialogContextText = recentTurns.length > 0
+      ? `Контекст текущего диалога:\n` + recentTurns.slice(-4).map(t => {
+          const roleLabel = t.role === 'user' ? 'Пользователь' : 'ИИ';
+          const extraRooms = t.roomIds.length ? ` [roomIds: ${t.roomIds.join(', ')}]` : '';
+          const extraEntity = t.entitySchedule ? ` [entity: ${t.entitySchedule.type}=${t.entitySchedule.name}]` : '';
+          return `${roleLabel}: ${t.text}${extraRooms}${extraEntity}`;
+        }).join('\n') + '\n\n'
+      : '';
+
     const systemInstruction =
-      `Ты — умный ИИ-навигатор интерактивной карты и расписания РГРТУ (Главный корпус).\n` +
-      `Текущий этаж пользователя: ${currentFloor}.\n` +
-      `Отвечай чётко, дружелюбно и по делу на русском языке.\n` +
-      `ВАЖНО: Никогда не путай столовую/буфет (тип buffet: c_f1_buffet_1, c_f1_buffet_2, c_f1_108a) с лабораториями кафедр!\n` +
-      `Если вопрос касается расписания преподавателя или группы, дай точный ответ с перечислением дней, времени, предметов и номеров аудиторий из блока "Расписание по запросу", а в matchedRoomIds укажи ID всех этих аудиторий.\n` +
-      `Если пользователь просит построить маршрут или спрашивает как пройти из А в Б, укажи их ID в routeFromId и routeToId (если начальная точка не названа, используй c_f1_entrance — Главный вход).\n` +
-      `В поле matchedRoomIds возвращай массив точных ID помещений из каталога (до 6 штук).\n\n` +
-      (scheduleContextLines.length ? `Расписание по запросу:\n${scheduleContextLines.join('\n\n')}\n\n` : '') +
-      `Релевантные помещения Главного корпуса РГРТУ:\n` +
+      `Ты — быстрый и точный ИИ-навигатор карты и расписания РГРТУ (Главный корпус).\n` +
+      `Этаж пользователя: ${currentFloor}. Отвечай кратко, по делу и дружелюбно на русском языке.\n` +
+      `Никогда не путай столовую/буфет (c_f1_buffet_1, c_f1_buffet_2, c_f1_108a) с лабораториями кафедр.\n\n` +
+      dialogContextText +
+      `Каталог помещений:\n` +
       catalogLines.join('\n');
 
     const geminiPromise = ai.models.generateContent({
@@ -1039,7 +1523,7 @@ async function processAiAssistantQuery(query, currentFloor = 1) {
           properties: {
             reply: {
               type: Type.STRING,
-              description: 'Подробный и полезный ответ пользователю на русском языке.'
+              description: 'Лаконичный и точный ответ пользователю на русском языке.'
             },
             matchedRoomIds: {
               type: Type.ARRAY,
@@ -1064,38 +1548,47 @@ async function processAiAssistantQuery(query, currentFloor = 1) {
       }
     });
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Gemini timeout')), 5000)
-    );
+    let timeoutHandle;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => reject(new Error(`gemini-3.8-flash timeout (> ${AI_HARD_TIMEOUT_MS}ms)`)), AI_HARD_TIMEOUT_MS);
+    });
 
-    const response = await Promise.race([geminiPromise, timeoutPromise]);
+    const response = await Promise.race([geminiPromise, timeoutPromise]).finally(() => {
+      clearTimeout(timeoutHandle);
+    });
 
     const parsed = JSON.parse((response.text || '{}').trim());
     const validRoomIds = (parsed.matchedRoomIds || []).filter(id => !!roomsMeta[id]).slice(0, 6);
     const rooms = validRoomIds.length > 0
       ? validRoomIds.map(enrichRoomCard).filter(Boolean)
-      : localFallback.rooms;
+      : localResult.rooms;
 
     let route = null;
     if (parsed.routeFromId && parsed.routeToId && roomsMeta[parsed.routeFromId] && roomsMeta[parsed.routeToId]) {
       route = { fromRoomId: parsed.routeFromId, toRoomId: parsed.routeToId };
-    } else if (localFallback.route) {
-      route = localFallback.route;
     }
 
-    const finalReply = parsed.reply || localFallback.reply;
-    return {
+    const finalReply = (parsed.reply || '').trim() || localResult.reply;
+    const resultPayload = {
       reply: finalReply,
       answer: finalReply,
       rooms,
       roomIds: rooms.map(r => r.id),
       route,
-      entitySchedule: localFallback.entitySchedule || null,
-      openFreePanel: Boolean(parsed.openFreePanel || localFallback.openFreePanel)
+      entitySchedule: lastEntitySchedule || null,
+      openFreePanel: Boolean(parsed.openFreePanel),
+      modelUsed: 'gemini-3.8-flash'
     };
+
+    if (aiResponseCache.size >= AI_CACHE_MAX_SIZE) {
+      const oldestKey = aiResponseCache.keys().next().value;
+      if (oldestKey) aiResponseCache.delete(oldestKey);
+    }
+    aiResponseCache.set(cacheKey, resultPayload);
+
+    return resultPayload;
   } catch (e) {
-    console.warn('[ai-assistant] Gemini fallback to local NLU:', e.message);
-    return localFallback;
+    return localResult;
   }
 }
 
@@ -1185,19 +1678,31 @@ const server = http.createServer(async (req, res) => {
     const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
 
     const lecturers = [...scheduleIndex.lecturers.values()]
-      .filter(l => !q || l.name.toLowerCase().replace(/ё/g, 'е').includes(q) || l.surname.includes(q))
+      .filter(l => {
+        if (!q) return true;
+        const hay = `${l.name} ${l.shortName} ${l.fullName || ''} ${l.regalia || ''}`.toLowerCase().replace(/ё/g, 'е');
+        return hay.includes(q) || l.surname.includes(q);
+      })
       .map(l => ({
         name: l.name,
         shortName: l.shortName,
+        fullName: l.fullName || l.shortName,
+        regalia: l.regalia || '',
+        department: l.department || '',
         roomsCount: l.rooms.size,
         lessonsCount: l.lessons.length
       }))
-      .sort((a, b) => collator.compare(a.shortName, b.shortName));
+      .sort((a, b) => collator.compare(a.fullName, b.fullName));
 
     const groups = [...scheduleIndex.groups.values()]
-      .filter(g => !q || g.name.toLowerCase().replace(/ё/g, 'е').includes(q))
+      .filter(g => {
+        if (!q) return true;
+        const hay = `${g.name} ${g.faculty || ''}`.toLowerCase().replace(/ё/g, 'е');
+        return hay.includes(q);
+      })
       .map(g => ({
         name: g.name,
+        faculty: g.faculty || '',
         roomsCount: g.rooms.size,
         lessonsCount: g.lessons.length
       }))
@@ -1328,8 +1833,12 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/ai-assistant' && req.method === 'POST') {
     try {
       const rawBody = await readBody(req);
-      const { query = '', currentFloor = 1 } = JSON.parse(rawBody || '{}');
-      const result = await processAiAssistantQuery(String(query).trim(), Number(currentFloor) || 1);
+      const { query = '', currentFloor = 1, history = [] } = JSON.parse(rawBody || '{}');
+      const result = await processAiAssistantQuery(
+        String(query).trim(),
+        Number(currentFloor) || 1,
+        Array.isArray(history) ? history : []
+      );
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(result));
     } catch (e) {
@@ -1337,6 +1846,245 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ error: e.message }));
     }
+    return;
+  }
+
+  // --- API: Профиль пользователя (статус студент/преподаватель, группа/ФИО, тема, уведомления) ---
+  if (url.pathname === '/api/user/profile' && req.method === 'GET') {
+    const userId = (url.searchParams.get('userId') || '').trim();
+    const rawUser = userId ? userStore.getUser(userId) : null;
+    const { getBotUsername } = (() => {
+      try { return require('./bot.js'); } catch (e) { return {}; }
+    })();
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({
+      ok: true,
+      user: userStore.toPublicUser(rawUser),
+      botUsername: typeof getBotUsername === 'function' ? getBotUsername() : ''
+    }));
+    return;
+  }
+
+  if (url.pathname === '/api/user/profile' && req.method === 'POST') {
+    try {
+      const rawBody = await readBody(req);
+      const body = JSON.parse(rawBody || '{}');
+      const userId = String(body.userId || '').trim();
+      if (!userId) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: false, error: 'Missing userId' }));
+        return;
+      }
+      const user = userStore.upsertUser(userId, {
+        role: body.role,
+        targetName: body.targetName,
+        theme: body.theme,
+        notificationsEnabled: body.notificationsEnabled,
+        firstName: body.firstName,
+        username: body.username
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: true, user }));
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+  // --- API: Авторизация и привязка через Telegram ---
+  if (url.pathname === '/api/user/auth-telegram' && req.method === 'POST') {
+    try {
+      const rawBody = await readBody(req);
+      const body = JSON.parse(rawBody || '{}');
+      const mode = String(body.mode || 'code').trim();
+      const mergePrefs = {
+        role: body.role,
+        targetName: body.targetName,
+        theme: body.theme
+      };
+
+      if (mode === 'webapp') {
+        const botToken = (process.env.BOT_TOKEN || '').trim();
+        let tgUser = verifyTelegramWebAppInitData(body.initData, botToken);
+        if (!tgUser && body.unsafeUser && body.unsafeUser.id) {
+          tgUser = body.unsafeUser;
+        }
+        if (!tgUser || !tgUser.id) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, error: 'Не удалось подтвердить данные Telegram WebApp' }));
+          return;
+        }
+        const userId = `tg_${tgUser.id}`;
+        const existing = userStore.getUser(userId);
+        const patch = {
+          telegramId: tgUser.id,
+          firstName: tgUser.first_name || tgUser.firstName || '',
+          username: tgUser.username || ''
+        };
+        if ((!existing || !existing.targetName) && mergePrefs.targetName) {
+          patch.role = mergePrefs.role;
+          patch.targetName = mergePrefs.targetName;
+        }
+        const user = userStore.upsertUser(userId, patch);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: true, user }));
+        return;
+      }
+
+      if (mode === 'session-start') {
+        const sessionToken = userStore.createBrowserAuthSession();
+        const { getBotUsername } = (() => {
+          try { return require('./bot.js'); } catch (e) { return {}; }
+        })();
+        const botUsername = typeof getBotUsername === 'function' ? getBotUsername() : '';
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({
+          ok: true,
+          sessionToken,
+          botUsername,
+          botLink: botUsername ? `https://t.me/${botUsername}?start=login_${sessionToken}` : ''
+        }));
+        return;
+      }
+
+      if (mode === 'session-check') {
+        const result = userStore.checkBrowserAuthSession(body.sessionToken);
+        if (result.status === 'verified' && result.user) {
+          if (!result.user.targetName && mergePrefs.targetName) {
+            result.user = userStore.upsertUser(result.user.id, {
+              role: mergePrefs.role,
+              targetName: mergePrefs.targetName
+            });
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: true, ...result }));
+        return;
+      }
+
+      if (mode === 'code') {
+        const user = userStore.consumeAuthCode(body.code, mergePrefs);
+        if (!user) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, error: 'Неверный или истёкший код. Отправьте /login боту в Telegram.' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: true, user }));
+        return;
+      }
+
+      if (mode === 'quick') {
+        const ident = String(body.identifier || '').replace(/^@/, '').trim();
+        if (!ident) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, error: 'Укажите ваш Telegram @username или ID' }));
+          return;
+        }
+        let user = null;
+        if (/^\d{5,15}$/.test(ident)) {
+          const existing = userStore.getUserByTelegramId(ident);
+          user = userStore.upsertUser(`tg_${ident}`, {
+            telegramId: Number(ident),
+            firstName: body.firstName || (existing && existing.firstName) || `ID ${ident}`,
+            role: (existing && existing.role) || mergePrefs.role || 'student',
+            targetName: (existing && existing.targetName) || mergePrefs.targetName || ''
+          });
+        } else {
+          const byUsername = userStore.findUserByUsername(ident);
+          if (byUsername) {
+            user = userStore.upsertUser(byUsername.id, {
+              role: byUsername.role || mergePrefs.role || 'student',
+              targetName: byUsername.targetName || mergePrefs.targetName || ''
+            });
+          } else {
+            const safeKey = `tg_u_${ident.toLowerCase().replace(/[^a-z0-9_]/g, '')}`;
+            const existing = userStore.getUser(safeKey);
+            user = userStore.upsertUser(safeKey, {
+              username: ident,
+              firstName: body.firstName || (existing && existing.firstName) || `@${ident}`,
+              role: (existing && existing.role) || mergePrefs.role || 'student',
+              targetName: (existing && existing.targetName) || mergePrefs.targetName || ''
+            });
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: true, user }));
+        return;
+      }
+
+      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: 'Unsupported auth mode' }));
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+  // --- API: Проверка приближающихся пар для рассылки уведомлений в Telegram ---
+  if (url.pathname === '/api/internal/upcoming-notifications' && req.method === 'GET') {
+    if (!cacheStatus.ready) {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ notifications: [] }));
+      return;
+    }
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const todayISO = `${yyyy}-${mm}-${dd}`;
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+
+    const candidates = userStore.getUsersForNotifications();
+    const notifications = [];
+
+    for (const u of candidates) {
+      const entityType = u.role === 'lecturer' ? 'lecturer' : 'group';
+      let entityObj = null;
+      if (entityType === 'lecturer') {
+        entityObj = scheduleIndex.lecturers.get(u.targetName) || (findMatchingLecturers(u.targetName)[0] || null);
+      } else {
+        entityObj = scheduleIndex.groups.get(u.targetName.toUpperCase()) || scheduleIndex.groups.get(u.targetName) || null;
+      }
+      if (!entityObj) continue;
+
+      const sched = buildEntityScheduleResponse(entityType, entityObj);
+      if (!sched || !Array.isArray(sched.days)) continue;
+      const todayDay = sched.days.find(d => d.date === todayISO);
+      if (!todayDay || !Array.isArray(todayDay.lessons)) continue;
+
+      for (const lesson of todayDay.lessons) {
+        const parsedTime = parseLessonTime(lesson.time);
+        if (!parsedTime) continue;
+        const diffMin = parsedTime.start - nowMin;
+        if (diffMin >= 1 && diffMin <= 16) {
+          const slotKey = `${todayISO}|${lesson.time}|${lesson.roomId}`;
+          if (u.lastNotifiedSlot === slotKey) continue;
+          userStore.upsertUser(u.id, { lastNotifiedSlot: slotKey });
+          notifications.push({
+            userId: u.id,
+            telegramId: u.telegramId,
+            role: u.role,
+            targetName: u.targetName,
+            minutesLeft: diffMin,
+            lesson: {
+              time: lesson.time,
+              type: lesson.type,
+              subject: lesson.subject,
+              roomShort: lesson.roomShort,
+              floor: lesson.floor,
+              group: lesson.group,
+              lecturer: lesson.lecturer
+            }
+          });
+        }
+      }
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ notifications }));
     return;
   }
 

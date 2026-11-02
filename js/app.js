@@ -20,6 +20,7 @@ const BREAKS = {
   '13:35': '14:20–14:25',
   '15:20': '16:05–16:10',
   '17:05': '17:50–17:55',
+  '18:45': '19:30–19:35',
   '18:50': '19:35–19:40',
   '20:25': '21:10–21:15'
 };
@@ -97,12 +98,14 @@ const QUICK_TAGS = [
 ];
 
 const AI_QUICK_PROMPTS = [
+  '🟢 Какие аудитории сейчас свободны?',
   'В каких аудиториях на этой неделе у Устюкова будут пары?',
-  'Какие аудитории сейчас свободны на 1 этаже?',
+  'Какие аудитории сейчас свободны на 2 этаже?',
+  'Что сейчас в 302 аудитории?',
   'Расписание группы 445 на этой неделе',
+  'Какая сейчас пара и расписание звонков?',
   'Где поесть в Главном корпусе?',
-  'Как пройти от входа до 100 аудитории?',
-  'Где находится деканат ФВТ?'
+  'Как пройти от входа до 100 аудитории?'
 ];
 
 // ================ TELEGRAM ================
@@ -207,6 +210,7 @@ let routePickSide = 'from';
 // ИИ-навигатор
 let aiMessages = [];
 let aiLoading = false;
+let aiFreeFloorFilter = 'all'; // 'all' | 0 | 1 | 2 | 3 | 4
 
 // Справочник расписания (Группы и Преподаватели)
 let scheduleDirectory = { ready: false, groups: [], lecturers: [] };
@@ -214,11 +218,26 @@ let directoryActiveTab = 'groups'; // 'groups' | 'lecturers'
 let directoryFilterQuery = '';
 let currentEntitySchedule = null; // { type: 'group'|'lecturer', name: string }
 let scheduleViewOpen = false;
+let scheduleSidebarCollapsed = false;
 let scheduleMobileStep = 'list'; // 'list' | 'detail'
 let scheduleDayFilter = 'all';   // 'all' | date string
 let currentEntityData = null;
 let entityLoading = false;
 let entityError = null;
+
+// Пользовательский профиль и Telegram-авторизация
+let currentUserId = localStorage.getItem('rsreu_user_id') || '';
+let userProfile = {
+  role: localStorage.getItem('rsreu_user_role') || 'student',
+  targetName: localStorage.getItem('rsreu_user_target') || '',
+  notificationsEnabled: true,
+  telegramLinked: false,
+  firstName: '',
+  username: '',
+  theme: localStorage.getItem('theme') || 'system'
+};
+let botUsername = 'rsreu_map_bot';
+let authPollTimer = null;
 
 // Кэш для SVG документов при кросс-этажных запросах
 const svgCache = {};
@@ -234,6 +253,7 @@ const map = L.map('map', {
   wheelPxPerZoomLevel: 200,
   wheelDebounceTime: 20,
   zoomAnimation: true,
+  zoomControl: false,
   attributionControl: false
 });
 
@@ -243,31 +263,91 @@ map.getPane('routePane').style.zIndex = 450;
 routeLayer = L.layerGroup().addTo(map);
 routePickLayer = L.layerGroup().addTo(map);
 
+// На мобильных при перетаскивании карты в режиме маршрута панель автоматически прижимается вниз
+map.on('dragstart', () => {
+  if (window.innerWidth <= 768 && panelMode === 'route') {
+    const panel = document.getElementById('panel');
+    if (panel && panel.classList.contains('open')) {
+      panel.classList.remove('mobile-expanded');
+      panel.classList.add('mobile-minimized');
+    }
+  }
+});
+
 // ================ СИНХРОНИЗАЦИЯ КНОПОК РЕЖИМОВ ================
 
+function closeUserDropdown() {
+  const dropdown = document.getElementById('user-dropdown');
+  const btn = document.getElementById('user-menu-btn');
+  const suggestions = document.getElementById('user-target-suggestions');
+  if (dropdown) dropdown.classList.add('hidden');
+  if (btn) {
+    btn.setAttribute('aria-expanded', 'false');
+    btn.classList.remove('open-active');
+  }
+  if (suggestions) suggestions.classList.add('hidden');
+  document.body.classList.remove('mobile-profile-open');
+}
+
+function closeSearchDropdown() {
+  const wrap = document.getElementById('search-wrap');
+  if (wrap) wrap.classList.remove('open');
+  document.body.classList.remove('mobile-search-open');
+}
+
+function isMobileAiBarMode() {
+  const panel = document.getElementById('panel');
+  return Boolean(
+    window.innerWidth <= 768 &&
+    panelMode === 'ai' &&
+    panel &&
+    panel.classList.contains('open')
+  );
+}
+
 function syncModeUI() {
-  const freeTopBtn = document.getElementById('free-top-btn');
-  const freeMapBtn = document.querySelector('.free-toggle');
-  const schedDirBtn = document.querySelector('.schedule-dir-toggle');
-  const routeTopBtn = document.getElementById('route-toggle');
-  const routeMapBtn = document.querySelector('.map-route-btn');
-  const aiTopBtn = document.getElementById('ai-toggle');
   const omniAiBtn = document.getElementById('omni-ai-btn');
-
-  if (freeTopBtn) freeTopBtn.classList.toggle('active-free', freeModeOn);
-  if (freeMapBtn) freeMapBtn.classList.toggle('active', freeModeOn);
-
-  const isSchedDir = scheduleViewOpen || panelMode === 'directory' || panelMode === 'entity';
-  if (schedDirBtn) schedDirBtn.classList.toggle('active', isSchedDir);
+  const omniRouteBtn = document.getElementById('omni-route-btn');
+  const omniAiSendBtn = document.getElementById('omni-ai-send');
+  const searchInput = document.getElementById('search-input');
+  const clearBtn = document.getElementById('search-clear');
+  const cornerTab = document.getElementById('schedule-corner-tab');
+  const cornerTabLabel = document.getElementById('schedule-corner-label');
+  const panel = document.getElementById('panel');
 
   const isRoute = panelMode === 'route';
-  if (routeTopBtn) routeTopBtn.classList.toggle('active', isRoute);
-  if (routeMapBtn) routeMapBtn.classList.toggle('active', isRoute);
+  if (omniRouteBtn) omniRouteBtn.classList.toggle('active', isRoute);
 
-  // Кнопка «ИИ» остаётся синей в режиме ИИ даже когда правая панель свёрнута язычком
+  // Кнопка «ИИ'шка» остаётся синей в режиме ИИ даже когда правая панель свёрнута язычком
   const isAiActive = panelMode === 'ai';
-  if (aiTopBtn) aiTopBtn.classList.toggle('active-ai', isAiActive);
   if (omniAiBtn) omniAiBtn.classList.toggle('active', isAiActive);
+
+  if (cornerTab) {
+    cornerTab.classList.toggle('active', scheduleViewOpen);
+  }
+  if (cornerTabLabel) {
+    cornerTabLabel.textContent = scheduleViewOpen ? 'На карту' : 'Расписание';
+  }
+
+  const isPanelOpen = Boolean(panel && panel.classList.contains('open'));
+  const isAiPanelOpen = Boolean(isAiActive && isPanelOpen);
+  document.body.classList.toggle('panel-is-open', isPanelOpen);
+  document.body.classList.toggle('ai-mode-active', isAiPanelOpen);
+  document.body.classList.toggle('schedule-is-open', scheduleViewOpen);
+
+  const mobileAi = window.innerWidth <= 768 && isAiPanelOpen;
+  if (omniAiSendBtn) {
+    omniAiSendBtn.classList.toggle('hidden', !mobileAi);
+    omniAiSendBtn.disabled = Boolean(aiLoading);
+  }
+  if (searchInput) {
+    searchInput.placeholder = mobileAi
+      ? "Сообщение ИИ'шке..."
+      : 'Поиск и выбор мест';
+    const hasText = Boolean(searchInput.value.length > 0);
+    if (clearBtn) clearBtn.classList.toggle('hidden', !hasText);
+    if (omniRouteBtn && !mobileAi) omniRouteBtn.classList.toggle('hidden', hasText);
+  }
 }
 
 // ================ ПАНЕЛЬ ================
@@ -284,20 +364,48 @@ function smoothInvalidateSize(duration = 260) {
   })();
 }
 
+let aiClosingTimer = null;
+
+function triggerAiModeClosingTransition() {
+  if (aiClosingTimer) {
+    clearTimeout(aiClosingTimer);
+    aiClosingTimer = null;
+  }
+  document.body.classList.add('ai-mode-closing');
+  aiClosingTimer = setTimeout(() => {
+    document.body.classList.remove('ai-mode-closing');
+    aiClosingTimer = null;
+  }, 280);
+}
+
 function openPanel() {
-  document.getElementById('panel').classList.add('open');
+  if (aiClosingTimer) {
+    clearTimeout(aiClosingTimer);
+    aiClosingTimer = null;
+  }
+  document.body.classList.remove('ai-mode-closing');
+  closeUserDropdown();
+  closeSearchDropdown();
+  const panel = document.getElementById('panel');
+  panel.classList.add('open');
+  panel.classList.remove('mobile-minimized');
+  document.body.classList.add('panel-is-open');
   smoothInvalidateSize(260);
   setTimeout(updatePanelHandle, 260);
   syncModeUI();
 }
 
 function closePanel() {
-  document.getElementById('panel').classList.remove('open');
+  if (panelMode === 'ai' || document.body.classList.contains('ai-mode-active')) {
+    triggerAiModeClosingTransition();
+  }
+  const panel = document.getElementById('panel');
+  panel.classList.remove('open', 'mobile-compact', 'mobile-expanded', 'mobile-minimized');
+  document.body.classList.remove('panel-is-open');
   clearSelectedRoom();
   updateURL(null, { push: false });
   panelMode = null;
   currentRoomPanelId = null;
-  currentEntitySchedule = null;
   smoothInvalidateSize(260);
   updatePanelHandle();
   syncModeUI();
@@ -307,34 +415,23 @@ function closeRoomPanel() {
   clearSelectedRoom();
   updateURL(null, { push: false });
   currentRoomPanelId = null;
-
-  if (freeModeOn) {
-    panelMode = 'free';
-    renderFreePanel();
-    scheduleLabelRefresh();
-    syncModeUI();
-  } else {
-    closePanel();
-  }
+  closePanel();
 }
 
 function collapseFreePanel() {
-  if (panelMode === 'free') freePanelCollapsed = true;
-  document.getElementById('panel').classList.remove('open');
+  if (panelMode === 'ai' || document.body.classList.contains('ai-mode-active')) {
+    triggerAiModeClosingTransition();
+  }
+  const panel = document.getElementById('panel');
+  panel.classList.remove('open');
+  document.body.classList.remove('panel-is-open');
   smoothInvalidateSize(260);
   updatePanelHandle();
   syncModeUI();
 }
 
 function expandFreePanel() {
-  if (panelMode === 'free' || (freeModeOn && !panelMode)) {
-    freePanelCollapsed = false;
-    panelMode = 'free';
-    currentRoomPanelId = null;
-    clearSelectedRoom();
-    openPanel();
-    renderFreePanel();
-  } else if (panelMode === 'room' || panelMode === 'directory' || panelMode === 'entity') {
+  if (panelMode === 'room' || panelMode === 'directory' || panelMode === 'entity') {
     openPanel();
   } else if (panelMode === 'route') {
     openPanel();
@@ -352,42 +449,33 @@ function disableFreeMode() {
   freePanelCollapsed = false;
   try { localStorage.setItem('free_mode', '0'); } catch (e) {}
   applyFreeHighlight();
-  if (panelMode === 'free') {
-    closePanel();
+  if (panelMode === 'ai') {
+    renderAiPanel();
   }
   updatePanelHandle();
   syncModeUI();
 }
 
 async function toggleFreeMode() {
-  if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
   if (!freeModeOn) {
-    if (panelMode === 'route') {
-      clearRoute();
-    }
     freeModeOn = true;
     freePanelCollapsed = false;
     try { localStorage.setItem('free_mode', '1'); } catch (e) {}
-    panelMode = 'free';
-    currentRoomPanelId = null;
-    clearSelectedRoom();
+    await fetchFreeRooms();
+    applyFreeHighlight();
+    if (panelMode === 'ai') renderAiPanel();
     syncModeUI();
-    openPanel();
-    renderFreePanelLoading();
-    await refreshFreeMode();
   } else {
     disableFreeMode();
   }
 }
 
 function isAnyCollapsiblePanelMode() {
-  if (scheduleViewOpen) return false;
+  if (scheduleViewOpen && panelMode !== 'ai') return false;
   return (
     panelMode === 'room' ||
-    panelMode === 'free' ||
     panelMode === 'route' ||
-    panelMode === 'ai' ||
-    freeModeOn
+    panelMode === 'ai'
   );
 }
 
@@ -417,8 +505,114 @@ function updatePanelHandle() {
   }
 }
 
+function getMobileDragBarHtml() {
+  return `
+    <div class="panel-drag-bar" data-panel-drag="true" title="Потяните, чтобы изменить высоту панели">
+      <div class="panel-drag-pill"></div>
+    </div>
+  `;
+}
+
 function buildPanelLayout(fixedHtml, scrollHtml) {
-  return `<div class="panel-fixed">${fixedHtml}</div><div class="panel-scroll">${scrollHtml}</div>`;
+  return `${getMobileDragBarHtml()}<div class="panel-fixed">${fixedHtml}</div><div class="panel-scroll">${scrollHtml}</div>`;
+}
+
+function setupMobilePanelSheet() {
+  const panel = document.getElementById('panel');
+  if (!panel) return;
+
+  let startY = 0;
+  let startHeight = 0;
+  let currentDeltaY = 0;
+  let dragging = false;
+
+  const toggleMobileSheetState = () => {
+    if (panel.classList.contains('mobile-minimized')) {
+      panel.classList.remove('mobile-minimized');
+    } else if (panel.classList.contains('mobile-expanded')) {
+      panel.classList.remove('mobile-expanded');
+    } else {
+      panel.classList.add('mobile-expanded');
+    }
+  };
+
+  panel.addEventListener('click', (e) => {
+    const dragBar = e.target.closest('[data-panel-drag]');
+    if (dragBar && window.innerWidth <= 768 && Math.abs(currentDeltaY) < 6) {
+      toggleMobileSheetState();
+    }
+  });
+
+  const beginDrag = (clientY) => {
+    dragging = true;
+    startY = clientY;
+    startHeight = panel.getBoundingClientRect().height || Math.round(window.innerHeight * 0.68);
+    currentDeltaY = 0;
+    panel.classList.add('dragging');
+  };
+
+  const moveDrag = (clientY) => {
+    if (!dragging) return;
+    currentDeltaY = clientY - startY;
+    const maxH = Math.max(240, window.innerHeight - 54);
+    const minH = 54;
+    const nextH = Math.max(minH, Math.min(maxH, startHeight - currentDeltaY));
+    panel.style.height = `${nextH}px`;
+  };
+
+  const finishDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    panel.classList.remove('dragging');
+    const finalHeight = panel.getBoundingClientRect().height;
+    panel.style.height = '';
+
+    const vh = window.innerHeight || 800;
+    if (currentDeltaY > 42) {
+      if (panel.classList.contains('mobile-expanded') && finalHeight > vh * 0.45) {
+        panel.classList.remove('mobile-expanded');
+      } else if (panelMode === 'ai') {
+        closeAiPanel();
+      } else {
+        panel.classList.remove('mobile-expanded');
+        panel.classList.add('mobile-minimized');
+      }
+    } else if (currentDeltaY < -42) {
+      if (panel.classList.contains('mobile-minimized')) {
+        panel.classList.remove('mobile-minimized');
+      } else {
+        panel.classList.add('mobile-expanded');
+      }
+    } else if (Math.abs(currentDeltaY) >= 6) {
+      // Плавная привязка по итоговой высоте шторки
+      panel.classList.remove('mobile-expanded', 'mobile-minimized', 'mobile-compact');
+      if (finalHeight >= vh * 0.78) {
+        panel.classList.add('mobile-expanded');
+      } else if (finalHeight <= vh * 0.25) {
+        if (panelMode === 'ai') closeAiPanel();
+        else panel.classList.add('mobile-minimized');
+      } else if (finalHeight <= vh * 0.45 && panelMode !== 'ai') {
+        panel.classList.add('mobile-compact');
+      }
+    }
+
+    setTimeout(() => { currentDeltaY = 0; }, 50);
+  };
+
+  panel.addEventListener('touchstart', (e) => {
+    if (window.innerWidth > 768) return;
+    const dragHeader = e.target.closest('[data-panel-drag], .panel-header, .ai-panel-header');
+    if (!dragHeader || e.target.closest('button, input, a')) return;
+    beginDrag(e.touches[0].clientY);
+  }, { passive: true });
+
+  panel.addEventListener('touchmove', (e) => {
+    if (!dragging) return;
+    moveDrag(e.touches[0].clientY);
+  }, { passive: true });
+
+  panel.addEventListener('touchend', finishDrag);
+  panel.addEventListener('touchcancel', finishDrag);
 }
 
 // ================ ВЫДЕЛЕНИЕ ================
@@ -521,13 +715,10 @@ async function refreshFreeMode() {
   const result = await fetchFreeRooms();
   if (!freeModeOn) return;
   if (result.warming) {
-    if (!freePanelCollapsed && panelMode === 'free') renderFreePanelWarming(result.progress);
     pollCacheStatus();
   } else if (result.ok) {
     applyFreeHighlight();
-    if (!freePanelCollapsed && panelMode === 'free') renderFreePanel();
-  } else {
-    if (!freePanelCollapsed && panelMode === 'free') renderFreePanelError(result.error);
+    if (panelMode === 'ai') renderAiPanel();
   }
 }
 
@@ -543,81 +734,9 @@ function pollCacheStatus() {
         clearInterval(warmingPollInterval);
         warmingPollInterval = null;
         refreshFreeMode();
-      } else if (!freePanelCollapsed && panelMode === 'free') {
-        renderFreePanelWarming(st.progress);
       }
     } catch (e) { console.error('[cache-status]', e); }
   }, 1500);
-}
-
-function setupFreeToggle() {
-  const FreeToggleControl = L.Control.extend({
-    options: { position: 'bottomleft' },
-    onAdd() {
-      const wrap = L.DomUtil.create('div', 'free-toggle-wrap');
-      L.DomEvent.disableClickPropagation(wrap);
-      L.DomEvent.disableScrollPropagation(wrap);
-
-      const btn = document.createElement('button');
-      btn.className = 'free-toggle';
-      btn.title = 'Показать свободные аудитории';
-      btn.innerHTML = `<span>Свободные</span>`;
-
-      const schedBtn = document.createElement('button');
-      schedBtn.className = 'schedule-dir-toggle';
-      schedBtn.title = 'Расписание групп и преподавателей';
-      schedBtn.innerHTML = `<span>Расписание</span>`;
-
-      const routeBtn = document.createElement('button');
-      routeBtn.className = 'map-route-btn';
-      routeBtn.title = 'Построить маршрут';
-      routeBtn.setAttribute('aria-label', 'Построить маршрут');
-      routeBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <circle cx="12.5" cy="18.2" r="2.7" fill="currentColor"/>
-          <path d="M16.2 15.4C18.2 14.0 18.4 10.6 15.6 9.9C13.1 9.3 10.9 13.7 8.1 13.1C5.9 12.6 5.8 9.8 7.5 8.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M8.6 5.9C8.1 5.4 8.3 4.6 9.0 4.4L12.7 3.5C13.4 3.3 14.0 3.9 13.8 4.6L12.7 8.3C12.5 9.0 11.6 9.2 11.1 8.6L8.6 5.9Z" fill="currentColor"/>
-        </svg>
-      `;
-
-      const saved = localStorage.getItem('free_mode');
-      if (saved === '1') {
-        freeModeOn = true;
-        btn.classList.add('active');
-      }
-
-      btn.addEventListener('click', () => {
-        toggleFreeMode();
-      });
-
-      schedBtn.addEventListener('click', () => {
-        openScheduleDirectory();
-      });
-
-      routeBtn.addEventListener('click', () => {
-        openRoutePanel();
-      });
-
-      wrap.appendChild(btn);
-      wrap.appendChild(schedBtn);
-      wrap.appendChild(routeBtn);
-
-      if (freeModeOn) {
-        setTimeout(async () => {
-          panelMode = 'free';
-          currentRoomPanelId = null;
-          clearSelectedRoom();
-          syncModeUI();
-          openPanel();
-          renderFreePanelLoading();
-          await refreshFreeMode();
-        }, 500);
-      }
-
-      return wrap;
-    }
-  });
-  return new FreeToggleControl();
 }
 
 function setupPanelHandle() {
@@ -632,142 +751,6 @@ function setupPanelHandle() {
       expandFreePanel();
     }
   });
-}
-
-// ================ ПАНЕЛЬ СВОБОДНЫХ ================
-
-function renderFreePanelLoading() {
-  const panel = document.getElementById('panel');
-  const header = `
-    <div class="panel-header">
-      <button class="close" onclick="disableFreeMode()" title="Выключить режим">✕</button>
-      <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
-      <h2>Свободны сейчас</h2>
-    </div>
-  `;
-  const scroll = `<div class="free-warming"><div class="spinner"></div><div>Загружаю расписание…</div></div>`;
-  panel.innerHTML = buildPanelLayout(header, scroll);
-  updatePanelHandle();
-}
-
-function renderFreePanelWarming(progress) {
-  const panel = document.getElementById('panel');
-  if (!panel.classList.contains('open')) return;
-  const header = `
-    <div class="panel-header">
-      <button class="close" onclick="disableFreeMode()" title="Выключить режим">✕</button>
-      <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
-      <h2>Свободны сейчас</h2>
-    </div>
-  `;
-  const scroll = `
-    <div class="free-warming">
-      <div class="spinner"></div>
-      <div>Идёт первый прогрев кэша</div>
-      <div class="progress">${progress || '0/0'}</div>
-      <div style="margin-top:8px;font-size:12px;color:var(--text-dim)">Это займёт 1–3 минуты. Дальше будет мгновенно.</div>
-    </div>
-  `;
-  panel.innerHTML = buildPanelLayout(header, scroll);
-}
-
-function renderFreePanelError(msg) {
-  const panel = document.getElementById('panel');
-  const header = `
-    <div class="panel-header">
-      <button class="close" onclick="disableFreeMode()" title="Выключить режим">✕</button>
-      <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
-      <h2>Свободны сейчас</h2>
-    </div>
-  `;
-  const scroll = `<div class="free-panel-empty" style="color:#f87171">Ошибка загрузки: ${escapeHtml(msg)}</div>`;
-  panel.innerHTML = buildPanelLayout(header, scroll);
-}
-
-function renderFreePanel() {
-  const panel = document.getElementById('panel');
-  panel.classList.add('open');
-  freePanelCollapsed = false;
-
-  const relevantFree = [...freeRoomIds]
-    .map(id => ({ id, meta: roomsMeta[id], data: freeRoomData.get(id) }))
-    .filter(x => x.meta && x.meta.building === currentBuilding)
-    .filter(x => x.meta.floor == null || x.meta.floor === currentFloor)
-    .sort(naturalRoomSort);
-
-  const relevantBusy = [...busyRoomIds]
-    .map(id => ({ id, meta: roomsMeta[id], data: busyRoomData.get(id) }))
-    .filter(x => x.meta && x.meta.building === currentBuilding)
-    .filter(x => x.meta.floor == null || x.meta.floor === currentFloor)
-    .sort(naturalRoomSort);
-
-  const header = `
-    <div class="panel-header">
-      <button class="close" onclick="disableFreeMode()" title="Выключить режим">✕</button>
-      <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
-      <h2>Свободны сейчас</h2>
-    </div>
-  `;
-
-  if (relevantFree.length === 0 && relevantBusy.length === 0) {
-    panel.innerHTML = buildPanelLayout(header, `<div class="free-panel-empty">На этом этаже нет аудиторий с расписанием</div>`);
-    updatePanelHandle();
-    return;
-  }
-
-  const summaryHtml = `
-    ${relevantFree.length > 0 ? `
-      <div class="free-summary">
-        <strong>${relevantFree.length}</strong>
-        <span class="free-summary-label">свободных</span>
-      </div>
-    ` : ''}
-    ${relevantBusy.length > 0 ? `
-      <div class="free-summary busy-summary" style="margin-top:${relevantFree.length > 0 ? '8px' : '0'}">
-        <strong>${relevantBusy.length}</strong>
-        <span class="free-summary-label">занятых</span>
-      </div>
-    ` : ''}
-  `;
-
-  const freeListHtml = relevantFree.map(x => {
-    const untilHtml = x.data.noSchedule ? 'свободна' : `свободна <span class="accent">${x.data.untilText}</span>`;
-    return `
-      <div class="free-item" data-room-id="${x.id}">
-        <span class="free-dot"></span>
-        <div class="free-body">
-          <div class="free-name">${renderMultiline(formatRoomName(x.meta.name))}</div>
-          <div class="free-until">${untilHtml}</div>
-        </div>
-      </div>`;
-  }).join('');
-
-  const busyListHtml = relevantBusy.map(x => {
-    const untilHtml = x.data.untilText
-      ? `занята <span class="accent-busy">до ${x.data.untilText}</span>`
-      : 'занята';
-    return `
-      <div class="free-item busy-item" data-room-id="${x.id}">
-        <span class="busy-dot"></span>
-        <div class="free-body">
-          <div class="free-name">${renderMultiline(formatRoomName(x.meta.name))}</div>
-          <div class="free-until">${untilHtml}</div>
-        </div>
-      </div>`;
-  }).join('');
-
-  const scroll = `
-    ${relevantFree.length > 0 ? `<div class="free-list">${freeListHtml}</div>` : ''}
-    ${relevantBusy.length > 0 ? `<div class="free-list" style="margin-top:${relevantFree.length > 0 ? '12px' : '0'}">${busyListHtml}</div>` : ''}
-  `;
-
-  panel.innerHTML = buildPanelLayout(`${header}${summaryHtml}`, scroll);
-
-  panel.querySelectorAll('.free-item').forEach(el => {
-    el.addEventListener('click', () => onRoomClick(el.dataset.roomId));
-  });
-
-  updatePanelHandle();
 }
 
 // ================ URL / HISTORY ================
@@ -977,7 +960,10 @@ function searchEntitiesLocal(query, limit = 5) {
   if (!q || !scheduleDirectory.ready) return { lecturers: [], groups: [] };
 
   const lecturers = scheduleDirectory.lecturers
-    .filter(l => l.name.toLowerCase().replace(/ё/g, 'е').includes(q) || l.shortName.toLowerCase().replace(/ё/g, 'е').includes(q))
+    .filter(l => {
+      const hay = `${l.name} ${l.shortName} ${l.fullName || ''} ${l.regalia || ''}`.toLowerCase().replace(/ё/g, 'е');
+      return hay.includes(q);
+    })
     .slice(0, limit);
 
   const cleanGroupQ = q.replace(/^(?:гр\.?|группа)\s*/i, '').trim();
@@ -1007,6 +993,8 @@ function setupSearch() {
   const wrap          = document.getElementById('search-wrap');
   const input         = document.getElementById('search-input');
   const clearBtn      = document.getElementById('search-clear');
+  const omniRouteBtn  = document.getElementById('omni-route-btn');
+  const omniSubmitBtn = document.getElementById('omni-search-submit');
   const omniAiBtn     = document.getElementById('omni-ai-btn');
   const inlineAiBtn   = document.getElementById('ai-inline-trigger');
   const inlineAiQuery = document.getElementById('ai-inline-query');
@@ -1024,11 +1012,17 @@ function setupSearch() {
     try { localStorage.setItem('search_history', JSON.stringify(history)); } catch (e) {}
   }
 
+  const omniAiSendBtn = document.getElementById('omni-ai-send');
+
   function updateClearAndInlineAi() {
+    const hasText = Boolean(input.value.length > 0);
     const raw = input.value.trim();
-    if (clearBtn) clearBtn.classList.toggle('hidden', !raw);
+    const mobileAi = isMobileAiBarMode();
+    if (clearBtn) clearBtn.classList.toggle('hidden', !hasText);
+    if (omniRouteBtn) omniRouteBtn.classList.toggle('hidden', hasText || mobileAi);
+    if (omniAiSendBtn) omniAiSendBtn.classList.toggle('hidden', !mobileAi);
     if (inlineAiBtn && inlineAiQuery) {
-      if (raw.length >= 2) {
+      if (raw.length >= 2 && !mobileAi) {
         inlineAiQuery.textContent = raw;
         inlineAiBtn.classList.remove('hidden');
       } else {
@@ -1090,7 +1084,7 @@ function setupSearch() {
     if (!found.length && !entities.lecturers.length && !entities.groups.length) {
       const li = document.createElement('li');
       li.className = 'res-empty';
-      li.innerHTML = `По прямому совпадению не найдено — нажмите <strong>Enter</strong> или кнопку выше, чтобы спросить ИИ-навигатора`;
+      li.innerHTML = `По прямому совпадению не найдено — нажмите <strong>Enter</strong> или кнопку выше, чтобы спросить ИИ'шку`;
       results.appendChild(li);
       return;
     }
@@ -1100,8 +1094,8 @@ function setupSearch() {
       const li = document.createElement('li');
       li.innerHTML = `
         <div class="res-main">
-          <div class="res-name">${escapeHtml(lec.name)}</div>
-          <div class="res-meta">Преподаватель · ${lec.lessonsCount} пар · ${lec.roomsCount} ауд.</div>
+          <div class="res-name">${escapeHtml(lec.fullName || lec.name)}</div>
+          <div class="res-meta">${escapeHtml(lec.regalia || 'Преподаватель')}</div>
         </div>
         <span class="res-badge-entity"><i class="mdi mdi-calendar-clock"></i> Расписание</span>
       `;
@@ -1119,7 +1113,7 @@ function setupSearch() {
       li.innerHTML = `
         <div class="res-main">
           <div class="res-name">Группа ${escapeHtml(grp.name)}</div>
-          <div class="res-meta">Учебная группа · ${grp.lessonsCount} пар · ${grp.roomsCount} ауд.</div>
+          <div class="res-meta">${escapeHtml(grp.faculty || 'Учебная группа')}</div>
         </div>
         <span class="res-badge-entity"><i class="mdi mdi-account-group-outline"></i> Расписание</span>
       `;
@@ -1163,61 +1157,123 @@ function setupSearch() {
     });
   }
 
+  const setSearchOpen = (isOpen) => {
+    wrap.classList.toggle('open', isOpen);
+    document.body.classList.toggle('mobile-search-open', isOpen);
+    if (isOpen) {
+      closeUserDropdown();
+    }
+  };
+
   renderTags();
   renderHistory();
   updateClearAndInlineAi();
 
   input.addEventListener('focus', () => {
-    wrap.classList.add('open');
+    if (isMobileAiBarMode()) {
+      setSearchOpen(false);
+      return;
+    }
+    setSearchOpen(true);
     if (input.value.trim()) renderResults();
     else renderHistory();
   });
 
   input.addEventListener('click', (e) => {
     e.stopPropagation();
-    wrap.classList.add('open');
+    if (isMobileAiBarMode()) {
+      setSearchOpen(false);
+      return;
+    }
+    setSearchOpen(true);
   });
 
   input.addEventListener('input', () => {
-    wrap.classList.add('open');
+    if (isMobileAiBarMode()) {
+      updateClearAndInlineAi();
+      return;
+    }
+    setSearchOpen(true);
     renderResults();
   });
+
+  function triggerSearchSubmit() {
+    const raw = input.value.trim();
+    if (isMobileAiBarMode()) {
+      if (!raw || aiLoading) {
+        input.focus();
+        return;
+      }
+      input.value = '';
+      updateClearAndInlineAi();
+      submitAiQuery(raw);
+      return;
+    }
+    if (!raw) {
+      setSearchOpen(true);
+      input.focus();
+      return;
+    }
+    const entities = searchEntitiesLocal(raw, 2);
+    const found = searchRooms(raw, 5);
+    saveHistory(raw);
+    setSearchOpen(false);
+    input.blur();
+    if (isLikelyAiQuestion(raw, found.length + entities.lecturers.length + entities.groups.length)) {
+      openAiPanel(raw);
+    } else if (entities.lecturers.length === 1 && found.length === 0) {
+      openEntitySchedule('lecturer', entities.lecturers[0].name);
+    } else if (entities.groups.length === 1 && found.length === 0) {
+      openEntitySchedule('group', entities.groups[0].name);
+    } else if (found.length > 0) {
+      navigateToRoom(found[0].id);
+    } else if (entities.lecturers.length > 0) {
+      openEntitySchedule('lecturer', entities.lecturers[0].name);
+    } else if (entities.groups.length > 0) {
+      openEntitySchedule('group', entities.groups[0].name);
+    } else {
+      openAiPanel(raw);
+    }
+  }
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      const raw = input.value.trim();
-      if (!raw) return;
-      const entities = searchEntitiesLocal(raw, 2);
-      const found = searchRooms(raw, 5);
-      saveHistory(raw);
-      wrap.classList.remove('open');
-      input.blur();
-      if (isLikelyAiQuestion(raw, found.length + entities.lecturers.length + entities.groups.length)) {
-        openAiPanel(raw);
-      } else if (entities.lecturers.length === 1 && found.length === 0) {
-        openEntitySchedule('lecturer', entities.lecturers[0].name);
-      } else if (entities.groups.length === 1 && found.length === 0) {
-        openEntitySchedule('group', entities.groups[0].name);
-      } else if (found.length > 0) {
-        navigateToRoom(found[0].id);
-      } else if (entities.lecturers.length > 0) {
-        openEntitySchedule('lecturer', entities.lecturers[0].name);
-      } else if (entities.groups.length > 0) {
-        openEntitySchedule('group', entities.groups[0].name);
-      } else {
-        openAiPanel(raw);
-      }
+      triggerSearchSubmit();
     }
   });
+
+  if (omniSubmitBtn) {
+    omniSubmitBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      triggerSearchSubmit();
+    });
+  }
+
+  if (omniAiSendBtn) {
+    omniAiSendBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      triggerSearchSubmit();
+    });
+  }
+
+  if (omniRouteBtn) {
+    omniRouteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setSearchOpen(false);
+      openRoutePanel();
+    });
+  }
 
   if (clearBtn) {
     clearBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       input.value = '';
       updateClearAndInlineAi();
-      results.innerHTML = '';
-      renderHistory();
+      if (!isMobileAiBarMode()) {
+        results.innerHTML = '';
+        renderHistory();
+      }
       input.focus();
     });
   }
@@ -1226,8 +1282,12 @@ function setupSearch() {
     omniAiBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const raw = input.value.trim();
-      wrap.classList.remove('open');
+      setSearchOpen(false);
+      if (window.innerWidth <= 768 && raw) {
+        input.value = '';
+      }
       openAiPanel(raw || null);
+      updateClearAndInlineAi();
     });
   }
 
@@ -1235,7 +1295,7 @@ function setupSearch() {
     inlineAiBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const raw = input.value.trim();
-      wrap.classList.remove('open');
+      setSearchOpen(false);
       if (raw) {
         saveHistory(raw);
         openAiPanel(raw);
@@ -1246,22 +1306,71 @@ function setupSearch() {
   }
 
   document.addEventListener('click', (e) => {
-    if (!wrap.contains(e.target)) wrap.classList.remove('open');
+    if (!wrap.contains(e.target)) setSearchOpen(false);
   });
 
   const params = new URLSearchParams(location.search);
   const searchQuery = params.get('search');
   if (searchQuery) {
     input.value = searchQuery;
-    wrap.classList.add('open');
+    setSearchOpen(true);
     renderResults();
   }
 }
 
 // ================ ИИ-НАВИГАТОР КАМПУСА ================
 
+function buildAiFreeMenuHtml() {
+  const filterFloor = aiFreeFloorFilter;
+  const relevantFree = [...freeRoomIds]
+    .map(id => ({ id, meta: roomsMeta[id], data: freeRoomData.get(id) || {} }))
+    .filter(x => x.meta && x.meta.building === currentBuilding)
+    .filter(x => filterFloor === 'all' ? true : x.meta.floor === Number(filterFloor))
+    .sort(naturalRoomSort);
+
+  const relevantBusy = [...busyRoomIds]
+    .map(id => ({ id, meta: roomsMeta[id], data: busyRoomData.get(id) || {} }))
+    .filter(x => x.meta && x.meta.building === currentBuilding)
+    .filter(x => filterFloor === 'all' ? true : x.meta.floor === Number(filterFloor))
+    .sort(naturalRoomSort);
+
+  const floors = ['all', 0, 1, 2, 3, 4];
+  const floorBtns = floors.map(f => {
+    const active = String(filterFloor) === String(f);
+    const label = f === 'all' ? 'Все' : `${f} эт.`;
+    return `<button type="button" class="ai-free-floor-btn ${active ? 'active' : ''}" data-free-floor="${f}">${label}</button>`;
+  }).join('');
+
+  const itemsHtml = relevantFree.slice(0, 45).map(x => {
+    const untilHtml = x.data.noSchedule ? 'свободна' : `до ${escapeHtml(x.data.untilText || 'конца дня')}`;
+    const fl = x.meta.floor != null ? ` · ${x.meta.floor} эт.` : '';
+    return `
+      <div class="ai-free-item" data-free-room-id="${escapeHtml(x.id)}">
+        <span class="free-dot"></span>
+        <span class="ai-free-item-name">${escapeHtml(formatRoomName(x.meta.name))}${escapeHtml(fl)}</span>
+        <span class="ai-free-item-until">${untilHtml}</span>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="ai-free-menu">
+      <div class="ai-free-menu-header">
+        <span class="ai-free-badge"><i class="mdi mdi-check-circle-outline"></i> Свободно: ${relevantFree.length} · Занято: ${relevantBusy.length}</span>
+        <button type="button" class="ai-free-floor-btn ${freeModeOn ? 'active' : ''}" data-toggle-free-map="1" title="Подсветить свободные и занятые аудитории на карте">
+          <i class="mdi mdi-layers-outline"></i> ${freeModeOn ? 'Подсветка ВКЛ' : 'Подсветить карту'}
+        </button>
+      </div>
+      <div class="ai-free-floor-pills">${floorBtns}</div>
+      <div class="ai-free-list">
+        ${itemsHtml || `<div class="muted-text" style="padding:6px 4px">Свободных аудиторий по выбранному фильтру не найдено</div>`}
+      </div>
+    </div>
+  `;
+}
+
 function openAiPanel(initialQuery = null) {
-  if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
+  // Не закрываем страницу расписания, чтобы ИИ-помощник мог открываться прямо поверх неё
   const panel = document.getElementById('panel');
   if (panelMode === 'ai' && !initialQuery) {
     if (panel && !panel.classList.contains('open')) {
@@ -1273,12 +1382,12 @@ function openAiPanel(initialQuery = null) {
     }
     return;
   }
-  if (freeModeOn) disableFreeMode();
   if (panelMode === 'route') clearRoute();
 
   panelMode = 'ai';
   currentRoomPanelId = null;
   clearSelectedRoom();
+  if (panel) panel.classList.remove('mobile-compact');
   openPanel();
   renderAiPanel();
   syncModeUI();
@@ -1289,6 +1398,7 @@ function openAiPanel(initialQuery = null) {
 }
 
 function closeAiPanel() {
+  triggerAiModeClosingTransition();
   panelMode = null;
   closePanel();
   syncModeUI();
@@ -1298,11 +1408,11 @@ function renderAiPanel() {
   const panel = document.getElementById('panel');
 
   const headerHtml = `
+    ${getMobileDragBarHtml()}
     <div class="ai-panel-header">
       <div class="panel-header">
         <button class="close" onclick="closeAiPanel()" title="Закрыть чат">✕</button>
-        <div class="panel-crumbs"><i class="mdi mdi-creation" style="color:var(--text-accent)"></i> Умный помощник кампуса</div>
-        <h2>Чат с ИИ</h2>
+        <h2 class="ai-title-heading"><i class="mdi mdi-creation ai-title-sparkle" aria-hidden="true"></i><span>ИИ'шка</span></h2>
       </div>
     </div>
   `;
@@ -1312,11 +1422,11 @@ function renderAiPanel() {
     feedHtml = `
       <div class="ai-empty-state">
         <div class="ai-empty-icon">
-          <i class="mdi mdi-robot-happy-outline"></i>
+          <i class="mdi mdi-creation"></i>
         </div>
-        <div class="ai-empty-title">ИИ-навигатор по РГРТУ</div>
+        <div class="ai-empty-title">ИИ'шка по РГРТУ</div>
         <div class="ai-empty-desc">
-          Спросите про свободные аудитории, расписание, деканаты, столовые или попросите построить маршрут до нужного кабинета.
+          Спросите про свободные аудитории, расписание групп и преподавателей, столовые или попросите построить маршрут.
         </div>
       </div>
     `;
@@ -1329,11 +1439,12 @@ function renderAiPanel() {
         const meta = roomsMeta[r.id];
         if (!meta) return '';
         const floorText = meta.floor != null ? `${meta.floor} этаж` : '';
+        const statusPart = r.statusText ? ` · ${r.statusText}` : (meta.description ? ` · ${meta.description.split('\n')[0]}` : '');
         return `
           <div class="ai-room-card" data-room-id="${escapeHtml(r.id)}">
             <div class="ai-room-info">
               <div class="ai-room-title">${escapeHtml(formatRoomName(meta.name))}</div>
-              <div class="ai-room-sub">${escapeHtml(floorText)}${meta.description ? ' · ' + escapeHtml(meta.description.split('\n')[0]) : ''}</div>
+              <div class="ai-room-sub">${escapeHtml(floorText)}${escapeHtml(statusPart)}</div>
             </div>
             <div class="ai-room-actions">
               <button type="button" class="ai-room-btn primary" data-action="locate" data-room-id="${escapeHtml(r.id)}" title="Показать на карте" aria-label="Показать на карте">
@@ -1374,16 +1485,19 @@ function renderAiPanel() {
         `;
       }
 
+      const freeMenuHtml = msg.openFreePanel ? buildAiFreeMenuHtml() : '';
+
       return `
         <div class="ai-bot-card" data-msg-idx="${idx}">
           <div class="ai-bot-header">
             <i class="mdi mdi-creation"></i>
-            <span>ИИ-навигатор</span>
+            <span>ИИ'шка</span>
           </div>
           <div class="ai-bot-answer">${renderMultiline(msg.answer || '')}</div>
+          ${freeMenuHtml}
           ${entityCtaHtml}
           ${routeCtaHtml}
-          ${roomsHtml ? `<div class="ai-suggested-rooms">${roomsHtml}</div>` : ''}
+          ${(!msg.openFreePanel && roomsHtml) ? `<div class="ai-suggested-rooms">${roomsHtml}</div>` : ''}
         </div>
       `;
     }).join('');
@@ -1409,7 +1523,7 @@ function renderAiPanel() {
       <div class="ai-suggestions-strip" id="ai-suggestions-strip">${promptsHtml}</div>
       <form class="ai-composer-form" id="ai-panel-form">
         <div class="ai-input-wrap">
-          <input type="text" class="ai-input" id="ai-panel-input" placeholder="Напишите вопрос ИИ…" autocomplete="off" ${aiLoading ? 'disabled' : ''}>
+          <input type="text" class="ai-input" id="ai-panel-input" placeholder="Сообщение ИИ'шке..." autocomplete="off" ${aiLoading ? 'disabled' : ''}>
           <button type="button" class="input-clear-btn hidden" id="ai-input-clear" title="Очистить" aria-label="Очистить">
             <i class="mdi mdi-close"></i>
           </button>
@@ -1460,6 +1574,33 @@ function renderAiPanel() {
     btn.addEventListener('click', () => {
       if (aiLoading) return;
       submitAiQuery(btn.dataset.prompt);
+    });
+  });
+
+  panel.querySelectorAll('[data-free-floor]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const f = btn.dataset.freeFloor;
+      aiFreeFloorFilter = f === 'all' ? 'all' : Number(f);
+      if (f !== 'all' && Number(f) !== currentFloor) {
+        showFloor(currentBuilding, Number(f));
+      }
+      renderAiPanel();
+    });
+  });
+
+  panel.querySelectorAll('[data-toggle-free-map]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await toggleFreeMode();
+    });
+  });
+
+  panel.querySelectorAll('[data-free-room-id]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const roomId = el.dataset.freeRoomId;
+      if (roomId) focusRoomFromAi(roomId);
     });
   });
 
@@ -1549,6 +1690,13 @@ async function focusRoomFromAi(roomId) {
 }
 
 async function submitAiQuery(query) {
+  const historyPayload = aiMessages.slice(-6).map(m => ({
+    role: m.role,
+    text: m.role === 'user' ? (m.text || '') : (m.answer || ''),
+    roomIds: Array.isArray(m.rooms) ? m.rooms.map(r => r.id).filter(Boolean) : [],
+    entitySchedule: m.entitySchedule || null
+  }));
+
   aiMessages.push({ role: 'user', text: query });
   aiLoading = true;
   renderAiPanel();
@@ -1557,25 +1705,40 @@ async function submitAiQuery(query) {
     const res = await fetch('/api/ai-assistant', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, currentFloor })
+      body: JSON.stringify({ query, currentFloor, history: historyPayload })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
+    if (data.openFreePanel) {
+      await fetchFreeRooms();
+      freeModeOn = true;
+      applyFreeHighlight();
+    }
+
+    const roomStatusMap = new Map((data.rooms || []).map(r => [r.id, r]));
     const validRooms = (data.roomIds || [])
       .filter(id => roomsMeta[id])
-      .map(id => ({ id }));
+      .map(id => {
+        const enriched = roomStatusMap.get(id);
+        return {
+          id,
+          statusType: enriched ? enriched.statusType : null,
+          statusText: enriched ? enriched.statusText : ''
+        };
+      });
 
     aiMessages.push({
       role: 'assistant',
       answer: data.answer || 'Готово!',
       rooms: validRooms,
       route: data.route || null,
-      entitySchedule: data.entitySchedule || null
+      entitySchedule: data.entitySchedule || null,
+      openFreePanel: Boolean(data.openFreePanel)
     });
 
     // Если найдена ровно одна целевая комната и нет маршрута — сразу подсвечиваем и перемещаем к ней карту
-    if (validRooms.length === 1 && !data.route) {
+    if (validRooms.length === 1 && !data.route && !scheduleViewOpen) {
       focusRoomFromAi(validRooms[0].id);
     }
     haptic('success');
@@ -1586,7 +1749,8 @@ async function submitAiQuery(query) {
       answer: 'Не удалось связаться с сервером помощника. Попробуйте ещё раз.',
       rooms: [],
       route: null,
-      entitySchedule: null
+      entitySchedule: null,
+      openFreePanel: false
     });
     haptic('error');
   } finally {
@@ -1597,24 +1761,468 @@ async function submitAiQuery(query) {
   }
 }
 
-// ================ ТЕМА ================
+// ================ ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ, ТЕМА И TELEGRAM ================
 
-function setupThemeToggle() {
-  const btn = document.getElementById('theme-toggle');
-  const updateIcon = () => {
-    const theme = document.documentElement.dataset.theme || 'light';
-    btn.innerHTML = theme === 'dark'
-      ? '<i class="mdi mdi-weather-sunny"></i>'
-      : '<i class="mdi mdi-weather-night"></i>';
-  };
-  updateIcon();
-  btn.addEventListener('click', () => {
-    const current = document.documentElement.dataset.theme || 'light';
-    const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    try { localStorage.setItem('theme', next); } catch (e) {}
-    updateIcon();
+function ensureUserId() {
+  if (!currentUserId) {
+    currentUserId = 'web_' + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
+    try { localStorage.setItem('rsreu_user_id', currentUserId); } catch (e) {}
+  }
+  return currentUserId;
+}
+
+function resolveThemePreference(themePref) {
+  const pref = (themePref === 'dark' || themePref === 'light' || themePref === 'system') ? themePref : 'system';
+  if (pref === 'system') {
+    if (tg && tg.colorScheme) {
+      return tg.colorScheme === 'dark' ? 'dark' : 'light';
+    }
+    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  return pref;
+}
+
+function applyTheme(themePref) {
+  const pref = (themePref === 'dark' || themePref === 'light' || themePref === 'system') ? themePref : 'system';
+  const resolved = resolveThemePreference(pref);
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.dataset.themePref = pref;
+  userProfile.theme = pref;
+  try { localStorage.setItem('theme', pref); } catch (e) {}
+  document.querySelectorAll('[data-theme-val]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.themeVal === pref);
   });
+}
+
+async function syncUserProfileToServer(patch = {}) {
+  Object.assign(userProfile, patch);
+  try {
+    localStorage.setItem('rsreu_user_role', userProfile.role || 'student');
+    localStorage.setItem('rsreu_user_target', userProfile.targetName || '');
+  } catch (e) {}
+
+  try {
+    const uid = ensureUserId();
+    const res = await fetch('/api/user/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: uid,
+        role: userProfile.role,
+        targetName: userProfile.targetName,
+        notificationsEnabled: userProfile.notificationsEnabled,
+        theme: userProfile.theme
+      })
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const srvUser = data.user || data.profile;
+    if (data.ok && srvUser) {
+      currentUserId = srvUser.id || uid;
+      try { localStorage.setItem('rsreu_user_id', currentUserId); } catch (e) {}
+      Object.assign(userProfile, srvUser);
+      userProfile.telegramLinked = Boolean(srvUser.isTelegramLinked || srvUser.telegramLinked || srvUser.telegramId || srvUser.username);
+      updateUserMenuUI();
+    }
+  } catch (e) {
+    console.warn('[profile] sync failed', e.message);
+  }
+}
+
+function updateUserMenuUI() {
+  const menuBtn = document.getElementById('user-menu-btn');
+  const statusDot = document.getElementById('user-status-dot');
+  const nameEl = document.getElementById('user-dropdown-name');
+  const subEl = document.getElementById('user-dropdown-sub');
+  const academicSec = document.getElementById('user-academic-section');
+  const targetLabel = document.getElementById('user-target-label');
+  const targetInput = document.getElementById('user-target-input');
+  const targetClear = document.getElementById('user-target-clear');
+  const openSchedBtn = document.getElementById('user-open-schedule-btn');
+  const openSchedText = document.getElementById('user-open-schedule-text');
+  const tgUnauth = document.getElementById('user-tg-unlinked');
+  const tgAuth = document.getElementById('user-tg-linked');
+  const notifyCheck = document.getElementById('user-notif-checkbox');
+
+  const isLinked = Boolean(userProfile.telegramLinked || userProfile.isTelegramLinked || userProfile.telegramId);
+  userProfile.telegramLinked = isLinked;
+
+  const hasProfile = Boolean(isLinked);
+  if (menuBtn) menuBtn.classList.toggle('active', hasProfile);
+  if (statusDot) statusDot.classList.toggle('hidden', !hasProfile);
+
+  // До авторизации через Telegram скрываем выбор статуса и группы/преподавателя
+  if (academicSec) {
+    academicSec.classList.toggle('hidden', !isLinked);
+  }
+
+  if (nameEl) {
+    if (isLinked) {
+      nameEl.textContent = userProfile.firstName || (userProfile.username ? `@${userProfile.username}` : 'Telegram-профиль');
+    } else {
+      nameEl.textContent = 'Гость';
+    }
+  }
+  if (subEl) {
+    if (isLinked && userProfile.targetName) {
+      const displayLec = scheduleDirectory.lecturers.find(l => l.name === userProfile.targetName);
+      subEl.textContent = userProfile.role === 'lecturer'
+        ? `Преподаватель · ${displayLec ? (displayLec.fullName || displayLec.name) : userProfile.targetName}`
+        : `Студент · Группа ${userProfile.targetName}`;
+    } else if (isLinked) {
+      subEl.textContent = 'Выберите статус и укажите свою группу или ФИО';
+    } else {
+      subEl.textContent = 'Войдите через Telegram для выбора своего расписания';
+    }
+  }
+  document.querySelectorAll('.user-seg-btn[data-role]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.role === userProfile.role);
+  });
+  if (targetLabel) {
+    targetLabel.textContent = userProfile.role === 'lecturer' ? 'Преподаватель' : 'Номер группы';
+  }
+  if (targetInput) {
+    targetInput.placeholder = userProfile.role === 'lecturer'
+      ? 'Например: Устюков Дмитрий Игоревич'
+      : 'Например: 445 или 546М';
+    if (document.activeElement !== targetInput) {
+      if (userProfile.role === 'lecturer' && userProfile.targetName) {
+        const displayLec = scheduleDirectory.lecturers.find(l => l.name === userProfile.targetName);
+        targetInput.value = displayLec ? (displayLec.fullName || displayLec.name) : userProfile.targetName;
+      } else {
+        targetInput.value = userProfile.targetName || '';
+      }
+    }
+  }
+  if (targetClear) {
+    targetClear.classList.toggle('hidden', !(targetInput && targetInput.value));
+  }
+  if (openSchedBtn) {
+    openSchedBtn.classList.toggle('hidden', !(isLinked && userProfile.targetName));
+  }
+  if (openSchedText && userProfile.targetName) {
+    const displayLec = scheduleDirectory.lecturers.find(l => l.name === userProfile.targetName);
+    openSchedText.textContent = userProfile.role === 'lecturer'
+      ? `Расписание: ${displayLec ? (displayLec.fullName || displayLec.name) : userProfile.targetName}`
+      : `Моё расписание (гр. ${userProfile.targetName})`;
+  }
+  if (tgUnauth && tgAuth) {
+    tgUnauth.classList.toggle('hidden', isLinked);
+    tgAuth.classList.toggle('hidden', !isLinked);
+  }
+  if (notifyCheck) {
+    notifyCheck.checked = userProfile.notificationsEnabled !== false;
+  }
+  const activeThemePref = userProfile.theme || document.documentElement.dataset.themePref || localStorage.getItem('theme') || 'system';
+  document.querySelectorAll('[data-theme-val]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.themeVal === activeThemePref);
+  });
+}
+
+function setupUserProfileAndTheme() {
+  const wrap = document.getElementById('user-menu-wrap');
+  const btn = document.getElementById('user-menu-btn');
+  const dropdown = document.getElementById('user-dropdown');
+  const targetInput = document.getElementById('user-target-input');
+  const targetClear = document.getElementById('user-target-clear');
+  const suggestions = document.getElementById('user-target-suggestions');
+  const openSchedBtn = document.getElementById('user-open-schedule-btn');
+  const botLink = document.getElementById('user-tg-deeplink');
+  const codeInput = document.getElementById('user-tg-code-input');
+  const codeSubmit = document.getElementById('user-tg-code-submit');
+  const feedbackEl = document.getElementById('user-tg-feedback');
+  const notifyCheck = document.getElementById('user-notif-checkbox');
+  const logoutBtn = document.getElementById('user-logout-btn');
+
+  applyTheme(localStorage.getItem('theme') || 'system');
+
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSystemThemeChange = () => {
+      if ((userProfile.theme || localStorage.getItem('theme') || 'system') === 'system') {
+        applyTheme('system');
+      }
+    };
+    if (mq.addEventListener) mq.addEventListener('change', onSystemThemeChange);
+    else if (mq.addListener) mq.addListener(onSystemThemeChange);
+  }
+
+  if (!wrap || !btn || !dropdown) return;
+
+  const startBrowserDeepLinkSession = async () => {
+    try {
+      const res = await fetch('/api/user/auth-telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'session-start' })
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.botUsername) botUsername = data.botUsername;
+      if (botLink && data.botLink) {
+        botLink.href = data.botLink;
+        botLink.classList.remove('hidden');
+      }
+    } catch (e) {}
+  };
+
+  const closeDropdownBtn = document.getElementById('user-dropdown-close');
+  if (closeDropdownBtn) {
+    closeDropdownBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeUserDropdown();
+    });
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isHidden = dropdown.classList.contains('hidden');
+    if (isHidden) {
+      closeSearchDropdown();
+      const panel = document.getElementById('panel');
+      if (panel && panel.classList.contains('open')) {
+        if (panelMode === 'room') closeRoomPanel();
+        else collapseFreePanel();
+      }
+      dropdown.classList.remove('hidden');
+      btn.setAttribute('aria-expanded', 'true');
+      btn.classList.add('open-active');
+      document.body.classList.add('mobile-profile-open');
+      updateUserMenuUI();
+      if (!userProfile.telegramLinked) {
+        startBrowserDeepLinkSession();
+      }
+    } else {
+      closeUserDropdown();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!wrap.contains(e.target)) {
+      closeUserDropdown();
+    }
+  });
+
+  document.querySelectorAll('.user-seg-btn[data-role]').forEach(roleBtn => {
+    roleBtn.addEventListener('click', () => {
+      const nextRole = roleBtn.dataset.role;
+      if (nextRole === userProfile.role) return;
+      userProfile.role = nextRole;
+      userProfile.targetName = '';
+      if (targetInput) targetInput.value = '';
+      if (suggestions) suggestions.classList.add('hidden');
+      updateUserMenuUI();
+      syncUserProfileToServer({ role: nextRole, targetName: '' });
+    });
+  });
+
+  const renderTargetSuggestions = () => {
+    if (!suggestions || !targetInput) return;
+    const q = targetInput.value.trim().toLowerCase().replace(/ё/g, 'е');
+    if (targetClear) targetClear.classList.toggle('hidden', !targetInput.value);
+
+    const pool = userProfile.role === 'lecturer'
+      ? scheduleDirectory.lecturers
+      : scheduleDirectory.groups;
+
+    const matches = pool
+      .filter(item => {
+        if (!q) return true;
+        const hay = `${item.name} ${item.fullName || ''} ${item.regalia || ''} ${item.faculty || ''}`.toLowerCase().replace(/ё/g, 'е');
+        return hay.includes(q);
+      })
+      .slice(0, 12);
+
+    if (matches.length === 0) {
+      suggestions.innerHTML = `<div class="user-target-option" style="color:var(--text-muted);cursor:default">Ничего не найдено</div>`;
+      suggestions.classList.remove('hidden');
+      return;
+    }
+
+    suggestions.innerHTML = matches.map(item => {
+      const label = userProfile.role === 'student' ? `Группа ${item.name}` : (item.fullName || item.name);
+      const meta = userProfile.role === 'student' ? (item.faculty || '') : (item.regalia || '');
+      return `
+        <button type="button" class="user-target-option ${userProfile.targetName === item.name ? 'active' : ''}" data-target-val="${escapeHtml(item.name)}" data-target-display="${escapeHtml(userProfile.role === 'student' ? item.name : (item.fullName || item.name))}">
+          <span>${escapeHtml(label)}</span>
+          <span style="color:var(--text-dim);font-size:11px">${escapeHtml(meta)}</span>
+        </button>
+      `;
+    }).join('');
+    suggestions.classList.remove('hidden');
+
+    suggestions.querySelectorAll('[data-target-val]').forEach(optBtn => {
+      optBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const val = optBtn.dataset.targetVal;
+        const display = optBtn.dataset.targetDisplay || val;
+        targetInput.value = display;
+        suggestions.classList.add('hidden');
+        syncUserProfileToServer({ targetName: val });
+        updateUserMenuUI();
+        showToast(userProfile.role === 'lecturer' ? `Выбран преподаватель: ${display}` : `Выбрана группа ${val}`);
+      });
+    });
+  };
+
+  if (targetInput) {
+    targetInput.addEventListener('focus', renderTargetSuggestions);
+    targetInput.addEventListener('input', renderTargetSuggestions);
+  }
+
+  if (targetClear && targetInput) {
+    targetClear.addEventListener('click', (e) => {
+      e.stopPropagation();
+      targetInput.value = '';
+      if (suggestions) suggestions.classList.add('hidden');
+      syncUserProfileToServer({ targetName: '' });
+      updateUserMenuUI();
+      targetInput.focus();
+    });
+  }
+
+  if (openSchedBtn) {
+    openSchedBtn.addEventListener('click', () => {
+      if (!userProfile.targetName) return;
+      closeUserDropdown();
+      const entityType = userProfile.role === 'lecturer' ? 'lecturer' : 'group';
+      openEntitySchedule(entityType, userProfile.targetName);
+    });
+  }
+
+  document.querySelectorAll('[data-theme-val]').forEach(tBtn => {
+    tBtn.addEventListener('click', () => {
+      const nextTheme = tBtn.dataset.themeVal;
+      applyTheme(nextTheme);
+      syncUserProfileToServer({ theme: nextTheme });
+    });
+  });
+
+  if (codeSubmit && codeInput) {
+    codeSubmit.addEventListener('click', async () => {
+      const raw = codeInput.value.trim();
+      if (!raw) return;
+      const isCode = /^\d{6}$/.test(raw);
+      try {
+        const res = await fetch('/api/user/auth-telegram', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: isCode ? 'code' : 'quick',
+            code: isCode ? raw : undefined,
+            identifier: !isCode ? raw : undefined,
+            role: userProfile.role,
+            targetName: userProfile.targetName,
+            theme: userProfile.theme
+          })
+        });
+        const data = await res.json();
+        const srvUser = data.user || data.profile;
+        if (!res.ok || !data.ok || !srvUser) {
+          if (feedbackEl) {
+            feedbackEl.textContent = data.error || 'Не удалось привязать Telegram';
+            feedbackEl.classList.add('error');
+            feedbackEl.classList.remove('hidden');
+          }
+          showToast(data.error || 'Не удалось привязать Telegram');
+          return;
+        }
+        currentUserId = srvUser.id;
+        try { localStorage.setItem('rsreu_user_id', currentUserId); } catch (e) {}
+        Object.assign(userProfile, srvUser);
+        userProfile.telegramLinked = true;
+        codeInput.value = '';
+        if (feedbackEl) feedbackEl.classList.add('hidden');
+        updateUserMenuUI();
+        showToast('Telegram успешно подключён!');
+      } catch (e) {
+        showToast('Ошибка соединения с сервером');
+      }
+    });
+  }
+
+  if (notifyCheck) {
+    notifyCheck.addEventListener('change', () => {
+      syncUserProfileToServer({ notificationsEnabled: notifyCheck.checked });
+      showToast(notifyCheck.checked ? 'Уведомления о парах включены' : 'Уведомления о парах отключены');
+    });
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', () => {
+      currentUserId = '';
+      userProfile = {
+        role: 'student',
+        targetName: '',
+        notificationsEnabled: true,
+        telegramLinked: false,
+        firstName: '',
+        username: '',
+        theme: userProfile.theme || 'system'
+      };
+      try {
+        localStorage.removeItem('rsreu_user_id');
+        localStorage.removeItem('rsreu_user_role');
+        localStorage.removeItem('rsreu_user_target');
+      } catch (e) {}
+      updateUserMenuUI();
+      showToast('Вы вышли из аккаунта');
+    });
+  }
+
+  (async () => {
+    try {
+      if (tg && tg.initData && telegramUser) {
+        const res = await fetch('/api/user/auth-telegram', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'webapp',
+            initData: tg.initData,
+            unsafeUser: telegramUser,
+            role: userProfile.role,
+            targetName: userProfile.targetName,
+            theme: userProfile.theme
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const srvUser = data.user || data.profile;
+          if (data.ok && srvUser) {
+            currentUserId = srvUser.id;
+            try { localStorage.setItem('rsreu_user_id', currentUserId); } catch (e) {}
+            Object.assign(userProfile, srvUser);
+            userProfile.telegramLinked = true;
+            updateUserMenuUI();
+            return;
+          }
+        }
+      }
+
+      if (currentUserId) {
+        const res = await fetch(`/api/user/profile?userId=${encodeURIComponent(currentUserId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.botUsername) botUsername = data.botUsername;
+          const srvUser = data.user || data.profile;
+          if (srvUser) {
+            const localTheme = localStorage.getItem('theme');
+            Object.assign(userProfile, srvUser);
+            userProfile.telegramLinked = Boolean(srvUser.isTelegramLinked || srvUser.telegramLinked || srvUser.telegramId || srvUser.username);
+            if (!localTheme) {
+              userProfile.theme = 'system';
+            }
+            applyTheme(userProfile.theme);
+            try {
+              localStorage.setItem('rsreu_user_role', userProfile.role || 'student');
+              localStorage.setItem('rsreu_user_target', userProfile.targetName || '');
+            } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {}
+    updateUserMenuUI();
+  })();
 }
 
 // ================ СБРОС ВИДА ================
@@ -1639,6 +2247,11 @@ function resetView() {
   if (currentOverlay) {
     const bounds = currentOverlay.getBounds();
     map.fitBounds(bounds);
+    if (window.innerWidth <= 768) {
+      const { W, H } = currentSvgViewBox;
+      const targetZoom = map.getBoundsZoom(bounds) + 1.0;
+      map.setView([H / 2, W / 2], targetZoom, { animate: false });
+    }
     scheduleLabelRefresh();
   }
 }
@@ -1700,6 +2313,10 @@ async function showFloor(buildingCode, floorNum) {
   const bounds = [[0, 0], [H, W]];
   currentOverlay = L.svgOverlay(svgEl, bounds).addTo(map);
   map.fitBounds(bounds);
+  if (window.innerWidth <= 768) {
+    const targetZoom = map.getBoundsZoom(bounds) + 1.0;
+    map.setView([H / 2, W / 2], targetZoom, { animate: false });
+  }
 
   svgEl.style.pointerEvents = 'none';
 
@@ -1793,11 +2410,6 @@ async function showFloor(buildingCode, floorNum) {
   }
 
   if (routeState.path) redrawRoute();
-
-  if (freeModeOn && panelMode === 'free' && !freePanelCollapsed &&
-      document.getElementById('panel').classList.contains('open')) {
-    renderFreePanel();
-  }
 }
 
 // ================ ПОДПИСИ ================
@@ -1958,6 +2570,11 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
 
   const token = ++roomRequestToken;
 
+  // Если у помещения нет расписания (гардероб, буфет, туалет и т.д.), на мобилке открываем компактную панель
+  const isCompactRoom = !meta || !meta.building || !meta.classroom;
+  panel.classList.toggle('mobile-compact', isCompactRoom);
+  panel.classList.remove('mobile-expanded', 'mobile-minimized');
+
   openPanel();
   panelMode = 'room';
   currentRoomPanelId = id;
@@ -1972,9 +2589,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
 
   const crumbs = b ? `${b.name}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}` : '';
   const shareIcon = `<i class="mdi mdi-link-variant share-icon" title="Скопировать ссылку"></i>`;
-  const closeBtn = freeModeOn
-    ? `<button class="back-btn" onclick="closeRoomPanel()" title="Вернуться к списку свободных"><i class="mdi mdi-arrow-left"></i></button>`
-    : `<button class="close" onclick="closeRoomPanel()">✕</button>`;
+  const closeBtn = `<button class="close" onclick="closeRoomPanel()">✕</button>`;
 
   const header = `
     <div class="panel-header">
@@ -1982,16 +2597,15 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
       ${crumbs ? `<div class="panel-crumbs">${escapeHtml(crumbs)}</div>` : ''}
       <h2>${escapeHtml(title)}${shareIcon}</h2>
     </div>
-    ${buildRoomActionBar(id)}
   `;
 
   const descriptionBlock = meta?.description
     ? `<div class="room-notes">${renderMultiline(meta.description)}</div>`
     : '';
 
-  if (!meta || !meta.building || !meta.classroom) {
+  if (isCompactRoom) {
     const block = descriptionBlock ||
-      `<div class="room-notes empty">У этого помещения нет заметок.</div>`;
+      `<div class="room-notes empty">Служебное или общественное помещение корпуса.</div>`;
     panel.innerHTML = buildPanelLayout(`${header}${block}`, '');
     attachRoomActionListeners(panel, id);
     return;
@@ -2025,6 +2639,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
     if (currentRoomPanelId !== id || panelMode !== 'room') return;
 
     if (data.empty) {
+      panel.classList.add('mobile-compact');
       panel.innerHTML = buildPanelLayout(
         `${header}${descriptionBlock}`,
         `<div class="no-schedule-msg">У этой аудитории нет расписания занятий</div>`
@@ -2032,6 +2647,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
       attachRoomActionListeners(panel, id);
       return;
     }
+    panel.classList.remove('mobile-compact');
     renderSchedule(panel, title, data, header, descriptionBlock);
     attachRoomActionListeners(panel, id);
     haptic('success');
@@ -2219,7 +2835,7 @@ function parseSchedule(html) {
 function formatInteractiveGroupAndLecturerHtml(groupStr, lecturerStr) {
   let groupPart = '';
   if (groupStr) {
-    const renderedGroups = String(groupStr).replace(/\b(\d{2,5}[а-яa-z]?)\b/gi, (match) =>
+    const renderedGroups = String(groupStr).replace(/(\d{2,5}[а-яёa-z]{0,4})/gi, (match) =>
       `<span class="entity-inline-link" data-entity-type="group" data-entity-name="${escapeHtml(match)}" title="Открыть расписание группы ${escapeHtml(match)}">${escapeHtml(match)}</span>`
     );
     groupPart = `гр. ${renderedGroups}`;
@@ -2252,11 +2868,8 @@ function renderSchedule(panel, title, data, header, descriptionBlock = '') {
   const today = new Date();
   const nowMin = today.getHours() * 60 + today.getMinutes();
 
-  const weekChip = data.weekType ? `<span class="week-chip">${data.weekType}</span>` : '';
-
   const fixedHtml = `
     ${header}
-    ${weekChip ? `<div style="margin-top:6px;margin-bottom:14px">${weekChip}</div>` : ''}
     ${descriptionBlock}
     ${renderNowStatus(nowStatus)}
   `;
@@ -2368,15 +2981,16 @@ function closeScheduleView({ updateHistory = true } = {}) {
   const view = document.getElementById('schedule-view');
   if (!view) return;
   scheduleViewOpen = false;
-  view.classList.add('hidden');
-  document.body.classList.remove('schedule-view-active');
+  view.classList.remove('open');
+  document.body.classList.remove('schedule-view-active', 'schedule-is-open');
   if (updateHistory) updateScheduleURL({ push: false });
   updatePanelHandle();
   syncModeUI();
   setTimeout(() => {
+    if (!scheduleViewOpen) view.classList.add('hidden');
     map.invalidateSize({ animate: false });
     scheduleLabelRefresh();
-  }, 60);
+  }, 380);
 }
 
 async function openScheduleDirectory(tab = null) {
@@ -2385,13 +2999,19 @@ async function openScheduleDirectory(tab = null) {
     return;
   }
 
+  closeUserDropdown();
+  closeSearchDropdown();
+
   if (tab) directoryActiveTab = tab;
   scheduleViewOpen = true;
   scheduleMobileStep = 'list';
-  document.body.classList.add('schedule-view-active');
+  document.body.classList.add('schedule-view-active', 'schedule-is-open');
 
   const view = document.getElementById('schedule-view');
-  if (view) view.classList.remove('hidden');
+  if (view) {
+    view.classList.remove('hidden');
+    requestAnimationFrame(() => view.classList.add('open'));
+  }
 
   updatePanelHandle();
   syncModeUI();
@@ -2401,16 +3021,23 @@ async function openScheduleDirectory(tab = null) {
     await loadScheduleDirectory();
   }
 
-  // На десктопе сразу открываем выбранную ранее группу/преподавателя или первую группу в списке,
-  // чтобы правая часть страницы сразу показывала полноценное расписание
-  if (!currentEntitySchedule && window.innerWidth > 768) {
-    if (directoryActiveTab === 'lecturers' && scheduleDirectory.lecturers.length > 0) {
-      await selectScheduleEntity('lecturer', scheduleDirectory.lecturers[0].name, { switchMobileToDetail: false });
+  // Если у пользователя выбрана своя группа/преподаватель в профиле или открывается на десктопе — сразу показываем расписание
+  if (!currentEntitySchedule) {
+    if (userProfile.targetName) {
+      const entityType = userProfile.role === 'lecturer' ? 'lecturer' : 'group';
+      directoryActiveTab = entityType === 'lecturer' ? 'lecturers' : 'groups';
+      await selectScheduleEntity(entityType, userProfile.targetName, { switchMobileToDetail: false });
       return;
-    } else if (scheduleDirectory.groups.length > 0) {
-      const preferred = scheduleDirectory.groups.find(g => g.name === '445') || scheduleDirectory.groups[0];
-      await selectScheduleEntity('group', preferred.name, { switchMobileToDetail: false });
-      return;
+    }
+    if (window.innerWidth > 768) {
+      if (directoryActiveTab === 'lecturers' && scheduleDirectory.lecturers.length > 0) {
+        await selectScheduleEntity('lecturer', scheduleDirectory.lecturers[0].name, { switchMobileToDetail: false });
+        return;
+      } else if (scheduleDirectory.groups.length > 0) {
+        const preferred = scheduleDirectory.groups.find(g => g.name === '445') || scheduleDirectory.groups[0];
+        await selectScheduleEntity('group', preferred.name, { switchMobileToDetail: false });
+        return;
+      }
     }
   }
 
@@ -2419,13 +3046,18 @@ async function openScheduleDirectory(tab = null) {
 }
 
 async function openEntitySchedule(type, name) {
+  closeUserDropdown();
+  closeSearchDropdown();
   scheduleViewOpen = true;
   scheduleMobileStep = 'detail';
   directoryActiveTab = type === 'group' ? 'groups' : 'lecturers';
-  document.body.classList.add('schedule-view-active');
+  document.body.classList.add('schedule-view-active', 'schedule-is-open');
 
   const view = document.getElementById('schedule-view');
-  if (view) view.classList.remove('hidden');
+  if (view) {
+    view.classList.remove('hidden');
+    requestAnimationFrame(() => view.classList.add('open'));
+  }
 
   updatePanelHandle();
   syncModeUI();
@@ -2462,18 +3094,13 @@ async function selectScheduleEntity(type, name, { switchMobileToDetail = true } 
   }
 }
 
-function renderScheduleWorkspace() {
-  const view = document.getElementById('schedule-view');
-  if (!view) return;
-
-  view.dataset.mobileStep = scheduleMobileStep;
-
+function buildScheduleSidebarData() {
   const q = directoryFilterQuery.toLowerCase().replace(/ё/g, 'е').trim();
   const filteredGroups = scheduleDirectory.groups.filter(g =>
-    !q || g.name.toLowerCase().replace(/ё/g, 'е').includes(q)
+    !q || `${g.name} ${g.faculty || ''}`.toLowerCase().replace(/ё/g, 'е').includes(q)
   );
   const filteredLecturers = scheduleDirectory.lecturers.filter(l =>
-    !q || l.name.toLowerCase().replace(/ё/g, 'е').includes(q) || l.shortName.toLowerCase().replace(/ё/g, 'е').includes(q)
+    !q || `${l.name} ${l.shortName} ${l.fullName || ''} ${l.regalia || ''}`.toLowerCase().replace(/ё/g, 'е').includes(q)
   );
 
   const listItems = directoryActiveTab === 'groups' ? filteredGroups : filteredLecturers;
@@ -2489,12 +3116,17 @@ function renderScheduleWorkspace() {
       const isActive = currentEntitySchedule &&
         currentEntitySchedule.type === itemType &&
         currentEntitySchedule.name === item.name;
-      const titleText = itemType === 'group' ? `Группа ${item.name}` : item.name;
+      const titleText = itemType === 'group'
+        ? `Группа ${item.name}`
+        : (item.fullName || item.shortName || item.name);
+      const subText = itemType === 'group'
+        ? (item.faculty || '')
+        : (item.regalia || '');
       return `
         <button type="button" class="sched-dir-item ${isActive ? 'active' : ''}" data-entity-type="${itemType}" data-entity-name="${escapeHtml(item.name)}">
           <div class="sched-dir-main">
             <div class="sched-dir-title">${escapeHtml(titleText)}</div>
-            <div class="sched-dir-sub">${item.lessonsCount} пар в неделю · ${item.roomsCount} ауд.</div>
+            ${subText ? `<div class="sched-dir-sub">${escapeHtml(subText)}</div>` : ''}
           </div>
           <i class="mdi mdi-chevron-right sched-dir-arrow"></i>
         </button>
@@ -2502,49 +3134,85 @@ function renderScheduleWorkspace() {
     }).join('');
   }
 
+  return { filteredGroups, filteredLecturers, sidebarListHtml };
+}
+
+function attachScheduleSidebarItemListeners(container) {
+  if (!container) return;
+  container.querySelectorAll('.sched-dir-item').forEach(item => {
+    item.addEventListener('click', () => {
+      selectScheduleEntity(item.dataset.entityType, item.dataset.entityName, { switchMobileToDetail: true });
+    });
+  });
+}
+
+// Обновление списка без пересоздания <input id="sched-view-search"> (исправляет сброс цифровой клавиатуры на iOS/iPhone)
+function updateScheduleSidebarListInPlace(view) {
+  const { filteredGroups, filteredLecturers, sidebarListHtml } = buildScheduleSidebarData();
+  const listEl = view.querySelector('#schedule-sidebar-list');
+  if (listEl) {
+    listEl.innerHTML = sidebarListHtml;
+    attachScheduleSidebarItemListeners(listEl);
+  }
+  const groupCountEl = view.querySelector('.sched-tab[data-tab="groups"] .sched-tab-count');
+  const lecCountEl = view.querySelector('.sched-tab[data-tab="lecturers"] .sched-tab-count');
+  if (groupCountEl) groupCountEl.textContent = String(filteredGroups.length);
+  if (lecCountEl) lecCountEl.textContent = String(filteredLecturers.length);
+
+  const clearBtn = view.querySelector('#sched-view-clear');
+  if (clearBtn) {
+    clearBtn.classList.toggle('hidden', !directoryFilterQuery);
+  }
+}
+
+function renderScheduleWorkspace() {
+  const view = document.getElementById('schedule-view');
+  if (!view) return;
+
+  view.dataset.mobileStep = scheduleMobileStep;
+
+  const { filteredGroups, filteredLecturers, sidebarListHtml } = buildScheduleSidebarData();
   const mainHtml = renderScheduleMainPane();
 
   view.innerHTML = `
-    <div class="schedule-workspace">
-      <aside class="schedule-sidebar">
-        <div class="schedule-sidebar-top">
-          <div class="schedule-sidebar-title-row">
-            <div>
-              <div class="panel-crumbs">РГРТУ · Главный корпус</div>
+    <div class="schedule-workspace ${scheduleSidebarCollapsed ? 'sidebar-collapsed' : ''}">
+      <div class="schedule-sidebar-wrap">
+        <aside class="schedule-sidebar ${scheduleSidebarCollapsed ? 'collapsed' : ''}" id="schedule-sidebar">
+          <div class="schedule-sidebar-top">
+            <div class="schedule-sidebar-title-row">
               <h2 class="schedule-sidebar-heading">Расписание</h2>
             </div>
-            <button type="button" class="schedule-back-map-btn" id="schedule-close-btn" title="Вернуться на интерактивную карту">
-              <i class="mdi mdi-map-outline"></i>
-              <span>На карту</span>
-            </button>
+
+            <div class="sched-tabs">
+              <button type="button" class="sched-tab ${directoryActiveTab === 'groups' ? 'active' : ''}" data-tab="groups">
+                <span>Группы</span>
+                <span class="sched-tab-count">${filteredGroups.length}</span>
+              </button>
+              <button type="button" class="sched-tab ${directoryActiveTab === 'lecturers' ? 'active' : ''}" data-tab="lecturers">
+                <span>Преподаватели</span>
+                <span class="sched-tab-count">${filteredLecturers.length}</span>
+              </button>
+            </div>
+
+            <div class="sched-filter-wrap">
+              <i class="mdi mdi-magnify sched-filter-icon"></i>
+              <input type="text" class="sched-filter-input" id="sched-view-search"
+                     placeholder="${directoryActiveTab === 'groups' ? 'Поиск группы (например, 445 или 546М)…' : 'Поиск преподавателя (например, Устюков)…'}"
+                     value="${escapeHtml(directoryFilterQuery)}" autocomplete="off">
+              <button type="button" class="input-clear-btn ${directoryFilterQuery ? '' : 'hidden'}" id="sched-view-clear" title="Очистить поиск" aria-label="Очистить поиск">
+                <i class="mdi mdi-close"></i>
+              </button>
+            </div>
           </div>
 
-          <div class="sched-tabs">
-            <button type="button" class="sched-tab ${directoryActiveTab === 'groups' ? 'active' : ''}" data-tab="groups">
-              <span>Группы</span>
-              <span class="sched-tab-count">${filteredGroups.length}</span>
-            </button>
-            <button type="button" class="sched-tab ${directoryActiveTab === 'lecturers' ? 'active' : ''}" data-tab="lecturers">
-              <span>Преподаватели</span>
-              <span class="sched-tab-count">${filteredLecturers.length}</span>
-            </button>
+          <div class="schedule-sidebar-list" id="schedule-sidebar-list">
+            ${sidebarListHtml}
           </div>
-
-          <div class="sched-filter-wrap">
-            <i class="mdi mdi-magnify sched-filter-icon"></i>
-            <input type="text" class="sched-filter-input" id="sched-view-search"
-                   placeholder="${directoryActiveTab === 'groups' ? 'Поиск группы (например, 445)…' : 'Поиск преподавателя (например, Устюков)…'}"
-                   value="${escapeHtml(directoryFilterQuery)}" autocomplete="off">
-            <button type="button" class="input-clear-btn ${directoryFilterQuery ? '' : 'hidden'}" id="sched-view-clear" title="Очистить поиск" aria-label="Очистить поиск">
-              <i class="mdi mdi-close"></i>
-            </button>
-          </div>
-        </div>
-
-        <div class="schedule-sidebar-list" id="schedule-sidebar-list">
-          ${sidebarListHtml}
-        </div>
-      </aside>
+        </aside>
+        <button type="button" class="schedule-sidebar-handle" id="schedule-sidebar-handle" title="${scheduleSidebarCollapsed ? 'Развернуть список групп и преподавателей' : 'Свернуть список групп и преподавателей'}">
+          <i class="mdi ${scheduleSidebarCollapsed ? 'mdi-chevron-right' : 'mdi-chevron-left'}"></i>
+        </button>
+      </div>
 
       <main class="schedule-main" id="schedule-main">
         ${mainHtml}
@@ -2554,6 +3222,16 @@ function renderScheduleWorkspace() {
 
   attachScheduleWorkspaceListeners(view);
 }
+
+const STANDARD_TIME_SLOTS = [
+  '08:10–09:45',
+  '09:55–11:30',
+  '11:40–13:15',
+  '13:35–15:10',
+  '15:20–16:55',
+  '17:05–18:40',
+  '18:45–20:10'
+];
 
 function renderScheduleMainPane() {
   if (entityLoading) {
@@ -2568,8 +3246,8 @@ function renderScheduleMainPane() {
   if (entityError) {
     return `
       <div class="schedule-main-empty">
-        <button type="button" class="sched-mobile-back-btn" id="sched-mobile-back">
-          <i class="mdi mdi-arrow-left"></i> К списку
+        <button type="button" class="schedule-back-arrow-btn" id="sched-mobile-back" title="К списку" aria-label="К списку">
+          <i class="mdi mdi-chevron-left"></i>
         </button>
         <div class="schedule-empty-title">Не удалось загрузить расписание</div>
         <div class="schedule-empty-sub">${escapeHtml(entityError)}</div>
@@ -2589,8 +3267,8 @@ function renderScheduleMainPane() {
 
   const data = currentEntityData;
   const isGroup = data.entityType === 'group';
-  const title = isGroup ? `Группа ${data.name}` : data.name;
-  const badgeLabel = isGroup ? 'Учебная группа' : 'Преподаватель';
+  const title = isGroup ? `Группа ${data.name}` : (data.fullName || data.shortName || data.name);
+  const kickerText = isGroup ? (data.faculty || '') : (data.regalia || '');
 
   const st = data.nowStatus || { type: 'free', title: 'Сейчас пар нет', details: '' };
   const statusCardHtml = `
@@ -2600,171 +3278,163 @@ function renderScheduleMainPane() {
         <div class="now-title">${escapeHtml(st.title)}</div>
         <div class="now-details">${escapeHtml(st.details)}</div>
       </div>
-      ${st.roomId ? `<span class="schedule-status-map-link"><i class="mdi mdi-map-marker-radius-outline"></i> На карте</span>` : ''}
+      ${st.roomId ? `<span class="schedule-status-map-link"><i class="mdi mdi-map-marker-radius-outline"></i></span>` : ''}
     </div>
   `;
-
-  const roomsChipsHtml = (data.rooms || []).map(r => `
-    <button type="button" class="entity-room-chip" data-room-id="${escapeHtml(r.id)}" title="Показать ${escapeHtml(formatRoomName(r.name))} на карте (${r.floor} этаж)">
-      <i class="mdi mdi-map-marker-radius-outline"></i>
-      <span>ауд. ${escapeHtml(r.shortName)} · ${r.floor} эт.</span>
-    </button>
-  `).join('');
 
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
   const todayISO = `${yyyy}-${mm}-${dd}`;
-  const nowMin = now.getHours() * 60 + now.getMinutes();
 
   const days = data.days || [];
-  const totalLessonsCount = data.lessonsCount || days.reduce((acc, d) => acc + ((d.lessons && d.lessons.length) || 0), 0);
 
-  const dayFilterPillsHtml = `
-    <div class="schedule-day-filters">
-      <button type="button" class="schedule-day-pill ${scheduleDayFilter === 'all' ? 'active' : ''}" data-day-filter="all">
-        Вся неделя
-      </button>
-      ${days.map(d => {
-        const isToday = d.date === todayISO;
-        const count = (d.lessons || []).length;
-        return `
-          <button type="button" class="schedule-day-pill ${scheduleDayFilter === d.date ? 'active' : ''} ${isToday ? 'today' : ''}" data-day-filter="${escapeHtml(d.date)}">
-            <span>${escapeHtml(d.dayName)}</span>
-            ${count > 0 ? `<span class="schedule-day-pill-count">${count}</span>` : ''}
-          </button>
-        `;
-      }).join('')}
-    </div>
-  `;
+  // Собираем все временные слоты (стандартные + любые нестандартные из расписания)
+  const slotSet = new Set(STANDARD_TIME_SLOTS);
+  days.forEach(d => {
+    (d.lessons || []).forEach(l => {
+      if (l.time) slotSet.add(l.time.replace('-', '–'));
+    });
+  });
+  const allSlots = [...slotSet].sort((a, b) => a.localeCompare(b));
 
-  const visibleDays = scheduleDayFilter === 'all'
-    ? days
-    : days.filter(d => d.date === scheduleDayFilter);
-
-  const daysGridHtml = visibleDays.map(day => {
+  const headColsHtml = days.map(day => {
     const isToday = day.date === todayISO;
     const [, mStr, dStr] = (day.date || '').split('-');
     const dateLabel = dStr && mStr ? `${parseInt(dStr, 10)} ${MONTH_NAMES[parseInt(mStr, 10) - 1] || ''}` : '';
+    return `
+      <th class="${isToday ? 'today-col' : ''}">
+        <div class="th-day-top">
+          <span class="th-day-name">${escapeHtml(day.dayName)}</span>
+          ${isToday ? '<span class="th-today-badge">Сегодня</span>' : ''}
+        </div>
+        <span class="th-day-date">${escapeHtml(dateLabel)}</span>
+      </th>
+    `;
+  }).join('');
 
-    const lessonsHtml = (!day.lessons || day.lessons.length === 0)
-      ? `<div class="lesson empty">Пар нет</div>`
-      : day.lessons.map(l => {
-          const m = l.time.match(/(\d{1,2}):(\d{2})[–-](\d{1,2}):(\d{2})/);
-          let isNow = false;
-          if (isToday && m) {
-            const s = +m[1] * 60 + +m[2];
-            const e = +m[3] * 60 + +m[4];
-            if (nowMin >= s && nowMin <= e) isNow = true;
-          }
-          const cls = isNow ? 'lesson now' : 'lesson';
+  const rowsHtml = allSlots.map((slot, slotIdx) => {
+    const mStart = slot.match(/^(\d{1,2}:\d{2})/);
+    const breakRange = mStart && BREAKS[mStart[1]] ? BREAKS[mStart[1]] : '';
+    const pairLabel = `${slotIdx + 1} пара`;
 
-          let badgeHtml = '';
-          if (l.type && LESSON_TYPES[l.type]) {
-            const t = LESSON_TYPES[l.type];
-            badgeHtml = `<span class="badge ${t.cls}"><i class="mdi ${t.icon}"></i>${l.type}</span>`;
-          } else if (l.type) {
-            badgeHtml = `<span class="badge pr">${escapeHtml(l.type)}</span>`;
-          }
+    const cellsHtml = days.map(day => {
+      const isToday = day.date === todayISO;
+      const matching = (day.lessons || []).filter(l => (l.time || '').replace('-', '–') === slot);
 
-          let breakText = '';
-          const mStart = l.time.match(/^(\d{1,2}:\d{2})/);
-          if (mStart && BREAKS[mStart[1]]) {
-            breakText = ` · перерыв ${BREAKS[mStart[1]]}`;
-          }
+      if (matching.length === 0) {
+        return `<td class="slot-col empty-col ${isToday ? 'today-col' : ''}"><span class="wt-empty-dash">·</span></td>`;
+      }
 
-          const metaLine = isGroup
-            ? formatInteractiveGroupAndLecturerHtml('', l.lecturer)
-            : formatInteractiveGroupAndLecturerHtml(l.group, '');
+      const itemsHtml = matching.map(l => {
+        let badgeHtml = '';
+        if (l.type && LESSON_TYPES[l.type]) {
+          const t = LESSON_TYPES[l.type];
+          badgeHtml = `<span class="badge ${t.cls}"><i class="mdi ${t.icon}"></i>${l.type}</span>`;
+        } else if (l.type) {
+          badgeHtml = `<span class="badge pr">${escapeHtml(l.type)}</span>`;
+        }
 
-          return `
-            <div class="${cls}" data-room-id="${escapeHtml(l.roomId)}">
-              <div class="lesson-top-row">
-                <div class="time" style="margin-bottom:0">${escapeHtml(l.time)}${breakText}</div>
-                <button type="button" class="lesson-room-badge" data-room-id="${escapeHtml(l.roomId)}" title="Показать аудиторию на карте">
-                  <i class="mdi mdi-map-marker-radius-outline"></i>
-                  <span>ауд. ${escapeHtml(l.roomShort)} · ${l.floor} эт.</span>
-                </button>
-              </div>
-              <div class="subject">${badgeHtml}${escapeHtml(l.subject)}</div>
-              ${metaLine ? `<div class="meta">${metaLine}</div>` : ''}
-            </div>
-          `;
-        }).join('');
+        const entityHtml = isGroup
+          ? formatInteractiveGroupAndLecturerHtml('', l.lecturer)
+          : formatInteractiveGroupAndLecturerHtml(l.group, '');
+
+        const roomLinkHtml = `ауд. <button type="button" class="wt-room-link" data-room-id="${escapeHtml(l.roomId)}" title="Показать аудиторию ${escapeHtml(l.roomShort)} (${l.floor} этаж) на карте">${escapeHtml(l.roomShort)} С</button>`;
+
+        const detailsLine = entityHtml
+          ? `${entityHtml}, ${roomLinkHtml}`
+          : roomLinkHtml;
+
+        return `
+          <div class="wt-cell-item">
+            <div class="wt-cell-main">${badgeHtml}<span class="wt-cell-subject">${escapeHtml(l.subject)},</span></div>
+            <div class="wt-cell-details">${detailsLine}</div>
+          </div>
+        `;
+      }).join('');
+
+      return `<td class="slot-col ${isToday ? 'today-col' : ''}">${itemsHtml}</td>`;
+    }).join('');
 
     return `
-      <div class="schedule-day-card ${isToday ? 'today' : ''}">
-        <div class="schedule-day-card-header">
-          <span class="schedule-day-name">${escapeHtml(day.dayName)}</span>
-          <span class="schedule-day-date">${escapeHtml(dateLabel)}${isToday ? ' · сегодня' : ''}</span>
-        </div>
-        <div class="schedule-day-lessons">
-          ${lessonsHtml}
-        </div>
-      </div>
+      <tr>
+        <td class="time-col">
+          <span class="wt-pair-num">${pairLabel}</span>
+          <div class="wt-time-range">${escapeHtml(slot)}</div>
+          ${breakRange ? `<div class="wt-time-break">перерыв<br>${escapeHtml(breakRange)}</div>` : ''}
+        </td>
+        ${cellsHtml}
+      </tr>
     `;
   }).join('');
 
   return `
     <div class="schedule-main-header">
-      <div class="schedule-mobile-nav">
-        <button type="button" class="sched-mobile-back-btn" id="sched-mobile-back">
-          <i class="mdi mdi-arrow-left"></i>
-          <span>К списку</span>
-        </button>
-        <button type="button" class="schedule-back-map-btn" id="sched-mobile-close-map">
-          <i class="mdi mdi-map-outline"></i>
-          <span>На карту</span>
-        </button>
-      </div>
-
       <div class="schedule-hero-top">
-        <div>
-          <div class="panel-crumbs">${escapeHtml(badgeLabel)} · ${totalLessonsCount} пар на неделе</div>
+        <div class="schedule-hero-title-block">
+          ${kickerText ? `<div class="schedule-entity-kicker">${escapeHtml(kickerText)}</div>` : ''}
           <h1 class="schedule-entity-title">
             <span>${escapeHtml(title)}</span>
-            <button type="button" class="schedule-share-btn" id="schedule-share-btn" title="Скопировать прямую ссылку на расписание">
-              <i class="mdi mdi-link-variant"></i>
-            </button>
+            <i class="mdi mdi-link-variant share-icon schedule-share-icon" id="schedule-share-btn" role="button" tabindex="0" title="Скопировать прямую ссылку на расписание" aria-label="Скопировать прямую ссылку на расписание"></i>
           </h1>
         </div>
+        <button type="button" class="schedule-back-arrow-btn" id="sched-mobile-back" title="К списку" aria-label="К списку">
+          <i class="mdi mdi-chevron-left"></i>
+        </button>
       </div>
 
       ${statusCardHtml}
-
-      ${roomsChipsHtml ? `
-        <div class="schedule-rooms-section">
-          <span class="schedule-rooms-label">Аудитории на карте:</span>
-          <div class="entity-rooms-strip">${roomsChipsHtml}</div>
-        </div>
-      ` : ''}
-
-      ${dayFilterPillsHtml}
     </div>
 
-    <div class="schedule-days-grid">
-      ${daysGridHtml}
+    <div class="weekly-table-wrap">
+      <table class="weekly-schedule-table">
+        <thead>
+          <tr>
+            <th class="time-col">Время</th>
+            ${headColsHtml}
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
     </div>
   `;
 }
 
 function attachScheduleWorkspaceListeners(view) {
-  const closeBtn = view.querySelector('#schedule-close-btn');
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => closeScheduleView());
-  }
-
-  const mobileCloseMapBtn = view.querySelector('#sched-mobile-close-map');
-  if (mobileCloseMapBtn) {
-    mobileCloseMapBtn.addEventListener('click', () => closeScheduleView());
+  const sidebarHandle = view.querySelector('#schedule-sidebar-handle');
+  if (sidebarHandle) {
+    sidebarHandle.addEventListener('click', () => {
+      scheduleSidebarCollapsed = !scheduleSidebarCollapsed;
+      const sidebar = view.querySelector('#schedule-sidebar');
+      const workspace = view.querySelector('.schedule-workspace');
+      if (sidebar) sidebar.classList.toggle('collapsed', scheduleSidebarCollapsed);
+      if (workspace) workspace.classList.toggle('sidebar-collapsed', scheduleSidebarCollapsed);
+      sidebarHandle.title = scheduleSidebarCollapsed
+        ? 'Развернуть список групп и преподавателей'
+        : 'Свернуть список групп и преподавателей';
+      const icon = sidebarHandle.querySelector('i');
+      if (icon) {
+        icon.className = `mdi ${scheduleSidebarCollapsed ? 'mdi-chevron-right' : 'mdi-chevron-left'}`;
+      }
+    });
   }
 
   const mobileBackBtn = view.querySelector('#sched-mobile-back');
   if (mobileBackBtn) {
     mobileBackBtn.addEventListener('click', () => {
-      scheduleMobileStep = 'list';
-      view.dataset.mobileStep = 'list';
+      if (window.innerWidth <= 768) {
+        scheduleMobileStep = 'list';
+        view.dataset.mobileStep = 'list';
+      } else {
+        currentEntitySchedule = null;
+        currentEntityData = null;
+        scheduleSidebarCollapsed = false;
+        updateScheduleURL({ push: false });
+        renderScheduleWorkspace();
+      }
     });
   }
 
@@ -2796,44 +3466,26 @@ function attachScheduleWorkspaceListeners(view) {
   if (searchInput) {
     searchInput.addEventListener('input', () => {
       directoryFilterQuery = searchInput.value;
-      const pos = searchInput.selectionStart;
-      renderScheduleWorkspace();
-      const nextInput = document.getElementById('sched-view-search');
-      if (nextInput) {
-        nextInput.focus();
-        try { nextInput.setSelectionRange(pos, pos); } catch (e) {}
-      }
+      updateScheduleSidebarListInPlace(view);
     });
   }
 
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
       directoryFilterQuery = '';
-      renderScheduleWorkspace();
-      const nextInput = document.getElementById('sched-view-search');
-      if (nextInput) nextInput.focus();
+      if (searchInput) {
+        searchInput.value = '';
+        searchInput.focus();
+      }
+      updateScheduleSidebarListInPlace(view);
     });
   }
 
-  view.querySelectorAll('.sched-dir-item').forEach(item => {
-    item.addEventListener('click', () => {
-      selectScheduleEntity(item.dataset.entityType, item.dataset.entityName, { switchMobileToDetail: true });
-    });
-  });
-
-  view.querySelectorAll('[data-day-filter]').forEach(pill => {
-    pill.addEventListener('click', () => {
-      scheduleDayFilter = pill.dataset.dayFilter || 'all';
-      renderScheduleWorkspace();
-    });
-  });
+  attachScheduleSidebarItemListeners(view);
 
   view.querySelectorAll('[data-room-id]').forEach(el => {
     el.addEventListener('click', (e) => {
       if (e.target.closest('.entity-inline-link')) return;
-      if (el.classList.contains('lesson') && !e.target.closest('.lesson-room-badge')) {
-        // Клик по карточке занятия или по бейджу аудитории переносит на карту к этой аудитории
-      }
       e.stopPropagation();
       const roomId = el.dataset.roomId;
       if (roomId) {
@@ -3176,11 +3828,11 @@ function openRoutePanel() {
     }
     return;
   }
-  if (freeModeOn) disableFreeMode();
 
   panelMode = 'route';
   routePickSide = routeState.fromRoomId && !routeState.toRoomId ? 'to' : 'from';
   clearSelectedRoom();
+  if (panel) panel.classList.add('mobile-compact');
   openPanel();
   renderRoutePanel();
   refreshRoutePickHighlight();
@@ -3196,13 +3848,14 @@ function closeRoutePanel() {
 
 function startRouteToRoom(toRoomId) {
   if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
-  if (freeModeOn) disableFreeMode();
+  const panel = document.getElementById('panel');
   panelMode = 'route';
   clearSelectedRoom();
   routeState.toRoomId = toRoomId;
   routeState.path = null;
   if (routeLayer) routeLayer.clearLayers();
   routePickSide = routeState.fromRoomId ? 'to' : 'from';
+  if (panel) panel.classList.add('mobile-compact');
   openPanel();
   renderRoutePanel();
   refreshRoutePickHighlight();
@@ -3214,13 +3867,14 @@ function startRouteToRoom(toRoomId) {
 
 function startRouteFromRoom(fromRoomId) {
   if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
-  if (freeModeOn) disableFreeMode();
+  const panel = document.getElementById('panel');
   panelMode = 'route';
   clearSelectedRoom();
   routeState.fromRoomId = fromRoomId;
   routeState.path = null;
   if (routeLayer) routeLayer.clearLayers();
   routePickSide = 'to';
+  if (panel) panel.classList.add('mobile-compact');
   openPanel();
   renderRoutePanel();
   refreshRoutePickHighlight();
@@ -3232,12 +3886,13 @@ function startRouteFromRoom(fromRoomId) {
 
 async function executeRouteBetween(fromRoomId, toRoomId) {
   if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
-  if (freeModeOn) disableFreeMode();
+  const panel = document.getElementById('panel');
   panelMode = 'route';
   clearSelectedRoom();
   routeState.fromRoomId = fromRoomId;
   routeState.toRoomId = toRoomId;
   routeState.path = null;
+  if (panel) panel.classList.add('mobile-compact');
   openPanel();
   renderRoutePanel();
   refreshRoutePickHighlight();
@@ -3256,6 +3911,8 @@ async function executeRouteBetween(fromRoomId, toRoomId) {
 function handleRouteMapPick(id) {
   const meta = roomsMeta[id];
   if (!meta) return;
+  const panel = document.getElementById('panel');
+  if (panel) panel.classList.remove('mobile-minimized');
   setRoutePoint(routePickSide, id, formatRoomName(meta.name));
   routePickSide = routePickSide === 'from' ? 'to' : 'from';
 }
@@ -3271,7 +3928,7 @@ function renderRoutePanel() {
 
   const header = `
     <div class="panel-header">
-      <button class="close" onclick="closeRoutePanel()">✕</button>
+      <button class="close" onclick="closeRoutePanel()" title="Закрыть и сбросить маршрут">✕</button>
       <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
       <h2>Маршрут</h2>
     </div>
@@ -3299,10 +3956,6 @@ function renderRoutePanel() {
         <ul class="route-results" id="route-to-results"></ul>
       </div>
     </div>
-    <button class="route-build-btn" id="route-build-btn" ${routeState.fromRoomId && routeState.toRoomId ? '' : 'disabled'}>
-      <i class="mdi mdi-directions"></i> Построить маршрут
-    </button>
-    ${routeState.path ? `<button class="route-clear-btn" id="route-clear-btn">Сбросить маршрут</button>` : ''}
   `;
 
   let scroll = '';
@@ -3311,7 +3964,7 @@ function renderRoutePanel() {
   } else {
     scroll = `
       <div class="route-hint">
-        Выберите начальную и конечную точки в полях выше или просто кликните по нужным аудиториям на карте.
+        Выберите начальную и конечную точки в полях выше или просто кликните по нужным аудиториям на карте — маршрут построится автоматически.
       </div>
     `;
   }
@@ -3320,16 +3973,6 @@ function renderRoutePanel() {
 
   setupRouteInput('from');
   setupRouteInput('to');
-
-  document.getElementById('route-build-btn').addEventListener('click', onBuildRouteClick);
-
-  const clearBtn = document.getElementById('route-clear-btn');
-  if (clearBtn) {
-    clearBtn.addEventListener('click', () => {
-      clearRoute();
-      renderRoutePanel();
-    });
-  }
 
   panel.querySelectorAll('.step-floor-link').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -3370,15 +4013,17 @@ function setupRouteInput(side) {
       if (routeLayer) routeLayer.clearLayers();
       results.classList.remove('open');
       results.innerHTML = '';
-      const buildBtn = document.getElementById('route-build-btn');
-      if (buildBtn) buildBtn.disabled = !(routeState.fromRoomId && routeState.toRoomId);
       refreshRoutePickHighlight();
-      input.focus();
+      renderRoutePanel();
+      const nextInput = document.getElementById(inputId);
+      if (nextInput) nextInput.focus();
     });
   }
 
   input.addEventListener('focus', () => {
     routePickSide = side;
+    const panel = document.getElementById('panel');
+    if (panel) panel.classList.remove('mobile-minimized');
     const labelFrom = document.querySelector('#route-from')?.closest('.route-field')?.querySelector('.label-hint');
     const labelTo = document.querySelector('#route-to')?.closest('.route-field')?.querySelector('.label-hint');
     if (labelFrom) labelFrom.textContent = side === 'from' ? '← или ткните на карте' : '';
@@ -3391,9 +4036,9 @@ function setupRouteInput(side) {
     if (!q) {
       if (side === 'from') routeState.fromRoomId = null;
       else routeState.toRoomId = null;
+      routeState.path = null;
+      if (routeLayer) routeLayer.clearLayers();
       input.classList.remove('filled');
-      const buildBtn = document.getElementById('route-build-btn');
-      if (buildBtn) buildBtn.disabled = !(routeState.fromRoomId && routeState.toRoomId);
       refreshRoutePickHighlight();
       results.classList.remove('open');
       results.innerHTML = '';
@@ -3453,10 +4098,12 @@ function setRoutePoint(side, roomId, name) {
   const results = document.getElementById(resultsId);
   if (results) results.classList.remove('open');
 
-  const buildBtn = document.getElementById('route-build-btn');
-  if (buildBtn) buildBtn.disabled = !(routeState.fromRoomId && routeState.toRoomId);
-
   refreshRoutePickHighlight();
+
+  // Автоматическое построение маршрута при выборе обеих точек
+  if (routeState.fromRoomId && routeState.toRoomId) {
+    onBuildRouteClick();
+  }
 }
 
 async function onBuildRouteClick() {
@@ -3644,9 +4291,14 @@ function setupHotkeys() {
     const isInput = tag === 'input' || tag === 'textarea';
 
     if (e.key === 'Escape') {
+      const dropdown = document.getElementById('user-dropdown');
+      if (dropdown && !dropdown.classList.contains('hidden')) {
+        closeUserDropdown();
+        return;
+      }
       const wrap = document.getElementById('search-wrap');
       if (wrap && wrap.classList.contains('open')) {
-        wrap.classList.remove('open');
+        closeSearchDropdown();
         if (isInput) e.target.blur();
         return;
       }
@@ -3656,7 +4308,6 @@ function setupHotkeys() {
       }
       if (document.getElementById('panel').classList.contains('open')) {
         if (panelMode === 'room') closeRoomPanel();
-        else if (panelMode === 'free') collapseFreePanel();
         else if (panelMode === 'route') closeRoutePanel();
         else if (panelMode === 'ai') closeAiPanel();
         else closePanel();
@@ -3686,29 +4337,21 @@ function setupHotkeys() {
   roomsMeta = await fetch('data/rooms.json').then(r => r.json());
   await Promise.all([loadGraph(), loadScheduleDirectory()]);
 
-  buildBuildingsUI();
   setupSearch();
-  setupThemeToggle();
-  setupResetControl().addTo(map);
+  setupUserProfileAndTheme();
   createFloorSwitcher().addTo(map);
-  setupFreeToggle().addTo(map);
   setupPanelHandle();
+  setupMobilePanelSheet();
   setupHotkeys();
 
-  const freeTopBtn = document.getElementById('free-top-btn');
-  if (freeTopBtn) freeTopBtn.addEventListener('click', toggleFreeMode);
-
-  const routeTopBtn = document.getElementById('route-toggle');
-  if (routeTopBtn) routeTopBtn.addEventListener('click', openRoutePanel);
-
-  const aiTopBtn = document.getElementById('ai-toggle');
-  if (aiTopBtn) aiTopBtn.addEventListener('click', () => openAiPanel(null));
-
-  const brandEl = document.querySelector('.topbar-brand');
-  if (brandEl) {
-    brandEl.style.cursor = 'pointer';
-    brandEl.addEventListener('click', () => {
-      if (scheduleViewOpen) closeScheduleView();
+  const cornerTab = document.getElementById('schedule-corner-tab');
+  if (cornerTab) {
+    cornerTab.addEventListener('click', () => {
+      if (scheduleViewOpen) {
+        closeScheduleView();
+      } else {
+        openScheduleDirectory();
+      }
     });
   }
 

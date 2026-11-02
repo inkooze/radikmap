@@ -4,9 +4,15 @@
   <meta charset="UTF-8">
   <script>
     try {
-      document.documentElement.dataset.theme = localStorage.getItem('theme') || 'light';
+      const savedPref = localStorage.getItem('theme') || 'system';
+      const resolved = savedPref === 'system'
+        ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        : (savedPref === 'dark' ? 'dark' : 'light');
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.dataset.themePref = savedPref;
     } catch (e) {
       document.documentElement.dataset.theme = 'light';
+      document.documentElement.dataset.themePref = 'system';
     }
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -23,54 +29,161 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-  <header id="topbar">
-    <div class="topbar-left">
-      <div class="topbar-brand">
-        <span class="topbar-title">Карта РГРТУ</span>
-        <span class="topbar-sep" aria-hidden="true"></span>
-        <span class="topbar-subtitle">Главный корпус</span>
+  <!-- Угловой язычок «Расписание / На карту» в левом верхнем углу -->
+  <button type="button" id="schedule-corner-tab" class="schedule-corner-tab" aria-label="Открыть расписание">
+    <i class="mdi mdi-calendar-month-outline" id="schedule-corner-icon"></i>
+    <span id="schedule-corner-label">Расписание</span>
+    <i class="mdi mdi-chevron-down schedule-corner-arrow" id="schedule-corner-arrow"></i>
+  </button>
+
+  <!-- Парящие островки в правом верхнем углу (поверх карты и поверх расписания) -->
+  <div class="floating-top-right" id="floating-top-right">
+    <div class="search-wrap" id="search-wrap">
+      <div class="omni-bar" id="omni-bar">
+        <button type="button" class="omni-ai-btn" id="omni-ai-btn" title="Открыть чат с ИИ'шкой">
+          <i class="mdi mdi-creation"></i>
+          <span>ИИ'шка</span>
+        </button>
+
+        <input type="text" id="search-input"
+               placeholder="Поиск и выбор мест"
+               autocomplete="off"
+               aria-label="Поиск аудитории, группы, преподавателя или вопрос ИИ'шке">
+
+        <button type="button" class="omni-search-btn" id="omni-search-submit" title="Найти" aria-label="Найти">
+          <i class="mdi mdi-magnify"></i>
+        </button>
+
+        <span class="omni-divider" aria-hidden="true"></span>
+
+        <button type="button" class="omni-right-action" id="omni-route-btn" title="Построить маршрут" aria-label="Маршрут">
+          <svg class="route-s-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="12.5" cy="18.2" r="2.7" fill="currentColor"/>
+            <path d="M16.2 15.4C18.2 14.0 18.4 10.6 15.6 9.9C13.1 9.3 10.9 13.7 8.1 13.1C5.9 12.6 5.8 9.8 7.5 8.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M8.6 5.9C8.1 5.4 8.3 4.6 9.0 4.4L12.7 3.5C13.4 3.3 14.0 3.9 13.8 4.6L12.7 8.3C12.5 9.0 11.6 9.2 11.1 8.6L8.6 5.9Z" fill="currentColor"/>
+          </svg>
+        </button>
+
+        <button type="button" class="omni-right-action omni-clear-btn hidden" id="search-clear" title="Очистить" aria-label="Очистить поиск">
+          <i class="mdi mdi-close"></i>
+        </button>
+
+        <button type="button" class="omni-right-action omni-ai-send-btn hidden" id="omni-ai-send" title="Отправить в ИИ'шку" aria-label="Отправить в ИИ'шку">
+          <i class="mdi mdi-send"></i>
+        </button>
+      </div>
+
+      <div class="search-panel" id="search-panel">
+        <div class="quick-tags" id="quick-tags"></div>
+        <div class="ai-inline-trigger hidden" id="ai-inline-trigger">
+          <i class="mdi mdi-creation"></i>
+          <span>Спросить ИИ'шку: «<strong id="ai-inline-query"></strong>»</span>
+        </div>
+        <div class="search-history" id="search-history"></div>
+        <ul class="results" id="search-results"></ul>
       </div>
     </div>
 
-    <div class="topbar-actions">
-      <div class="search-wrap" id="search-wrap">
-        <div class="omni-bar" id="omni-bar">
-          <i class="mdi mdi-magnify omni-search-icon"></i>
-          <input type="text" id="search-input"
-                 placeholder="Аудитория, группа, преподаватель или вопрос ИИ…"
-                 autocomplete="off">
-          <button type="button" class="omni-clear-btn hidden" id="search-clear" title="Очистить">
-            <i class="mdi mdi-close"></i>
-          </button>
-          <button type="button" class="omni-ai-btn" id="omni-ai-btn" title="Открыть чат с ИИ">
-            <i class="mdi mdi-creation"></i>
-            <span>ИИ</span>
-          </button>
-        </div>
-
-        <div class="search-panel" id="search-panel">
-          <div class="quick-tags" id="quick-tags"></div>
-          <div class="ai-inline-trigger hidden" id="ai-inline-trigger">
-            <i class="mdi mdi-creation"></i>
-            <span>Спросить ИИ: «<strong id="ai-inline-query"></strong>»</span>
-          </div>
-          <div class="search-history" id="search-history"></div>
-          <ul class="results" id="search-results"></ul>
-        </div>
-      </div>
-
-      <button class="action-btn" id="theme-toggle" title="Переключить тему">
-        <i class="mdi mdi-weather-night"></i>
+    <div class="user-menu-wrap" id="user-menu-wrap">
+      <button type="button" class="action-btn user-menu-btn" id="user-menu-btn" title="Профиль и настройки" aria-label="Профиль и настройки" aria-expanded="false">
+        <i class="mdi mdi-account-outline"></i>
+        <span class="user-status-dot hidden" id="user-status-dot"></span>
       </button>
+
+      <div class="user-dropdown hidden" id="user-dropdown" role="dialog" aria-label="Профиль и настройки">
+        <div class="user-dropdown-drag-pill" aria-hidden="true"></div>
+        <div class="user-dropdown-header">
+          <div class="user-dropdown-avatar" id="user-dropdown-avatar">
+            <i class="mdi mdi-account"></i>
+          </div>
+          <div class="user-dropdown-meta">
+            <div class="user-dropdown-name" id="user-dropdown-name">Гость</div>
+            <div class="user-dropdown-sub" id="user-dropdown-sub">Войдите через Telegram для выбора своего расписания</div>
+          </div>
+          <button type="button" class="user-dropdown-close" id="user-dropdown-close" aria-label="Закрыть профиль" title="Закрыть">✕</button>
+        </div>
+
+        <div class="user-dropdown-section hidden" id="user-academic-section">
+          <div class="user-dropdown-label">Ваш статус</div>
+          <div class="user-segmented" role="group" aria-label="Статус пользователя">
+            <button type="button" class="user-seg-btn active" id="user-role-student" data-role="student">
+              <i class="mdi mdi-school-outline"></i> Студент
+            </button>
+            <button type="button" class="user-seg-btn" id="user-role-lecturer" data-role="lecturer">
+              <i class="mdi mdi-account-tie-outline"></i> Преподаватель
+            </button>
+          </div>
+
+          <div class="user-target-picker">
+            <label class="user-dropdown-label" id="user-target-label" for="user-target-input">Номер группы</label>
+            <div class="user-target-input-wrap">
+              <input type="text" id="user-target-input" class="user-target-input" placeholder="Например: 445 или 546М" autocomplete="off">
+              <button type="button" class="input-clear-x hidden" id="user-target-clear" aria-label="Очистить">
+                <i class="mdi mdi-close"></i>
+              </button>
+            </div>
+            <div class="user-target-suggestions hidden" id="user-target-suggestions"></div>
+          </div>
+
+          <button type="button" class="user-my-schedule-btn hidden" id="user-open-schedule-btn">
+            <i class="mdi mdi-calendar-check-outline"></i>
+            <span id="user-open-schedule-text">Моё расписание</span>
+          </button>
+        </div>
+
+        <div class="user-dropdown-section">
+          <div class="user-dropdown-label">Тема оформления</div>
+          <div class="user-segmented user-theme-segmented" role="group" aria-label="Тема оформления">
+            <button type="button" class="user-seg-btn active" id="user-theme-system" data-theme-val="system" title="Системная тема устройства">
+              <i class="mdi mdi-theme-light-dark"></i> Авто
+            </button>
+            <button type="button" class="user-seg-btn" id="user-theme-light" data-theme-val="light" title="Светлая тема">
+              <i class="mdi mdi-white-balance-sunny"></i> Светлая
+            </button>
+            <button type="button" class="user-seg-btn" id="user-theme-dark" data-theme-val="dark" title="Тёмная тема">
+              <i class="mdi mdi-weather-night"></i> Тёмная
+            </button>
+          </div>
+        </div>
+
+        <div class="user-dropdown-section" id="user-tg-section">
+          <div class="user-dropdown-label">Telegram и уведомления</div>
+
+          <div id="user-tg-unlinked" class="user-tg-box">
+            <p class="user-tg-hint">Привяжите Telegram, чтобы выбрать свою группу или ФИО и получать уведомления за 15 мин до пары:</p>
+            <a href="#" target="_blank" rel="noopener" class="user-tg-bot-link hidden" id="user-tg-deeplink">
+              <i class="mdi mdi-send"></i> Войти в 1 клик через Telegram
+            </a>
+            <div class="user-tg-code-row">
+              <input type="text" id="user-tg-code-input" class="user-tg-code-input" placeholder="Код из /login или @username" autocomplete="off">
+              <button type="button" class="user-tg-code-btn" id="user-tg-code-submit">Войти</button>
+            </div>
+            <div class="user-tg-feedback hidden" id="user-tg-feedback"></div>
+          </div>
+
+          <div id="user-tg-linked" class="user-tg-box hidden">
+            <label class="user-notif-row" for="user-notif-checkbox">
+              <span class="user-notif-text">
+                <i class="mdi mdi-bell-ring-outline"></i>
+                Уведомлять о парах в Telegram
+              </span>
+              <input type="checkbox" id="user-notif-checkbox" class="user-notif-checkbox">
+            </label>
+            <button type="button" class="user-logout-btn" id="user-logout-btn">
+              <i class="mdi mdi-logout"></i> Выйти из аккаунта
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
-  </header>
+  </div>
 
   <div id="app">
     <div id="map-wrap">
       <div id="map"></div>
     </div>
     <aside id="panel"></aside>
-    <section id="schedule-view" class="schedule-view hidden" aria-label="Расписание групп и преподавателей"></section>
+    <section id="schedule-view" class="schedule-view" aria-label="Расписание групп и преподавателей" aria-hidden="true"></section>
   </div>
 
   <button id="panel-handle" class="panel-handle hidden" title="Свернуть / развернуть">

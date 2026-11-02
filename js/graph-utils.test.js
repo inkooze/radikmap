@@ -115,4 +115,75 @@ describe('RadikMap Graph, Editor & Smart Search Logic', () => {
     assert.ok(r110.length >= 1);
     assert.equal(r110[0].id, 'C_auditori_110');
   });
+
+  it('splitGroupAndLecturer preserves Cyrillic suffixes like 546М and separates 546 from 546М in real cache', () => {
+    const { splitGroupAndLecturer } = require('./user-store.js');
+    const parsedM = splitGroupAndLecturer('546М', 'доц. Устюков Д.И.');
+    assert.deepEqual(parsedM.groups, ['546М']);
+    assert.equal(parsedM.lecturer, 'доц. Устюков Д.И.');
+
+    const parsedSubgroup = splitGroupAndLecturer('546, 1 п.г., 546М, 2 п.г.', 'проф. Пржегорлинский В.Н.');
+    assert.deepEqual(parsedSubgroup.groups, ['546', '546М']);
+    assert.equal(parsedSubgroup.lecturer, 'проф. Пржегорлинский В.Н.');
+
+    const cachePath = path.join(__dirname, '..', 'data', 'cache.json');
+    if (fs.existsSync(cachePath)) {
+      const rawCache = JSON.parse(fs.readFileSync(cachePath, 'utf8')).cache || {};
+      const groupsMap = new Map();
+      for (const entry of Object.values(rawCache)) {
+        if (!entry || !Array.isArray(entry.days)) continue;
+        for (const d of entry.days) {
+          for (const l of (d.lessons || [])) {
+            const fixed = splitGroupAndLecturer(l.group, l.lecturer);
+            for (const g of fixed.groups) {
+              groupsMap.set(g, (groupsMap.get(g) || 0) + 1);
+            }
+          }
+        }
+      }
+      assert.ok(groupsMap.has('546'), 'Real schedule cache should contain group 546');
+      assert.ok(groupsMap.has('546М'), 'Real schedule cache should contain group 546М as a separate group');
+      assert.ok(!groupsMap.has('1'), 'Real schedule cache should NEVER contain phantom group "1"');
+      assert.ok(!groupsMap.has('2'), 'Real schedule cache should NEVER contain phantom group "2"');
+    }
+  });
+
+  it('UserStore persists student/lecturer profile, theme, notifications, and 6-digit Telegram auth codes', () => {
+    const os = require('node:os');
+    const { UserStore } = require('./user-store.js');
+    const tmpFile = path.join(os.tmpdir(), `radikmap-users-test-${Date.now()}.json`);
+    try {
+      const store = new UserStore(tmpFile);
+      const code = store.createAuthCodeForTelegramUser({
+        telegramId: 777888999,
+        firstName: 'Иван',
+        username: 'ivan_rgrtu'
+      });
+      assert.match(code, /^\d{6}$/);
+
+      const authed = store.consumeAuthCode(code, {
+        role: 'student',
+        targetName: '546М',
+        theme: 'dark'
+      });
+      assert.ok(authed);
+      assert.equal(authed.telegramId, 777888999);
+      assert.equal(authed.role, 'student');
+      assert.equal(authed.targetName, '546М');
+      assert.equal(authed.theme, 'dark');
+      assert.equal(authed.isTelegramLinked, true);
+
+      store.upsertUser(authed.id, { notificationsEnabled: true });
+      const notifyList = store.getUsersForNotifications();
+      assert.equal(notifyList.length, 1);
+      assert.equal(notifyList[0].targetName, '546М');
+
+      const guest = store.upsertUser('guest-123', {});
+      assert.equal(guest.theme, 'system');
+    } finally {
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    }
+  });
 });
+
+

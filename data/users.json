@@ -1,0 +1,43 @@
+{
+  "users": {
+    "web_rspu2t1k0mvzddsxq": {
+      "id": "web_rspu2t1k0mvzddsxq",
+      "telegramId": null,
+      "firstName": "",
+      "username": "",
+      "role": "student",
+      "targetName": "546М",
+      "notificationsEnabled": true,
+      "theme": "light",
+      "createdAt": 1793630657730,
+      "updatedAt": 1793630657730,
+      "lastNotifiedSlot": null
+    },
+    "tg_1252333122": {
+      "id": "tg_1252333122",
+      "telegramId": 1252333122,
+      "firstName": "Роман",
+      "username": "",
+      "role": "student",
+      "targetName": "",
+      "notificationsEnabled": false,
+      "theme": "light",
+      "createdAt": 1793634767503,
+      "updatedAt": 1793634778499,
+      "lastNotifiedSlot": null
+    }
+  },
+  "authCodes": {},
+  "authSessions": {
+    "e53a087242281ff90ad041048c27eed1": {
+      "status": "pending",
+      "userId": null,
+      "expiresAt": 1793641645825
+    },
+    "3c28b69090c1aea341bf860a61d35c1a": {
+      "status": "pending",
+      "userId": null,
+      "expiresAt": 1793641778822
+    }
+  }
+}
