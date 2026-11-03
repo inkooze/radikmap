@@ -118,9 +118,9 @@ describe('RadikMap Graph, Editor & Smart Search Logic', () => {
 
   it('splitGroupAndLecturer preserves Cyrillic suffixes like 546М and separates 546 from 546М in real cache', () => {
     const { splitGroupAndLecturer } = require('./user-store.js');
-    const parsedM = splitGroupAndLecturer('546М', 'доц. Устюков Д.И.');
+    const parsedM = splitGroupAndLecturer('546М', 'проф. Скворцов С.В.');
     assert.deepEqual(parsedM.groups, ['546М']);
-    assert.equal(parsedM.lecturer, 'доц. Устюков Д.И.');
+    assert.equal(parsedM.lecturer, 'проф. Скворцов С.В.');
 
     const parsedSubgroup = splitGroupAndLecturer('546, 1 п.г., 546М, 2 п.г.', 'проф. Пржегорлинский В.Н.');
     assert.deepEqual(parsedSubgroup.groups, ['546', '546М']);

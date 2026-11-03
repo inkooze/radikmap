@@ -304,8 +304,7 @@ body,
   transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.2s ease;
 }
 
-.search-wrap.open .omni-bar,
-.omni-bar:focus-within {
+body.ai-mode-active .omni-bar {
   border-color: var(--btn-flr-active);
   box-shadow: 0 6px 22px rgba(37, 99, 235, 0.18), 0 0 0 2px rgba(59, 130, 246, 0.15);
 }
@@ -1621,6 +1620,10 @@ body.schedule-is-open .floor-switcher-wrap {
   margin-bottom: 10px;
 }
 .route-field label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.5px;
@@ -1628,12 +1631,28 @@ body.schedule-is-open .floor-switcher-wrap {
   color: var(--text-dim);
 }
 .route-field .label-hint {
-  font-size: 10px;
-  color: var(--text-dim);
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-weight: 600;
   text-transform: none;
-  letter-spacing: 0.2px;
-  margin-left: 6px;
+  letter-spacing: 0.1px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--lesson-bg);
+  border: 1px solid var(--border);
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.route-field .label-hint.active {
+  color: var(--text-accent);
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.35);
+}
+.route-field .label-hint .mdi {
+  font-size: 12px;
+  line-height: 1;
 }
 .route-input-wrap { position: relative; }
 .route-input {
@@ -2020,6 +2039,8 @@ body.schedule-is-open .floor-switcher-wrap {
   border-bottom: 1px solid var(--panel-border);
   background: var(--panel-bg);
   flex-shrink: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .ai-panel-header .panel-header {
@@ -2045,10 +2066,11 @@ body.schedule-is-open .floor-switcher-wrap {
 }
 
 .ai-chat-scroll {
-  flex: 1;
+  flex: 1 1 0px;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 16px;
+  padding: 0 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -2102,6 +2124,7 @@ body.schedule-is-open .floor-switcher-wrap {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 16px 0;
 }
 
 .ai-user-msg {
@@ -2897,17 +2920,18 @@ body.schedule-is-open .floor-switcher-wrap {
   color: var(--text-bright);
   margin: 0;
   line-height: 1.3;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-wrap: wrap;
+  display: block;
+}
+
+.schedule-entity-title-text {
+  vertical-align: middle;
 }
 
 .schedule-share-icon {
   background: none;
   border: none;
   padding: 2px 4px;
-  margin-left: 6px;
+  margin-left: 5px;
   color: var(--text-dim);
   font-size: 16px;
   line-height: 1;
@@ -2915,6 +2939,7 @@ body.schedule-is-open .floor-switcher-wrap {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  vertical-align: middle;
   transition: color 0.15s ease;
 }
 
@@ -2977,24 +3002,15 @@ body.schedule-is-open .floor-switcher-wrap {
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   box-shadow: 0 6px 24px rgba(15, 23, 42, 0.06);
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .weekly-table-wrap::-webkit-scrollbar,
 .weekly-table-container::-webkit-scrollbar {
-  height: 8px;
-}
-
-.weekly-table-wrap::-webkit-scrollbar-track,
-.weekly-table-container::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.weekly-table-wrap::-webkit-scrollbar-thumb,
-.weekly-table-container::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 4px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .weekly-schedule-table {
@@ -3031,8 +3047,10 @@ body.schedule-is-open .floor-switcher-wrap {
 }
 
 .weekly-schedule-table thead th.time-col {
-  width: 120px;
+  width: 96px;
+  padding: 13px 6px;
   text-align: center;
+  vertical-align: middle;
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 700;
@@ -3088,8 +3106,8 @@ body.schedule-is-open .floor-switcher-wrap {
 }
 
 .weekly-schedule-table td.time-col {
-  width: 120px;
-  padding: 13px 10px;
+  width: 96px;
+  padding: 11px 6px;
   text-align: center;
   background: var(--panel-bg);
   position: sticky;
@@ -3554,7 +3572,7 @@ body.schedule-is-open .floor-switcher-wrap {
     display: none;
   }
 
-  /* 4. Островок переключения этажей слева по центру — уезжает влево при открытии любой панели */
+  /* 4. Островок переключения этажей слева по центру — остаётся доступным при построении маршрута */
   .leaflet-left .floor-switcher-wrap,
   .floor-switcher-wrap {
     left: 8px !important;
@@ -3562,15 +3580,59 @@ body.schedule-is-open .floor-switcher-wrap {
     margin: 0 !important;
     top: 50%;
     transform: translateY(-50%);
+    transition: top 0.24s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.24s ease, opacity 0.2s ease;
   }
 
-  body.panel-is-open .floor-switcher-wrap,
+  body.route-mode-active .floor-switcher-wrap {
+    top: calc((100dvh - var(--mobile-sheet-offset, 240px)) / 2);
+  }
+
+  body.panel-is-open:not(.route-mode-active) .floor-switcher-wrap,
   body.mobile-search-open .floor-switcher-wrap,
   body.mobile-profile-open .floor-switcher-wrap,
   body.schedule-is-open .floor-switcher-wrap {
     transform: translate(-150%, -50%) !important;
     opacity: 0 !important;
     pointer-events: none !important;
+  }
+
+  /* Динамическое поджатие области карты над открытой нижней панелью */
+  #map-wrap {
+    padding-bottom: var(--mobile-sheet-offset, 0px);
+    transition: padding-bottom 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  body:has(#panel.dragging) #map-wrap {
+    transition: none !important;
+  }
+
+  /* Скрытие полос прокрутки на мобильных устройствах */
+  .panel-scroll,
+  .schedule-sidebar-list,
+  .schedule-main,
+  .search-panel .results,
+  .user-dropdown,
+  .cheatsheet-modal-body {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+
+  .panel-scroll::-webkit-scrollbar,
+  .schedule-sidebar-list::-webkit-scrollbar,
+  .schedule-main::-webkit-scrollbar,
+  .search-panel .results::-webkit-scrollbar,
+  .user-dropdown::-webkit-scrollbar,
+  .cheatsheet-modal-body::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+
+  .weekly-schedule-table thead th.time-col,
+  .weekly-schedule-table td.time-col {
+    width: 82px;
+    padding-left: 4px;
+    padding-right: 4px;
   }
 
   .floor-switcher button {
@@ -3614,12 +3676,12 @@ body.schedule-is-open .floor-switcher-wrap {
 
   body.ai-mode-closing #panel {
     opacity: 0;
-    transform: translateY(16px);
-    transition: height 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease, transform 0.2s ease, box-shadow 0.15s ease, border-color 0.15s ease !important;
+    transform: translateY(0);
+    transition: height 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.12s ease 0.12s, box-shadow 0.15s ease, border-color 0.15s ease !important;
   }
 
   #panel.open.mobile-compact {
-    height: 34dvh;
+    height: var(--mobile-base-snap, 38dvh);
   }
 
   #panel.open.mobile-expanded {
@@ -3710,4 +3772,591 @@ body.schedule-is-open .floor-switcher-wrap {
   .schedule-entity-title {
     font-size: 18px;
   }
+}
+
+/* ===== v1.2 ДОПОЛНЕНИЯ В СТИЛЕ v1.1 ===== */
+
+/* Контр-вращение и масштабирование меток комнат при повороте и отдалении карты */
+.room-label {
+  transform: translate(-50%, -50%) rotate(var(--map-counter-rotation, 0deg)) scale(var(--map-label-scale, 1));
+  transition: transform 0.08s linear;
+}
+
+/* Плашка перетаскивания мобильной шторки без перехвата браузером */
+.panel-drag-bar {
+  touch-action: none;
+  user-select: none;
+}
+
+/* Защита горизонтального скролла таблицы расписания от белых полос */
+.weekly-table-wrap {
+  overscroll-behavior-x: contain;
+  background: var(--panel-bg);
+}
+
+/* Бейдж «ЗАВТРА» в шапке таблицы расписания в том же стиле, что и «СЕГОДНЯ» */
+.th-tomorrow-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: var(--text-accent);
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  line-height: 1.2;
+}
+
+/* Выбор учебной недели серым текстом над заголовком «Расписание» в левой панели */
+.schedule-week-picker-row {
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.schedule-week-trigger {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 2px 6px 2px 0;
+  margin: 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  transition: color 0.15s ease;
+}
+
+.schedule-week-trigger:hover {
+  color: var(--text-bright);
+}
+
+.schedule-week-trigger .mdi {
+  font-size: 14px;
+  line-height: 1;
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+.schedule-week-trigger.open .mdi {
+  transform: rotate(180deg);
+}
+
+.schedule-week-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--dropdown-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--dropdown-shadow);
+  padding: 5px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.schedule-week-dropdown.hidden {
+  display: none;
+}
+
+.schedule-week-option {
+  appearance: none;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-bright);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.schedule-week-option:hover {
+  background: var(--dropdown-item-hover);
+}
+
+.schedule-week-option.active {
+  background: rgba(37, 99, 235, 0.14);
+  color: var(--text-accent);
+  font-weight: 600;
+}
+
+.schedule-week-option-tag {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Подпись над единым полем поиска расписания */
+.sched-filter-caption {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  line-height: 1.35;
+  margin-bottom: 7px;
+}
+
+/* Панель инструментов («Шпаргалка», «PNG») между плашкой группы и таблицей */
+.schedule-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -4px 0 12px;
+}
+
+.schedule-toolbar-row.hidden {
+  display: none;
+}
+
+/* Кнопки действий расписания («Шпаргалка», «PNG») */
+.schedule-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.schedule-action-chip {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.schedule-action-chip:hover {
+  background: var(--dropdown-item-hover);
+  color: var(--text-accent);
+  border-color: var(--btn-flr-active);
+}
+
+.schedule-action-chip .mdi {
+  font-size: 15px;
+  color: var(--text-accent);
+}
+
+/* Текстовая пометка аудитории без привязки к карте (например, Спортзал С) */
+.wt-room-unmapped {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Модальное окно «Шпаргалка группы» (табличный вид) */
+.cheatsheet-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2200;
+  background: rgba(10, 14, 23, 0.56);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.cheatsheet-modal-backdrop.hidden {
+  display: none;
+}
+
+.cheatsheet-modal-card {
+  width: min(760px, 100%);
+  max-height: min(82vh, 680px);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--dropdown-shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cheatsheet-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cheatsheet-modal-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cheatsheet-modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-bright);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cheatsheet-modal-title .mdi {
+  color: var(--text-accent);
+  font-size: 18px;
+}
+
+.cheatsheet-modal-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+
+.cheatsheet-modal-close:hover {
+  background: var(--btn-hover);
+  color: var(--text-bright);
+}
+
+.cheatsheet-modal-body {
+  padding: 14px 18px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cheatsheet-table-wrap {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel-bg);
+}
+
+.cheatsheet-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.cheatsheet-table th,
+.cheatsheet-table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  text-align: left;
+}
+
+.cheatsheet-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cheatsheet-table thead th {
+  background: var(--lesson-bg);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.cheatsheet-table .cs-col-subject {
+  width: 36%;
+  border-right: 1px solid var(--border);
+}
+
+.cheatsheet-table .cs-col-details {
+  width: 64%;
+}
+
+.cheatsheet-subject-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-bright);
+  line-height: 1.4;
+}
+
+.cheatsheet-table-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cheatsheet-table-row-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: nowrap;
+  line-height: 1.45;
+}
+
+.cheatsheet-table-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.cheatsheet-table-lecturers {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-bright);
+  font-size: 13px;
+}
+
+.cheatsheet-lecturer-inline {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 500;
+  color: var(--text-accent);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.cheatsheet-lecturer-inline:hover {
+  text-decoration: underline;
+}
+
+/* Избранное (звёздочка) в списке расписания */
+.sched-dir-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.sched-fav-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  padding: 0;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+}
+
+.sched-fav-btn:hover {
+  background: var(--dropdown-item-hover);
+  color: #f59e0b;
+}
+
+.sched-fav-btn.active {
+  color: #f59e0b;
+}
+
+/* Опции маршрута («Также через улицу» без подложки вокруг) */
+.route-options-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 6px 0 2px;
+  flex-wrap: wrap;
+}
+
+.route-outdoor-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 0;
+  background: transparent;
+  border: none;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-bright);
+  cursor: pointer;
+  user-select: none;
+}
+
+.route-outdoor-toggle:hover .route-outdoor-check-ui {
+  border-color: var(--btn-flr-active);
+}
+
+.route-outdoor-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+.route-outdoor-check-ui {
+  width: 18px;
+  height: 18px;
+  border-radius: 5.5px;
+  border: 1.5px solid var(--input-border);
+  background: var(--input-bg);
+  color: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.12s ease;
+}
+
+.route-outdoor-toggle input:checked + .route-outdoor-check-ui {
+  background: var(--btn-flr-active);
+  border-color: var(--btn-flr-active);
+  color: #ffffff;
+}
+
+.route-outdoor-toggle input:focus-visible + .route-outdoor-check-ui {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22);
+}
+
+.route-outdoor-label-text {
+  line-height: 1.2;
+}
+
+.route-share-btn {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--dropdown-item-bg);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.route-share-btn:hover {
+  background: var(--dropdown-item-hover);
+  color: var(--text-bright);
+  border-color: var(--btn-flr-active);
+}
+
+/* Кнопка компаса сброса поворота карты */
+.map-compass-btn {
+  position: absolute;
+  left: 14px;
+  bottom: 72px;
+  z-index: 950;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--ctrl-bg);
+  color: var(--text-bright);
+  box-shadow: var(--ctrl-shadow);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.map-compass-btn:hover {
+  background: var(--btn-hover);
+  color: var(--text-accent);
+}
+
+.map-compass-btn.hidden {
+  display: none;
+}
+
+/* Плавающая подсказка «Куда мне сейчас?» */
+.smart-next-class-pill {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 950;
+  max-width: calc(100vw - 120px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(37, 99, 235, 0.35);
+  background: var(--ctrl-bg);
+  color: var(--text-bright);
+  box-shadow: var(--ctrl-shadow);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.smart-next-class-pill:hover {
+  border-color: var(--btn-flr-active);
+}
+
+.smart-next-class-pill .mdi {
+  color: var(--text-accent);
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.smart-next-class-pill.hidden {
+  display: none;
+}
+
+/* Отступ сверху для полноэкранного Telegram Mini App */
+body.tg-webapp .schedule-corner-tab {
+  top: calc(10px + var(--tg-safe-top, 0px));
+}
+
+body.tg-webapp .floating-top-right {
+  top: calc(10px + var(--tg-safe-top, 0px));
 }

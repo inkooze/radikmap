@@ -1,17 +1,18 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 const { Telegraf, Markup } = require('telegraf');
-const { UserStore } = require('./js/user-store.js');
+const { defaultUserStore } = require('./js/user-store.js');
 
-const BOT_TOKEN = (process.env.BOT_TOKEN || '').trim();
+const BOT_TOKEN = (process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '').trim();
 const rawWebAppUrl = (process.env.WEBAPP_URL || '').trim();
 const WEBAPP_URL = (!rawWebAppUrl || rawWebAppUrl.includes('ngrok'))
   ? 'https://radikmap.ai.studio/'
-  : rawWebAppUrl;
+  : rawWebAppUrl.replace(/\/+$/, '') + '/';
+const SCHEDULE_WEBAPP_URL = `${WEBAPP_URL}?view=schedule`;
 const API_BASE = `http://localhost:${process.env.PORT || 3000}`;
 
-const userStore = new UserStore(path.join(__dirname, 'data', 'users.json'));
-let cachedBotUsername = process.env.BOT_USERNAME || '';
+const userStore = defaultUserStore;
+let cachedBotUsername = (process.env.BOT_USERNAME || process.env.TELEGRAM_BOT_USERNAME || 'rgrtu_map_bot').replace(/^@/, '').trim();
 
 function getBotUsername() {
   return cachedBotUsername;
@@ -47,8 +48,8 @@ if (bot) {
     const payload = String(ctx.startPayload || '').trim();
     console.log('[bot] /start от', ctx.from.id, name, payload);
 
-    if (payload.startsWith('login_')) {
-      const sessionToken = payload.slice(6);
+    if (payload.startsWith('login_') || payload.startsWith('webauth_')) {
+      const sessionToken = payload.replace(/^(login_|webauth_)/i, '');
       const ok = userStore.completeBrowserAuthSession(sessionToken, {
         telegramId: ctx.from.id,
         firstName: ctx.from.first_name || '',
@@ -57,9 +58,12 @@ if (bot) {
       if (ok) {
         return ctx.reply(
           `✅ Привет, ${name}! Вход на сайте Карты РГРТУ подтверждён.\n\n` +
-          `Можешь вернуться в браузер — твой профиль и настройки расписания синхронизированы.`,
+          `Можешь вернуться в браузер — твой профиль и настройки расписания уже подключены автоматически.`,
           Markup.inlineKeyboard([
-            [Markup.button.webApp('🗺 Открыть карту', WEBAPP_URL)],
+            [
+              Markup.button.webApp('🗺 Карта', WEBAPP_URL),
+              Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
+            ],
             [Markup.button.callback('👤 Мой профиль и уведомления', 'my_profile')]
           ])
         );
@@ -76,12 +80,16 @@ if (bot) {
       `Привет, ${name}! 👋\n\n` +
       `Это бот интерактивной карты и расписания РГРТУ:\n` +
       `• 🗺 интерактивная карта Главного корпуса\n` +
+      `• 📅 расписание всех групп и преподавателей\n` +
       `• 🟢 свободные аудитории прямо сейчас\n` +
       `• 🔔 уведомления за 15 минут до начала твоих пар\n` +
       `• 🔑 код для быстрого входа на сайте: ${code}\n\n` +
-      `Выбери действие ниже:`,
+      `Выбери действие ниже или напиши любой вопрос ИИ'шке прямо в чат:`,
       Markup.inlineKeyboard([
-        [Markup.button.webApp('🗺 Открыть карту', WEBAPP_URL)],
+        [
+          Markup.button.webApp('🗺 Карта', WEBAPP_URL),
+          Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
+        ],
         [Markup.button.callback('🔑 Получить код входа для сайта', 'login_code')],
         [Markup.button.callback('👤 Моё расписание и уведомления', 'my_profile')],
         [Markup.button.callback('🟢 Свободные аудитории', 'free_now')]
@@ -130,7 +138,10 @@ if (bot) {
       `Ты можешь выбрать свою группу или ФИО преподавателя на сайте в меню профиля (👤).`,
       Markup.inlineKeyboard([
         [Markup.button.callback(toggleText, 'toggle_notif')],
-        [Markup.button.webApp('🗺 Открыть карту и настройки', WEBAPP_URL)]
+        [
+          Markup.button.webApp('🗺 Карта', WEBAPP_URL),
+          Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
+        ]
       ])
     );
   }
@@ -160,14 +171,17 @@ if (bot) {
     '/my — профиль и настройки уведомлений о парах\n' +
     '/map — открыть карту\n' +
     '/free — свободные аудитории сейчас\n' +
-    '/schedule — расписание аудитории\n'
+    '/schedule — открыть расписание\n'
   ));
 
   bot.command('map', (ctx) => {
     return ctx.reply(
-      'Открываю карту:',
+      'Выбери раздел:',
       Markup.inlineKeyboard([
-        [Markup.button.webApp('🗺 Открыть карту', WEBAPP_URL)]
+        [
+          Markup.button.webApp('🗺 Карта', WEBAPP_URL),
+          Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
+        ]
       ])
     );
   });
@@ -232,27 +246,48 @@ if (bot) {
     return ctx.reply('Используй /free');
   });
 
-  bot.action('schedule_help', async (ctx) => {
-    await ctx.answerCbQuery();
-    return ctx.reply(
-      'Чтобы посмотреть расписание:\n\n' +
-      '1. Открой карту\n' +
-      '2. Нажми на аудиторию или открой вкладку «Расписание» в левом верхнем углу\n' +
-      '3. Или отправь команду /schedule с номером аудитории: /schedule 227'
-    );
-  });
-
   bot.command('schedule', async (ctx) => {
     const text = ctx.message.text.replace('/schedule', '').trim();
     if (!text) {
-      return ctx.reply('Укажи номер аудитории: /schedule 227');
+      return ctx.reply(
+        'Открываю раздел расписания групп и преподавателей:',
+        Markup.inlineKeyboard([
+          [Markup.button.webApp('📅 Открыть расписание', SCHEDULE_WEBAPP_URL)]
+        ])
+      );
     }
     return ctx.reply(
-      `Открываю карту и ищу аудиторию «${text}»:`,
+      `Открываю карту и ищу «${text}»:`,
       Markup.inlineKeyboard([
         [Markup.button.webApp('🗺 Открыть', `${WEBAPP_URL}?search=${encodeURIComponent(text)}`)]
       ])
     );
+  });
+
+  bot.on('text', async (ctx) => {
+    const text = (ctx.message?.text || '').trim();
+    if (!text || text.startsWith('/')) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/ai-assistant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: text })
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const answer = data.answer || data.reply;
+      if (answer) {
+        await ctx.reply(
+          answer,
+          Markup.inlineKeyboard([
+            [
+              Markup.button.webApp('🗺 Карта', WEBAPP_URL),
+              Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
+            ]
+          ])
+        );
+      }
+    } catch (e) {}
   });
 
   bot.catch((err, ctx) => {
@@ -288,9 +323,7 @@ async function checkUpcomingLessonNotifications() {
         console.warn(`[bot/notify] Не удалось отправить уведомление ${item.telegramId}:`, sendErr.message);
       }
     }
-  } catch (e) {
-    // ignore transient errors during startup
-  }
+  } catch (e) {}
 }
 
 let botLaunched = false;

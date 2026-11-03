@@ -1,22 +1,32 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const crypto = require('crypto');
 const { URL } = require('url');
 const cheerio = require('cheerio');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
-const { searchRoomsInMeta } = require('./js/graph-utils.js');
-const { splitGroupAndLecturer, UserStore, verifyTelegramWebAppInitData } = require('./js/user-store.js');
+const {
+  searchRoomsInMeta,
+  formatWeekTriggerLabel,
+  parseRaspSchedulePageHtml,
+  buildGroupCheatSheet,
+  findUpcomingLessonRemindersForUser,
+  detectUserTone
+} = require('./js/graph-utils.js');
+const { splitGroupAndLecturer, defaultUserStore, verifyTelegramWebAppInitData } = require('./js/user-store.js');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const ROOT = __dirname;
 const CACHE_FILE = path.join(ROOT, 'data', 'cache.json');
+const ENTITY_CACHE_FILE = path.join(ROOT, 'data', 'entity-schedule-cache.json');
 const GRAPH_FILE = path.join(ROOT, 'data', 'graph.json');
 const GRAPH_BACKUP_FILE = path.join(ROOT, 'data', 'graph.backup.json');
 const USERS_FILE = path.join(ROOT, 'data', 'users.json');
 const REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const ENTITY_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 
-const userStore = new UserStore(USERS_FILE);
+const userStore = defaultUserStore;
 
 function getEditorPassword() {
   return String(process.env.EDITOR_PASSWORD || process.env.ADMIN_TOKEN || 'radik-admin-2026').trim();
@@ -50,6 +60,16 @@ const DAY_NAMES_GENITIVE = {
   'воскресенье': 'воскресенья'
 };
 
+const FACULTY_FULL_NAMES = {
+  'ФРТ': 'Факультет радиотехники и телекоммуникаций',
+  'ФЭ': 'Факультет электроники',
+  'ФАИТУ': 'Факультет автоматики и информационных технологий в управлении',
+  'ФВТ': 'Факультет вычислительной техники',
+  'ИЭФ': 'Инженерно-экономический факультет',
+  'ОА': 'Отдел аспирантуры',
+  'ИДО': 'Институт дополнительного образования'
+};
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css':  'text/css; charset=utf-8',
@@ -63,23 +83,63 @@ const MIME = {
   '.ico':  'image/x-icon',
   '.woff': 'font/woff',
   '.woff2':'font/woff2',
-  '.ttf':  'font/ttf'
+  '.ttf':  'font/ttf',
+  '.webmanifest': 'application/manifest+json; charset=utf-8'
 };
 
+const COMPRESSIBLE_EXTS = new Set(['.html', '.css', '.js', '.json', '.svg', '.webmanifest']);
+
 let roomsMeta = {};
-let raspDirectoryMeta = { lecturersInRasp: [], deptByFullFio: {}, facultyByGroup: {} };
+let classroomToRoomMap = {};
+let raspDirectoryMeta = {
+  departments: [],
+  lecturersInRasp: [],
+  groupsInRasp: [],
+  groupIdByName: {},
+  deptByFullFio: {},
+  facultyByGroup: {},
+  availableWeeks: []
+};
 let lecturersReportList = [];
 let scheduleCache = {};
+let entityScheduleCache = {};
 let cacheStatus = { ready: false, warming: false, progress: '0/0', lastUpdate: null };
 let scheduleIndex = {
-  lecturers: new Map(), // name -> { name, shortName, fullName, regalia, department, surname, rooms: Set, lessonsCount, daysMap: Map }
-  groups: new Map(),    // group -> { name, faculty, rooms: Set, lessonsCount, daysMap: Map }
-  orderedDates: []      // [{ date, dayName }]
+  lecturers: new Map(), // name -> { name, shortName, fullName, regalia, department, surname, rooms: Set, lessons: [] }
+  groups: new Map(),    // group -> { name, faculty, facultyCode, rooms: Set, lessons: [] }
+  orderedDates: [],     // [{ date, dayName }]
+  departmentRoomsIndex: {} // deptUpper -> { deptName, ownedRooms: [], frequentRooms: [] }
 };
+
+function getRoomScheduleShortName(meta) {
+  if (!meta) return '';
+  const rawShort = String(meta.shortName || '').trim();
+  if (rawShort && /[0-9А-Яа-яЁёA-Za-z]/.test(rawShort)) {
+    return rawShort;
+  }
+  return String(meta.name || '').replace(/^Аудитория\s+/i, '').trim() || rawShort || String(meta.classroom || '');
+}
+
+function rebuildClassroomMap() {
+  classroomToRoomMap = {};
+  for (const [roomId, meta] of Object.entries(roomsMeta)) {
+    if (meta && meta.classroom) {
+      classroomToRoomMap[String(meta.classroom)] = {
+        roomId,
+        roomShort: getRoomScheduleShortName(meta),
+        roomName: meta.name,
+        floor: meta.floor,
+        building: meta.building || 'C',
+        buildingName: 'Главный корпус'
+      };
+    }
+  }
+}
 
 try {
   const roomsPath = path.join(ROOT, 'data', 'rooms.json');
   roomsMeta = JSON.parse(fs.readFileSync(roomsPath, 'utf8'));
+  rebuildClassroomMap();
   console.log(`[init] Загружено ${Object.keys(roomsMeta).length} помещений`);
 } catch (e) {
   console.error('[init] Не удалось загрузить rooms.json:', e.message);
@@ -88,7 +148,10 @@ try {
 try {
   const raspMetaPath = path.join(ROOT, 'data', 'rasp-directory-meta.json');
   if (fs.existsSync(raspMetaPath)) {
-    raspDirectoryMeta = JSON.parse(fs.readFileSync(raspMetaPath, 'utf8'));
+    raspDirectoryMeta = {
+      ...raspDirectoryMeta,
+      ...JSON.parse(fs.readFileSync(raspMetaPath, 'utf8'))
+    };
   }
   const repPath = path.join(ROOT, 'data', 'lecturers-report.json');
   if (fs.existsSync(repPath)) {
@@ -96,6 +159,62 @@ try {
   }
 } catch (e) {
   console.warn('[init] Не удалось загрузить метаданные справочника:', e.message);
+}
+
+function sanitizeEntityCacheRoomShorts(cacheObj) {
+  if (!cacheObj || typeof cacheObj !== 'object') return;
+  for (const entry of Object.values(cacheObj)) {
+    if (!entry || !Array.isArray(entry.days)) continue;
+    for (const day of entry.days) {
+      for (const lesson of (day.lessons || [])) {
+        if (lesson.roomShort === '🏀' || lesson.roomId === 'C_gym_main') {
+          lesson.roomShort = 'Спортзал';
+        } else if (lesson.roomId === 'C_auditori_50c' && /оптимизац/i.test(lesson.subject || '')) {
+          lesson.roomShort = '50а';
+        } else if (!lesson.roomShort && lesson.roomId && roomsMeta[lesson.roomId]) {
+          lesson.roomShort = getRoomScheduleShortName(roomsMeta[lesson.roomId]);
+        }
+      }
+    }
+  }
+}
+
+try {
+  if (fs.existsSync(ENTITY_CACHE_FILE)) {
+    entityScheduleCache = JSON.parse(fs.readFileSync(ENTITY_CACHE_FILE, 'utf8'));
+    sanitizeEntityCacheRoomShorts(entityScheduleCache);
+  }
+} catch (e) {
+  entityScheduleCache = {};
+}
+
+let _entityCacheTimer = null;
+function saveEntityCacheToDisk() {
+  if (_entityCacheTimer) clearTimeout(_entityCacheTimer);
+  _entityCacheTimer = setTimeout(async () => {
+    _entityCacheTimer = null;
+    try {
+      const tmp = `${ENTITY_CACHE_FILE}.tmp`;
+      await fs.promises.writeFile(tmp, JSON.stringify(entityScheduleCache), 'utf8');
+      await fs.promises.rename(tmp, ENTITY_CACHE_FILE);
+    } catch (e) {}
+  }, 400);
+}
+
+function getFormattedAvailableWeeks() {
+  const rawWeeks = Array.isArray(raspDirectoryMeta.availableWeeks) ? raspDirectoryMeta.availableWeeks : [];
+  return rawWeeks.map(w => ({
+    value: w.value,
+    rawLabel: w.label || w.rawLabel || '',
+    label: formatWeekTriggerLabel(w.value, w.label || w.rawLabel || ''),
+    isDefault: Boolean(w.isDefault || w.isCurrent || /текущ/i.test(w.label || w.rawLabel || ''))
+  }));
+}
+
+function getDefaultWeekValue() {
+  const weeks = getFormattedAvailableWeeks();
+  const def = weeks.find(w => w.isDefault) || weeks[0];
+  return def ? def.value : '';
 }
 
 function resolveLecturerMeta(lecName) {
@@ -109,6 +228,7 @@ function resolveLecturerMeta(lecName) {
   let fullName = clean;
   let department = '';
   let repMatch = null;
+  let raspId = null;
 
   const m = clean.match(/^([А-ЯЁа-яё-]+)\s+([А-ЯЁа-яё])\.\s*([А-ЯЁа-яё])\.?/);
   if (m) {
@@ -130,6 +250,7 @@ function resolveLecturerMeta(lecName) {
 
     if (raspEntry && raspEntry.label) {
       fullName = raspEntry.label.trim();
+      raspId = raspEntry.value || null;
     } else if (repMatch && repMatch.fio) {
       fullName = repMatch.fio.trim();
     }
@@ -137,6 +258,17 @@ function resolveLecturerMeta(lecName) {
       department = raspDirectoryMeta.deptByFullFio[fullName];
     } else if (/ИнЯз/i.test(raw)) {
       department = 'ИнЯз';
+    }
+  } else {
+    const raspByFull = (raspDirectoryMeta.lecturersInRasp || []).find(
+      x => String(x.label || '').toLowerCase().replace(/ё/g, 'е') === clean.toLowerCase().replace(/ё/g, 'е')
+    );
+    if (raspByFull) {
+      fullName = raspByFull.label.trim();
+      raspId = raspByFull.value || null;
+      if (raspDirectoryMeta.deptByFullFio && raspDirectoryMeta.deptByFullFio[fullName]) {
+        department = raspDirectoryMeta.deptByFullFio[fullName];
+      }
     }
   }
 
@@ -158,10 +290,19 @@ function resolveLecturerMeta(lecName) {
   const headPart = deg ? `${deg}, ${posShort}` : posShort;
   const regalia = department ? `${headPart} каф. ${department}` : headPart;
 
-  return { fullName, regalia, department };
+  return {
+    fullName,
+    fullFio: fullName,
+    positionShort: posShort,
+    degreeShort: deg,
+    regalia,
+    metaLine: regalia,
+    department,
+    raspId
+  };
 }
 
-function resolveGroupFaculty(groupName) {
+function resolveGroupFacultyCode(groupName) {
   const clean = String(groupName || '').trim().toUpperCase().replace(/Ё/g, 'Е');
   if (raspDirectoryMeta.facultyByGroup && raspDirectoryMeta.facultyByGroup[clean]) {
     return raspDirectoryMeta.facultyByGroup[clean];
@@ -178,15 +319,31 @@ function resolveGroupFaculty(groupName) {
   return 'РГРТУ';
 }
 
+function resolveGroupFaculty(groupName) {
+  return resolveGroupFacultyCode(groupName);
+}
+
+function resolveGroupRaspId(groupName) {
+  const clean = String(groupName || '').trim();
+  if (raspDirectoryMeta.groupIdByName && raspDirectoryMeta.groupIdByName[clean]) {
+    return raspDirectoryMeta.groupIdByName[clean];
+  }
+  const upper = clean.toUpperCase().replace(/Ё/g, 'Е');
+  if (raspDirectoryMeta.groupIdByName && raspDirectoryMeta.groupIdByName[upper]) {
+    return raspDirectoryMeta.groupIdByName[upper];
+  }
+  return null;
+}
+
 function parseLessonText(text) {
   const clean = String(text || '').replace(/\s+/g, ' ').trim();
   const m = clean.match(/^(.*?),?\s*гр\.\s*(.+)$/);
   if (!m) {
-    return { subject: clean, group: '', groups: [], lecturer: '' };
+    return { subject: clean, group: '', groups: [], subgroup: '', lecturer: '' };
   }
   const subject = m[1].replace(/,\s*$/, '').trim();
-  const { group, groups, lecturer } = splitGroupAndLecturer(m[2], '');
-  return { subject, group, groups, lecturer };
+  const { group, groups, subgroup, lecturer } = splitGroupAndLecturer(m[2], '');
+  return { subject, group, groups, subgroup: subgroup || '', lecturer };
 }
 
 function normalizeScheduleCache() {
@@ -198,6 +355,7 @@ function normalizeScheduleCache() {
         const fixed = splitGroupAndLecturer(l.group, l.lecturer);
         l.group = fixed.group;
         l.groups = fixed.groups;
+        if (fixed.subgroup && !l.subgroup) l.subgroup = fixed.subgroup;
         l.lecturer = fixed.lecturer;
       }
     }
@@ -216,6 +374,7 @@ function rebuildScheduleIndex() {
   const lecturers = new Map();
   const groups = new Map();
   const datesMap = new Map();
+  const deptRoomCounts = {}; // deptUpper -> Map(roomId -> count)
 
   for (const [roomId, entry] of Object.entries(scheduleCache)) {
     if (!entry || entry.empty || !Array.isArray(entry.days)) continue;
@@ -235,19 +394,23 @@ function rebuildScheduleIndex() {
           time: lesson.time,
           type: lesson.type || '',
           subject: lesson.subject || '',
+          subgroup: lesson.subgroup || fixed.subgroup || '',
           group: fixed.group,
           groups: fixed.groups,
           lecturer: fixed.lecturer,
           roomId,
           roomName: meta.name,
-          roomShort: meta.shortName || meta.classroom || meta.name,
+          roomShort: getRoomScheduleShortName(meta),
           floor: meta.floor,
           building: meta.building
         };
 
-        // Индексируем преподавателя
-        if (fixed.lecturer) {
-          const lecKey = fixed.lecturer;
+        // Индексируем преподавателя (включая случай нескольких преподавателей через запятую)
+        const rawLecturers = fixed.lecturer
+          ? fixed.lecturer.split(',').map(s => s.trim()).filter(Boolean)
+          : [];
+
+        for (const lecKey of rawLecturers) {
           if (!lecturers.has(lecKey)) {
             const shortName = lecKey.replace(/^(доц\.|проф\.|ст\.\s*преп\.|преп\.|асс\.|зав\.\s*каф\.)\s*/i, '').trim();
             const metaInfo = resolveLecturerMeta(lecKey);
@@ -265,6 +428,12 @@ function rebuildScheduleIndex() {
           const lecObj = lecturers.get(lecKey);
           lecObj.rooms.add(roomId);
           lecObj.lessons.push(lessonRecord);
+
+          if (lecObj.department) {
+            const deptKey = lecObj.department.toUpperCase();
+            if (!deptRoomCounts[deptKey]) deptRoomCounts[deptKey] = new Map();
+            deptRoomCounts[deptKey].set(roomId, (deptRoomCounts[deptKey].get(roomId) || 0) + 1);
+          }
         }
 
         // Индексируем каждую группу
@@ -272,6 +441,7 @@ function rebuildScheduleIndex() {
           if (!groups.has(grp)) {
             groups.set(grp, {
               name: grp,
+              facultyCode: resolveGroupFacultyCode(grp),
               faculty: resolveGroupFaculty(grp),
               rooms: new Set(),
               lessons: []
@@ -285,94 +455,287 @@ function rebuildScheduleIndex() {
     }
   }
 
+  // Также добавляем все группы из rasp-directory-meta.json, чтобы список групп был 100% полным
+  for (const gItem of (raspDirectoryMeta.groupsInRasp || [])) {
+    const gName = String(gItem.label || '').trim().toUpperCase().replace(/Ё/g, 'Е');
+    if (gName && !groups.has(gName)) {
+      groups.set(gName, {
+        name: gName,
+        facultyCode: resolveGroupFacultyCode(gName),
+        faculty: resolveGroupFaculty(gName),
+        rooms: new Set(),
+        lessons: []
+      });
+    }
+  }
+
+  // Индекс помещений кафедр (O(1) поиск по названию кафедры)
+  const departmentRoomsIndex = {};
+  const allDeptLabels = new Set(
+    (raspDirectoryMeta.departments || []).map(d => String(d.label || '').trim()).filter(Boolean)
+  );
+  for (const r of Object.values(roomsMeta)) {
+    const m = String(r?.name || '').match(/кафедр[аы]\s+([А-ЯЁA-Za-z\s.]+?)(?:\s*\(|$)/i);
+    if (m && m[1]) allDeptLabels.add(m[1].trim());
+  }
+
+  const DEPT_ALIASES = {
+    'ИНЯЗ': ['ин. яз', 'иностранного языка', 'ин.яз', 'иняз'],
+    'ФВ': ['физвоспитания', 'физвосп', 'физического воспитания'],
+    'РУС': ['русского языка'],
+    'САПР ВС': ['сапр вс', 'сапр']
+  };
+
+  for (const deptLabel of allDeptLabels) {
+    const deptUpper = deptLabel.toUpperCase();
+    const aliases = [deptLabel.toLowerCase(), ...(DEPT_ALIASES[deptUpper] || [])];
+    const ownedRooms = [];
+
+    for (const [roomId, r] of Object.entries(roomsMeta)) {
+      if (!r || r.type === 'stairs') continue;
+      const nameLow = (r.name || '').toLowerCase();
+      const matched = aliases.some(alias => {
+        const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(`(?:кафедр[аы]|каф\\.?|лаборатор[ияная]+|преподавательская|мастерская|кладовая|помещение)\\s+(?:кафедры\\s+)?${escaped}(?:[^а-яёa-z]|$)`, 'i');
+        return re.test(nameLow);
+      });
+      if (matched) {
+        ownedRooms.push({
+          roomId,
+          name: r.name,
+          shortName: r.shortName || r.name,
+          floor: r.floor,
+          type: r.type
+        });
+      }
+    }
+
+    const ownedIds = new Set(ownedRooms.map(o => o.roomId));
+    const freqMap = deptRoomCounts[deptUpper] || new Map();
+    const frequentRooms = Array.from(freqMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([roomId, count]) => {
+        const r = roomsMeta[roomId] || {};
+        return {
+          roomId,
+          name: r.name || roomId,
+          shortName: r.shortName || r.name || roomId,
+          floor: r.floor,
+          lessonsCount: count,
+          isOwned: ownedIds.has(roomId)
+        };
+      });
+
+    departmentRoomsIndex[deptUpper] = {
+      deptName: deptLabel,
+      ownedRooms,
+      frequentRooms
+    };
+  }
+
   const orderedDates = [...datesMap.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([date, dayName]) => ({ date, dayName }));
 
-  scheduleIndex = { lecturers, groups, orderedDates };
+  scheduleIndex = { lecturers, groups, orderedDates, departmentRoomsIndex };
   console.log(`[index] Проиндексировано преподавателей: ${lecturers.size}, групп: ${groups.size}`);
 }
 
-function buildEntityScheduleResponse(entityType, entityObj) {
-  if (!entityObj) return null;
-  const orderedDates = scheduleIndex.orderedDates.length > 0
-    ? scheduleIndex.orderedDates
-    : [];
-
-  // Группируем уроки по дате и времени (чтобы не дублировать одинаковые слоты)
-  const days = orderedDates.map(({ date, dayName }) => {
-    const dayLessonsRaw = entityObj.lessons.filter(l => l.date === date);
-    const dedupMap = new Map();
-    for (const l of dayLessonsRaw) {
-      const key = `${l.time}|${l.type}|${l.subject}|${l.roomId}|${l.group}|${l.lecturer}`;
-      if (!dedupMap.has(key)) dedupMap.set(key, l);
-    }
-    const lessons = [...dedupMap.values()].sort((a, b) => a.time.localeCompare(b.time));
-    return { date, dayName, lessons };
-  });
-
-  // Вычисляем статус «Сейчас у группы / преподавателя»
+function getMoscowClockNow() {
   const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const todayISO = `${yyyy}-${mm}-${dd}`;
-  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const dayNamesByDow = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Moscow',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).formatToParts(now);
+    const map = {};
+    for (const p of parts) map[p.type] = p.value;
+    const yyyy = map.year || String(now.getFullYear());
+    const mm = map.month || String(now.getMonth() + 1).padStart(2, '0');
+    const dd = map.day || String(now.getDate()).padStart(2, '0');
+    const hh = Number(map.hour === '24' ? 0 : map.hour);
+    const min = Number(map.minute || 0);
+    const moscowDate = new Date(`${yyyy}-${mm}-${dd}T12:00:00Z`);
+    const todayDayName = dayNamesByDow[moscowDate.getUTCDay()] || dayNamesByDow[now.getDay()];
+    return {
+      todayISO: `${yyyy}-${mm}-${dd}`,
+      todayDayName,
+      nowMin: hh * 60 + min
+    };
+  } catch (e) {
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    return {
+      todayISO: `${yyyy}-${mm}-${dd}`,
+      todayDayName: dayNamesByDow[now.getDay()],
+      nowMin: now.getHours() * 60 + now.getMinutes()
+    };
+  }
+}
+
+function computeEntityNowStatusFromDays(days) {
+  const { todayISO, nowMin } = getMoscowClockNow();
 
   let nowStatus = { type: 'free', title: 'Сейчас пар нет', details: 'На этой неделе больше нет пар по расписанию' };
-  const todayDay = days.find(d => d.date === todayISO);
+  const todayDay = (days || []).find(d => d.date === todayISO);
 
-  if (todayDay && todayDay.lessons.length > 0) {
+  if (todayDay && todayDay.lessons && todayDay.lessons.length > 0) {
     const current = todayDay.lessons.find(l => {
       const t = parseLessonTime(l.time);
       return t && nowMin >= t.start && nowMin <= t.end;
     });
     if (current) {
       const endMatch = current.time.match(/[–-](\d{1,2}:\d{2})/);
+      const leftMin = parseLessonTime(current.time) ? Math.max(1, parseLessonTime(current.time).end - nowMin) : null;
+      const roomPart = current.roomShort ? ` · ауд. ${current.roomShort}` : '';
       nowStatus = {
         type: 'busy',
-        title: `Сейчас идёт пара · ауд. ${current.roomShort}`,
-        details: `${current.subject}${endMatch ? ' · до ' + endMatch[1] : ''}`,
-        roomId: current.roomId
+        title: `Сейчас идёт пара${roomPart}`,
+        details: `${current.subject}${endMatch ? ' · до ' + endMatch[1] : ''}${leftMin ? ` (осталось ${leftMin} мин)` : ''}`,
+        roomId: current.roomId || null
       };
-    } else {
-      const next = todayDay.lessons.find(l => {
-        const t = parseLessonTime(l.time);
-        return t && t.start > nowMin;
-      });
-      if (next) {
-        const startMatch = next.time.match(/^(\d{1,2}:\d{2})/);
-        nowStatus = {
-          type: 'free',
-          title: 'Сейчас свободно',
-          details: `Следующая пара сегодня в ${startMatch ? startMatch[1] : next.time} · ауд. ${next.roomShort} (${next.subject})`,
-          roomId: next.roomId
-        };
-      }
+      return nowStatus;
     }
-  }
 
-  if (nowStatus.type === 'free' && !nowStatus.roomId) {
-    const upcomingDay = days.find(d => d.date > todayISO && d.lessons.length > 0) || days.find(d => d.lessons.length > 0);
-    if (upcomingDay && upcomingDay.lessons.length > 0) {
-      const first = upcomingDay.lessons[0];
-      const startMatch = first.time.match(/^(\d{1,2}:\d{2})/);
+    const next = todayDay.lessons.find(l => {
+      const t = parseLessonTime(l.time);
+      return t && t.start > nowMin;
+    });
+    if (next) {
+      const startMatch = next.time.match(/^(\d{1,2}:\d{2})/);
+      const waitMin = parseLessonTime(next.time) ? Math.max(1, parseLessonTime(next.time).start - nowMin) : null;
+      const roomPart = next.roomShort ? ` · ауд. ${next.roomShort}` : '';
       nowStatus = {
         type: 'free',
-        title: 'Сейчас пар нет',
-        details: `Ближайшая пара: ${upcomingDay.dayName}${startMatch ? ' в ' + startMatch[1] : ''} · ауд. ${first.roomShort} (${first.subject})`,
-        roomId: first.roomId
+        title: 'Сейчас свободно',
+        details: `Следующая пара сегодня в ${startMatch ? startMatch[1] : next.time}${waitMin && waitMin <= 180 ? ` (через ${waitMin} мин)` : ''}${roomPart} (${next.subject})`,
+        roomId: next.roomId || null
       };
+      return nowStatus;
     }
   }
 
-  const roomsList = [...entityObj.rooms]
+  const upcomingDay = (days || []).find(d => d.date > todayISO && d.lessons && d.lessons.length > 0);
+  if (upcomingDay && upcomingDay.lessons.length > 0) {
+    const first = upcomingDay.lessons[0];
+    const startMatch = first.time.match(/^(\d{1,2}:\d{2})/);
+    const roomPart = first.roomShort ? ` · ауд. ${first.roomShort}` : '';
+    nowStatus = {
+      type: 'free',
+      title: 'Сейчас пар нет',
+      details: `Ближайшая пара: ${upcomingDay.dayName}${startMatch ? ' в ' + startMatch[1] : ''}${roomPart} (${first.subject})`,
+      roomId: first.roomId || null
+    };
+  }
+
+  return nowStatus;
+}
+
+function buildDefaultDaysFromEntityObj(entityObj) {
+  const orderedDates = scheduleIndex.orderedDates.length > 0
+    ? scheduleIndex.orderedDates
+    : [];
+  return orderedDates.map(({ date, dayName }) => {
+    const dayLessonsRaw = (entityObj.lessons || []).filter(l => l.date === date);
+    const dedupMap = new Map();
+    for (const l of dayLessonsRaw) {
+      const key = `${l.time}|${l.type}|${l.subject}|${l.subgroup || ''}|${l.roomId || l.roomShort}|${l.group}|${l.lecturer}`;
+      if (!dedupMap.has(key)) dedupMap.set(key, l);
+    }
+    const lessons = [...dedupMap.values()].sort((a, b) => a.time.localeCompare(b.time));
+    return { date, dayName, lessons };
+  });
+}
+
+function getAllCachedDaysForGroup(groupName, fallbackDays = [], entityObj = null) {
+  const prefix = `group:${groupName}:`;
+  const combinedDays = [];
+  const seenCacheKeys = new Set();
+
+  for (const [k, v] of Object.entries(entityScheduleCache)) {
+    if (k.startsWith(prefix) && v && Array.isArray(v.days)) {
+      seenCacheKeys.add(k);
+      combinedDays.push(...v.days);
+    }
+  }
+  if (Array.isArray(fallbackDays) && fallbackDays.length > 0) {
+    combinedDays.push(...fallbackDays);
+  }
+  if (entityObj && Array.isArray(entityObj.lessons) && entityObj.lessons.length > 0) {
+    combinedDays.push({ date: 'index', dayName: '', lessons: entityObj.lessons });
+  }
+  return combinedDays;
+}
+
+function selectFourCycleWeekValues(availableWeeks = [], anchorDate = '') {
+  const valid = (availableWeeks || []).map(w => w.value).filter(Boolean);
+  if (valid.length === 0) return anchorDate ? [anchorDate] : [];
+  if (valid.length <= 4) return valid;
+
+  let startIdx = valid.indexOf(anchorDate);
+  if (startIdx === -1) {
+    const defIdx = (availableWeeks || []).findIndex(w => w.isDefault || w.isCurrent);
+    startIdx = defIdx >= 0 ? defIdx : 0;
+  }
+  if (startIdx + 4 <= valid.length) {
+    return valid.slice(startIdx, startIdx + 4);
+  }
+  return valid.slice(Math.max(0, valid.length - 4), valid.length);
+}
+
+function buildEntityScheduleResponse(entityType, entityObj, customDays = null, weekData = {}) {
+  if (!entityObj) return null;
+
+  const defaultDays = buildDefaultDaysFromEntityObj(entityObj);
+  const days = (Array.isArray(customDays) && customDays.length > 0) ? customDays : defaultDays;
+
+  const statusSourceDays = (Array.isArray(weekData.currentWeekDays) && weekData.currentWeekDays.length > 0)
+    ? weekData.currentWeekDays
+    : (weekData.isCurrentWeek !== false ? days : defaultDays);
+
+  const nowStatus = computeEntityNowStatusFromDays(statusSourceDays);
+
+  const roomIdsSet = new Set(entityObj.rooms || []);
+  for (const d of days) {
+    for (const l of (d.lessons || [])) {
+      if (l.roomId) roomIdsSet.add(l.roomId);
+    }
+  }
+
+  const roomsList = [...roomIdsSet]
     .map(id => {
       const m = roomsMeta[id];
       if (!m) return null;
-      return { id, name: m.name, shortName: m.shortName || m.classroom || m.name, floor: m.floor, building: m.building };
+      return { id, name: m.name, shortName: getRoomScheduleShortName(m), floor: m.floor, building: m.building };
     })
     .filter(Boolean);
+
+  const availableWeeks = weekData.availableWeeks && weekData.availableWeeks.length > 0
+    ? weekData.availableWeeks
+    : getFormattedAvailableWeeks();
+
+  const selectedWeek = weekData.selectedWeek
+    || availableWeeks.find(w => w.isDefault)
+    || availableWeeks[0]
+    || null;
+
+  const cheatSheetDays = entityType === 'group'
+    ? (Array.isArray(weekData.cheatSheetDays) && weekData.cheatSheetDays.length > 0
+        ? weekData.cheatSheetDays
+        : getAllCachedDaysForGroup(entityObj.name, days, entityObj))
+    : [];
+
+  const cheatSheet = entityType === 'group'
+    ? buildGroupCheatSheet(cheatSheetDays, resolveLecturerMeta)
+    : undefined;
 
   return {
     entityType,
@@ -382,11 +745,176 @@ function buildEntityScheduleResponse(entityType, entityObj) {
     regalia: entityObj.regalia || '',
     department: entityObj.department || '',
     faculty: entityObj.faculty || '',
+    facultyCode: entityObj.facultyCode || '',
     rooms: roomsList,
-    lessonsCount: days.reduce((acc, d) => acc + d.lessons.length, 0),
+    lessonsCount: days.reduce((acc, d) => acc + (d.lessons ? d.lessons.length : 0), 0),
     nowStatus,
-    days
+    days,
+    isCurrentWeek: weekData.isCurrentWeek !== false,
+    currentWeekDays: statusSourceDays,
+    availableWeeks,
+    selectedWeek,
+    cheatSheet
   };
+}
+
+async function ensureFourWeekGroupCache(groupName, raspId, availableWeeks, anchorDate) {
+  if (!raspId) return;
+  const weekValues = selectFourCycleWeekValues(availableWeeks, anchorDate);
+  const missingWeeks = weekValues.filter(wVal => {
+    const k = `group:${groupName}:${wVal}`;
+    const entry = entityScheduleCache[k];
+    return !(entry && (Date.now() - entry.fetchedAt < ENTITY_CACHE_TTL_MS) && Array.isArray(entry.days) && entry.days.length > 0);
+  });
+  if (missingWeeks.length === 0) return;
+
+  await Promise.all(missingWeeks.map(async (wVal) => {
+    try {
+      const url = `https://rasp.rsreu.ru/schedule-frame/group?group=${encodeURIComponent(raspId)}&date=${encodeURIComponent(wVal)}`;
+      const resp = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; RSREUMap/1.2)',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'ru-RU,ru;q=0.9'
+        },
+        signal: AbortSignal.timeout(5500)
+      });
+      if (!resp.ok) return;
+      const html = await resp.text();
+      const parsed = parseRaspSchedulePageHtml(html, {
+        entityType: 'group',
+        entityName: groupName,
+        classroomToRoomMap
+      });
+      if (!parsed.empty && Array.isArray(parsed.days) && parsed.days.length > 0) {
+        entityScheduleCache[`group:${groupName}:${wVal}`] = {
+          days: parsed.days,
+          availableWeeks: parsed.availableWeeks,
+          selectedWeek: parsed.selectedWeek,
+          fetchedAt: Date.now()
+        };
+      }
+    } catch (e) {
+      // Ignore individual week fetch error
+    }
+  }));
+  saveEntityCacheToDisk();
+}
+
+/**
+ * Fetches complete group or lecturer schedule directly from rasp.rsreu.ru (supporting week date parameter)
+ * and falls back cleanly to local scheduleIndex when offline.
+ */
+async function fetchCompleteEntitySchedule(type, entityObj, dateParam = '') {
+  if (!entityObj) return null;
+  const defaultWeek = getDefaultWeekValue();
+  const effectiveDate = String(dateParam || '').trim() || defaultWeek;
+  const isCurrentWeek = !effectiveDate || !defaultWeek || effectiveDate === defaultWeek;
+  const cacheKey = `${type}:${entityObj.name}:${effectiveDate || 'current'}`;
+  const currentWeekCacheKey = `${type}:${entityObj.name}:${defaultWeek || 'current'}`;
+  const currentWeekCachedDays = entityScheduleCache[currentWeekCacheKey]?.days || null;
+
+  const groupRaspId = type === 'group' ? resolveGroupRaspId(entityObj.name) : null;
+
+  const cached = entityScheduleCache[cacheKey];
+  if (cached && (Date.now() - cached.fetchedAt < ENTITY_CACHE_TTL_MS) && Array.isArray(cached.days) && cached.days.length > 0) {
+    if (type === 'group' && groupRaspId) {
+      await ensureFourWeekGroupCache(
+        entityObj.name,
+        groupRaspId,
+        cached.availableWeeks || getFormattedAvailableWeeks(),
+        defaultWeek || effectiveDate
+      );
+    }
+    return buildEntityScheduleResponse(type, entityObj, cached.days, {
+      availableWeeks: cached.availableWeeks,
+      selectedWeek: cached.selectedWeek,
+      isCurrentWeek,
+      currentWeekDays: isCurrentWeek ? cached.days : currentWeekCachedDays,
+      cheatSheetDays: type === 'group' ? getAllCachedDaysForGroup(entityObj.name, cached.days, entityObj) : undefined
+    });
+  }
+
+  let raspUrl = null;
+  if (type === 'group') {
+    if (groupRaspId) {
+      const dateQuery = effectiveDate ? `&date=${encodeURIComponent(effectiveDate)}` : '';
+      raspUrl = `https://rasp.rsreu.ru/schedule-frame/group?group=${encodeURIComponent(groupRaspId)}${dateQuery}`;
+    }
+  } else if (type === 'lecturer') {
+    const lMeta = resolveLecturerMeta(entityObj.name);
+    if (lMeta.raspId) {
+      const dateQuery = effectiveDate ? `&date=${encodeURIComponent(effectiveDate)}` : '';
+      raspUrl = `https://rasp.rsreu.ru/schedule-frame/lecturer?lecturer=${encodeURIComponent(lMeta.raspId)}${dateQuery}`;
+    }
+  }
+
+  if (raspUrl) {
+    try {
+      const resp = await fetch(raspUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; RSREUMap/1.2)',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'ru-RU,ru;q=0.9'
+        },
+        signal: AbortSignal.timeout(7500)
+      });
+      if (resp.ok) {
+        const html = await resp.text();
+        const parsed = parseRaspSchedulePageHtml(html, {
+          entityType: type,
+          entityName: entityObj.name,
+          classroomToRoomMap
+        });
+        if (parsed.availableWeeks && parsed.availableWeeks.length > 0) {
+          raspDirectoryMeta.availableWeeks = parsed.availableWeeks.map(w => ({
+            value: w.value,
+            label: w.rawLabel || w.label,
+            isDefault: Boolean(w.isCurrent)
+          }));
+        }
+        if (!parsed.empty && Array.isArray(parsed.days) && parsed.days.length > 0) {
+          entityScheduleCache[cacheKey] = {
+            days: parsed.days,
+            availableWeeks: parsed.availableWeeks,
+            selectedWeek: parsed.selectedWeek,
+            fetchedAt: Date.now()
+          };
+          saveEntityCacheToDisk();
+          if (type === 'group' && groupRaspId) {
+            await ensureFourWeekGroupCache(
+              entityObj.name,
+              groupRaspId,
+              parsed.availableWeeks || getFormattedAvailableWeeks(),
+              defaultWeek || effectiveDate
+            );
+          }
+          return buildEntityScheduleResponse(type, entityObj, parsed.days, {
+            availableWeeks: parsed.availableWeeks,
+            selectedWeek: parsed.selectedWeek,
+            isCurrentWeek,
+            currentWeekDays: isCurrentWeek ? parsed.days : currentWeekCachedDays,
+            cheatSheetDays: type === 'group' ? getAllCachedDaysForGroup(entityObj.name, parsed.days, entityObj) : undefined
+          });
+        }
+      }
+    } catch (e) {
+      // Fall back to local scheduleIndex
+    }
+  }
+
+  const availableWeeks = getFormattedAvailableWeeks();
+  const selectedWeek = availableWeeks.find(w => w.value === effectiveDate)
+    || availableWeeks.find(w => w.isDefault)
+    || availableWeeks[0]
+    || null;
+
+  return buildEntityScheduleResponse(type, entityObj, null, {
+    availableWeeks,
+    selectedWeek,
+    isCurrentWeek,
+    currentWeekDays: currentWeekCachedDays
+  });
 }
 
 function findMatchingLecturers(query) {
@@ -402,13 +930,11 @@ function findMatchingLecturers(query) {
     const surname = lec.surname;
     if (!surname || surname.length < 3) continue;
 
-    // 1. Прямое вхождение фамилии или ФИО
     if (fullLower.includes(q) || q.includes(surname)) {
       matches.push({ lec, score: 100 });
       continue;
     }
 
-    // 2. Сравнение по основе фамилии с учётом падежей (Устюков -> устюкова / устюкову / устюковым)
     const stem = surname.length >= 5 ? surname.slice(0, -1) : surname;
     for (const w of words) {
       if (w === surname || w.startsWith(surname) || (stem.length >= 4 && w.startsWith(stem) && Math.abs(w.length - surname.length) <= 3)) {
@@ -424,7 +950,6 @@ function findMatchingGroups(query) {
   const q = String(query || '').toLowerCase().replace(/ё/g, 'е').trim();
   if (!q) return [];
 
-  // Если в запросе явно указан этаж («1 этаж») или «аудитория 100» / «302 аудитории», не путаем с группой
   const cleaned = q
     .replace(/\d\s*(?:-м|-й|м|й)?\s*этаж[а-я]*/gi, ' ')
     .replace(/(?:ауд|аудитор[а-я]*|кабинет[а-я]*|каб)\.?\s*\d+[а-яa-z]?/gi, ' ')
@@ -500,10 +1025,52 @@ async function fetchScheduleHtml(building, classroom, date) {
       'User-Agent': 'Mozilla/5.0 (compatible; CampusMap/1.0)',
       'Accept': 'text/html,application/xhtml+xml',
       'Accept-Language': 'ru-RU,ru;q=0.9'
-    }
+    },
+    signal: AbortSignal.timeout(7500)
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.text();
+}
+
+function buildSyntheticScheduleHtmlFromCachedEntry(entry, requestedDate = '') {
+  if (!entry || entry.empty || !Array.isArray(entry.days) || entry.days.length === 0) {
+    return `<select name="date"></select>`;
+  }
+  const MONTH_NAMES = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+  const ths = entry.days.map(d => {
+    const [, mStr, dStr] = String(d.date || '').split('-');
+    const dateSpan = dStr && mStr ? `${parseInt(dStr, 10)} ${MONTH_NAMES[parseInt(mStr, 10) - 1] || ''}` : '';
+    return `<th><span>${dateSpan}</span> ${d.dayName || ''}</th>`;
+  }).join('');
+
+  const slotSet = new Set(['08:10–09:45', '09:55–11:30', '11:40–13:15', '13:35–15:10', '15:20–16:55', '17:05–18:40']);
+  entry.days.forEach(d => (d.lessons || []).forEach(l => { if (l.time) slotSet.add(l.time.replace('-', '–')); }));
+  const slots = [...slotSet].sort((a, b) => a.localeCompare(b));
+
+  const trs = slots.map(slot => {
+    const [start, end] = slot.split(/[–-]/);
+    const tds = entry.days.map(d => {
+      const matching = (d.lessons || []).filter(l => (l.time || '').replace('-', '–') === slot);
+      const inner = matching.map(l => {
+        const badge = l.type ? `<span class="schedule-lesson-type-badge">${l.type}</span>` : '';
+        const grpWithSub = [l.group, l.subgroup].filter(Boolean).join(', ');
+        const tail = [grpWithSub, l.lecturer].filter(Boolean).join(', ');
+        return `<div>${badge} ${l.subject}${tail ? `, гр. ${tail}` : ''}</div>`;
+      }).join('');
+      return `<td class="schedule-cell">${inner}</td>`;
+    }).join('');
+    return `<tr><td><div>${start || ''}</div><div>${end || ''}</div></td>${tds}</tr>`;
+  }).join('');
+
+  const weeks = getFormattedAvailableWeeks();
+  const optionsHtml = weeks.length > 0
+    ? weeks.map(w => {
+        const isSel = requestedDate ? (w.value === requestedDate) : Boolean(w.isDefault);
+        return `<option value="${w.value}"${isSel ? ' selected' : ''}>${w.rawLabel || w.label}</option>`;
+      }).join('')
+    : `<option value="2026-11-02" selected>02.11.2026, знам.</option>`;
+
+  return `<select name="date">${optionsHtml}</select><table class="table"><tr><th>Время</th>${ths}</tr>${trs}</table>`;
 }
 
 function parseScheduleWithCheerio(html, mondayISO) {
@@ -554,8 +1121,8 @@ function parseScheduleWithCheerio(html, mondayISO) {
         const clone = $div.clone();
         clone.find('.schedule-lesson-type-badge').remove();
         const text = clone.text().replace(/\s+/g, ' ').trim();
-        const { subject, group, groups, lecturer } = parseLessonText(text);
-        days[d].lessons.push({ time, type, subject, group, groups, lecturer });
+        const { subject, group, groups, subgroup, lecturer } = parseLessonText(text);
+        days[d].lessons.push({ time, type, subject, subgroup, group, groups, lecturer });
       });
     }
   }
@@ -607,7 +1174,6 @@ async function warmUpCache() {
         } else {
           newCache[id] = { empty: true, days: [], error: e.message, fetchedAt: Date.now() };
         }
-        console.error(`[warm-up] ${id}: ${e.message}`);
       }
       done++;
     }));
@@ -631,12 +1197,12 @@ async function warmUpCache() {
 }
 
 function parseLessonTime(time) {
-  const m = time.match(/(\d{1,2}):(\d{2})[–-](\d{1,2}):(\d{2})/);
+  const m = String(time || '').match(/(\d{1,2}):(\d{2})[–-](\d{1,2}):(\d{2})/);
   if (!m) return null;
   return { start: +m[1] * 60 + +m[2], end: +m[3] * 60 + +m[4] };
 }
 
-function computeFreeStatus(roomId) {
+function computeFreeStatus(roomId, customDayName = null, customMin = null) {
   const entry = scheduleCache[roomId];
   if (!entry) return { status: 'free', untilText: 'нет пар', noSchedule: true };
 
@@ -651,9 +1217,11 @@ function computeFreeStatus(roomId) {
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
   const todayISO = `${yyyy}-${mm}-${dd}`;
-  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const nowMin = customMin !== null ? customMin : (now.getHours() * 60 + now.getMinutes());
 
-  const today = entry.days.find(d => d.date === todayISO);
+  const today = customDayName
+    ? entry.days.find(d => String(d.dayName || '').toLowerCase() === customDayName.toLowerCase())
+    : entry.days.find(d => d.date === todayISO);
 
   if (!today || today.lessons.length === 0) {
     const upcoming = entry.days
@@ -709,7 +1277,7 @@ function computeBusyStatus(roomId) {
   return { subject: current.subject, untilText: endMatch ? endMatch[1] : '' };
 }
 
-// ============ ИИ-НАВИГАТОР КАМПУСА ============
+// ============ ИИ-НАВИГАТОР РГРТУ ============
 
 function enrichRoomCard(id) {
   const meta = roomsMeta[id];
@@ -884,7 +1452,7 @@ function searchSubjectInSchedule(query) {
     if (!entry || entry.empty || !Array.isArray(entry.days)) continue;
     const meta = roomsMeta[roomId];
     if (!meta) continue;
-    const roomShort = meta.shortName || meta.classroom || meta.name;
+    const roomShort = getRoomScheduleShortName(meta);
 
     for (const day of entry.days) {
       for (const lesson of (day.lessons || [])) {
@@ -949,13 +1517,13 @@ function formatEntityScheduleForAi(entitySchedule, dayFilter = null) {
 
   daysToFormat.forEach(d => {
     d.lessons.forEach(l => {
-      uniqueRoomIds.add(l.roomId);
-      uniqueRoomShorts.add(`ауд. ${l.roomShort} (${l.floor} эт.)`);
+      if (l.roomId) uniqueRoomIds.add(l.roomId);
+      if (l.roomShort) uniqueRoomShorts.add(`ауд. ${l.roomShort}${l.floor != null ? ` (${l.floor} эт.)` : ''}`);
     });
   });
 
   const headerPrefix = entitySchedule.entityType === 'lecturer'
-    ? `${entitySchedule.name}`
+    ? `${entitySchedule.fullName || entitySchedule.name}${entitySchedule.regalia ? ` (${entitySchedule.regalia})` : ''}`
     : `Группа ${entitySchedule.name}`;
 
   const statusBanner = entitySchedule.nowStatus && entitySchedule.nowStatus.details
@@ -966,7 +1534,7 @@ function formatEntityScheduleForAi(entitySchedule, dayFilter = null) {
     const scopeText = dayFilter ? `в ${dayFilter.toLowerCase()}` : 'на этой неделе';
     return {
       text: `${statusBanner}У ${entitySchedule.entityType === 'lecturer' ? entitySchedule.name : 'группы ' + entitySchedule.name} ${scopeText} нет пар в Главном корпусе по расписанию.`.trim(),
-      roomIds: [...uniqueRoomIds, ...entitySchedule.rooms.map(r => r.id)].slice(0, 6)
+      roomIds: [...uniqueRoomIds, ...(entitySchedule.rooms || []).map(r => r.id)].slice(0, 6)
     };
   }
 
@@ -976,9 +1544,9 @@ function formatEntityScheduleForAi(entitySchedule, dayFilter = null) {
   }
 
   if (dayFilter) {
-    lines.push(`${headerPrefix} — расписание на ${dayFilter.toLowerCase()} (аудитории: ${[...uniqueRoomShorts].join(', ')}):`);
+    lines.push(`${headerPrefix} — расписание на ${dayFilter.toLowerCase()}${uniqueRoomShorts.size ? ` (аудитории: ${[...uniqueRoomShorts].join(', ')})` : ''}:`);
   } else {
-    lines.push(`${headerPrefix} — занятия на этой неделе в аудиториях: ${[...uniqueRoomShorts].join(', ')}.`);
+    lines.push(`${headerPrefix} — занятия на этой неделе${uniqueRoomShorts.size ? ` в аудиториях: ${[...uniqueRoomShorts].join(', ')}` : ''}.`);
   }
 
   for (const d of daysToFormat) {
@@ -987,7 +1555,8 @@ function formatEntityScheduleForAi(entitySchedule, dayFilter = null) {
       const extra = entitySchedule.entityType === 'lecturer'
         ? (l.group ? `, гр. ${l.group}` : '')
         : (l.lecturer ? `, ${l.lecturer}` : '');
-      return `${l.time} — ауд. ${l.roomShort} (${l.type ? l.type + ' ' : ''}${l.subject}${extra})`;
+      const roomLabel = l.roomShort ? `ауд. ${l.roomShort}` : 'без ауд.';
+      return `${l.time} — ${roomLabel} (${l.type ? l.type + ' ' : ''}${l.subject}${l.subgroup ? `, ${l.subgroup}` : ''}${extra})`;
     });
     lines.push(`\n• ${d.dayName}: ${items.join('; ')}`);
   }
@@ -1025,12 +1594,27 @@ function extractHistoryContext(history = []) {
   return { lastRoomIds, lastEntitySchedule, recentTurns };
 }
 
+function buildTonePrefix(tone) {
+  if (tone === 'rude') {
+    const snarkyPrefixes = [
+      'Ого, сколько эмоций на ровном месте! Выдохни, а я пока дам точный ответ по факту:\n\n',
+      'Полегче на поворотах — я тебе не расписание в деканате в 8 утра ставил. Держи информацию:\n\n',
+      'Критика принята (нет). Но раз уж я профессионал, вот точные данные:\n\n'
+    ];
+    return snarkyPrefixes[Math.floor(Math.random() * snarkyPrefixes.length)];
+  }
+  return '';
+}
+
 function localCampusAssistant(query, currentFloor = 1, history = []) {
-  const q = query.toLowerCase().replace(/ё/g, 'е').trim();
+  const qRaw = String(query || '').trim();
+  const q = qRaw.toLowerCase().replace(/ё/g, 'е').trim();
   const { lastRoomIds, lastEntitySchedule } = extractHistoryContext(history);
+  const tone = detectUserTone(qRaw);
+  const tonePrefix = buildTonePrefix(tone);
 
   if (!q) {
-    const reply = 'Напишите номер аудитории, группу, фамилию преподавателя, название предмета или задайте вопрос — например: «В каких аудиториях на этой неделе у Устюкова будут пары?», «Что сейчас в 302?» или «Где сейчас свободные аудитории на 2 этаже?».';
+    const reply = 'Напишите номер аудитории, группу, фамилию преподавателя, название предмета, кафедру или задайте вопрос — например: «Помещения кафедры САПР ВС», «Кто ведёт у группы 546?» или «Какие аудитории сейчас свободны?».';
     return {
       reply,
       answer: reply,
@@ -1044,12 +1628,109 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     };
   }
 
-  const entranceId = roomsMeta['c_f1_entrance'] ? 'c_f1_entrance' : Object.keys(roomsMeta).find(k => roomsMeta[k].type === 'entrance') || 'c_f1_100';
+  // 0. Живое общение (приветствия, благодарности, грубость без предметного вопроса)
+  const hasCampusKeyword = /(\d{2,4}|ауд|кафедр|каф\b|групп|гр\b|преп|доц|проф|ст\.\s*преп|асс|свободн|пуст|столов|буфет|туалет|wc|спортзал|деканат|маршрут|пройти|дойти|расписан|пар[аыуе]|лекц|лаб|окн[оа]|кто ведет|дисциплин|предмет|шпаргалк|звонк|перерыв|перемен|недел|числ|знам)/i.test(q);
+  if (!hasCampusKeyword && !findMatchingLecturers(qRaw).length && !searchRoomsInMeta(roomsMeta, qRaw, 2).length) {
+    if (tone === 'rude') {
+      const reply = 'Самоутверждаться за счёт ИИ-помощника — это, конечно, сильный ход. Когда захочешь узнать что-то полезное — например, где сейчас пара у твоей группы, какие аудитории свободны или как пройти к кафедре — пиши по делу.';
+      return { reply, answer: reply, rooms: [], roomIds: [], route: null, entitySchedule: null, openFreePanel: false, matchedIntent: true, modelUsed: 'local-campus-ai' };
+    }
+    if (/(привет|здравствуй|добрый|доброе|хай|салют|хелло)/i.test(q)) {
+      const reply = 'Привет! Я ИИ\'шка РГРТУ — твой умный проводник по Главном корпусу и расписанию. Подскажу помещения любой кафедры, расписание групп и преподавателей, свободные аудитории и построю маршрут. О чём спросишь?';
+      return { reply, answer: reply, rooms: [], roomIds: [], route: null, entitySchedule: null, openFreePanel: false, matchedIntent: true, modelUsed: 'local-campus-ai' };
+    }
+    if (/(как дела|как ты|как жизнь|че как)/i.test(q)) {
+      const reply = `Отлично — держу в памяти расписание ${scheduleIndex.groups.size} групп и ${scheduleIndex.lecturers.size} преподавателей РГРТУ! Чем помочь?`;
+      return { reply, answer: reply, rooms: [], roomIds: [], route: null, entitySchedule: null, openFreePanel: false, matchedIntent: true, modelUsed: 'local-campus-ai' };
+    }
+    if (/(спасибо|благодарю|пасиб|сяп|красавчик|молодец|супер|круто|лучший)/i.test(q)) {
+      const reply = 'Всегда пожалуйста! Обращайся в любой момент — удачных пар и лёгкой сессии!';
+      return { reply, answer: reply, rooms: [], roomIds: [], route: null, entitySchedule: null, openFreePanel: false, matchedIntent: true, modelUsed: 'local-campus-ai' };
+    }
+  }
 
-  // 0a. Вопросы про расписание звонков, перемену или время текущей пары
+  const entranceId = roomsMeta['C_entrance_c'] ? 'C_entrance_c' : Object.keys(roomsMeta).find(k => roomsMeta[k].type === 'entrance') || 'c_f1_100';
+
+  // 0a. Помещения и аудитории конкретной кафедры («помещения кафедры САПР ВС», «аудитории кафедры ЭВМ»)
+  const deptMatch = qRaw.match(/(?:помещени[яе]|аудитори[ия]|кабинеты|лаборатори[ия]|где\s+находится\s+кафедра|кафедр[аыуе]|каф\.?)\s+([А-ЯЁA-Za-z\s.]{2,18})/i);
+  if (deptMatch) {
+    const rawDeptQuery = deptMatch[1].replace(/[?.,!]/g, '').trim().toUpperCase();
+    let matchedDept = scheduleIndex.departmentRoomsIndex[rawDeptQuery];
+    if (!matchedDept) {
+      for (const [k, val] of Object.entries(scheduleIndex.departmentRoomsIndex || {})) {
+        if (k === rawDeptQuery || rawDeptQuery.includes(k) || k.includes(rawDeptQuery)) {
+          matchedDept = val;
+          break;
+        }
+      }
+    }
+    if (matchedDept && (matchedDept.ownedRooms.length > 0 || matchedDept.frequentRooms.length > 0)) {
+      const roomIds = [];
+      const lines = [`${tonePrefix}Кафедра ${matchedDept.deptName}:`];
+      if (matchedDept.ownedRooms.length > 0) {
+        lines.push('\nЗакреплённые помещения кафедры:');
+        matchedDept.ownedRooms.forEach(r => {
+          lines.push(`• ${r.name} (${r.floor} этаж)`);
+          if (roomIds.length < 6) roomIds.push(r.roomId);
+        });
+      }
+      if (matchedDept.frequentRooms.length > 0) {
+        lines.push(`\nАудитории, где чаще всего ведёт занятия каф. ${matchedDept.deptName}:`);
+        matchedDept.frequentRooms.slice(0, 6).forEach(r => {
+          lines.push(`• ауд. ${r.shortName} (${r.floor} этаж — ${r.lessonsCount} пар/нед.)`);
+          if (!roomIds.includes(r.roomId) && roomIds.length < 6) roomIds.push(r.roomId);
+        });
+      }
+      const rooms = roomIds.map(enrichRoomCard).filter(Boolean);
+      const reply = lines.join('\n');
+      return {
+        reply,
+        answer: reply,
+        rooms,
+        roomIds: rooms.map(r => r.id),
+        route: null,
+        entitySchedule: null,
+        openFreePanel: false,
+        matchedIntent: true,
+        modelUsed: 'local-campus-ai'
+      };
+    }
+  }
+
+  // 0b. «Кто ведёт <предмет> у группы <N>?» / «Преподаватели и дисциплины группы <N>»
+  const whoTeachesMatch = q.match(/(?:кто\s+ведет|кто\s+преподает|преподавател[иь]|шпаргалк[ау]|дисциплины|предметы)\s+(?:(.*?)\s+)?(?:у\s+группы|групп[ыеу]|гр\.?)\s*(\d{2,5}[а-яa-z]?)/i)
+    || q.match(/(?:у\s+группы|групп[аые])\s*(\d{2,5}[а-яa-z]?)\s+(?:кто\s+ведет|преподавател[иь]|дисциплины|предметы)\s*(.*)?/i);
+  if (whoTeachesMatch && cacheStatus.ready) {
+    const grpCandidates = findMatchingGroups(qRaw);
+    if (grpCandidates.length > 0) {
+      const topGrp = grpCandidates[0];
+      const entitySched = buildEntityScheduleResponse('group', topGrp);
+      const sheet = buildGroupCheatSheet(entitySched.days, resolveLecturerMeta);
+      if (sheet.length > 0) {
+        const lines = sheet.map(item => {
+          const rowsStr = (item.rows || []).map(r => `${r.types.join(', ')}: ${r.text}`).join('; ');
+          return `• ${item.headerLabel} ${rowsStr}`;
+        });
+        const reply = `${tonePrefix}Преподаватели и дисциплины группы ${topGrp.name}:\n\n${lines.join('\n')}`;
+        return {
+          reply,
+          answer: reply,
+          rooms: [],
+          roomIds: [],
+          route: null,
+          entitySchedule: { type: 'group', name: topGrp.name },
+          openFreePanel: false,
+          matchedIntent: true,
+          modelUsed: 'local-campus-ai'
+        };
+      }
+    }
+  }
+
+  // 0c. Вопросы про расписание звонков, перемену или время текущей пары
   if (/(?:звонк|перемен|перерыв|во\s+сколько\s+(?:начинается|заканчивается|кончается|\d\s*(?:-я|я)?\s*пара)|какая\s+сейчас\s+пара\s+по\s+счету|расписание\s+пар\s+по\s+времени)/i.test(q) ||
       (/^(?:какая\s+сейчас\s+пара|сколько\s+до\s+конца\s+пары|когда\s+закончится\s+пара)[?.!]*$/i.test(q))) {
-    const reply = buildBellScheduleAnswer();
+    const reply = `${tonePrefix}${buildBellScheduleAnswer()}`;
     return {
       reply,
       answer: reply,
@@ -1063,15 +1744,15 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     };
   }
 
-  // 0b. Вопросы про тип недели (числитель или знаменатель)
+  // 0d. Вопросы про тип недели (числитель или знаменатель)
   if (/(?:числител|знаменател|какая\s+(?:сейчас|сегодня|эта)\s+недел)/i.test(q)) {
     const parity = getAcademicWeekParity();
     const jsDays = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
     const now = new Date();
-    const reply = `Сейчас идёт ${parity.weekNumber}-я учебная неделя — **${parity.type}** (сегодня ${jsDays[now.getDay()]}).`;
+    const reply = `${tonePrefix}Сейчас идёт ${parity.weekNumber}-я учебная неделя — ${parity.type} (сегодня ${jsDays[now.getDay()]}).`;
     return {
-      reply: reply.replace(/\*\*/g, ''),
-      answer: reply.replace(/\*\*/g, ''),
+      reply,
+      answer: reply,
       rooms: [],
       roomIds: [],
       route: null,
@@ -1082,7 +1763,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     };
   }
 
-  // 0c. Проверяем вопросы по расписанию преподавателей и групп (включая контекстные уточнения из истории диалога)
+  // 0e. Проверяем вопросы по расписанию преподавателей и групп
   if (cacheStatus.ready) {
     const matchedLecturers = findMatchingLecturers(query);
     if (matchedLecturers.length > 0) {
@@ -1091,9 +1772,10 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
       const dayFilter = detectDayFilterInQuery(q);
       const formatted = formatEntityScheduleForAi(entitySched, dayFilter);
       const rooms = formatted.roomIds.map(enrichRoomCard).filter(Boolean);
+      const reply = `${tonePrefix}${formatted.text}`;
       return {
-        reply: formatted.text,
-        answer: formatted.text,
+        reply,
+        answer: reply,
         rooms,
         roomIds: rooms.map(r => r.id),
         route: null,
@@ -1111,9 +1793,10 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
       const dayFilter = detectDayFilterInQuery(q);
       const formatted = formatEntityScheduleForAi(entitySched, dayFilter);
       const rooms = formatted.roomIds.map(enrichRoomCard).filter(Boolean);
+      const reply = `${tonePrefix}${formatted.text}`;
       return {
-        reply: formatted.text,
-        answer: formatted.text,
+        reply,
+        answer: reply,
         rooms,
         roomIds: rooms.map(r => r.id),
         route: null,
@@ -1124,7 +1807,6 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
       };
     }
 
-    // Контекстный вопрос по расписанию из предыдущего сообщения диалога (например: «А во вторник?», «А в пятницу где у него пары?»)
     const dayFilterFromContext = detectDayFilterInQuery(q);
     const isScheduleFollowUp = dayFilterFromContext || /(?:у него|у нее|у них|у этой группы|пары|занятия|расписани|где\s+он|где\s+она)/i.test(q);
     if (lastEntitySchedule && isScheduleFollowUp) {
@@ -1134,9 +1816,10 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
           const entitySched = buildEntityScheduleResponse('lecturer', lecObj);
           const formatted = formatEntityScheduleForAi(entitySched, dayFilterFromContext);
           const rooms = formatted.roomIds.map(enrichRoomCard).filter(Boolean);
+          const reply = `${tonePrefix}${formatted.text}`;
           return {
-            reply: formatted.text,
-            answer: formatted.text,
+            reply,
+            answer: reply,
             rooms,
             roomIds: rooms.map(r => r.id),
             route: null,
@@ -1152,9 +1835,10 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
           const entitySched = buildEntityScheduleResponse('group', grpObj);
           const formatted = formatEntityScheduleForAi(entitySched, dayFilterFromContext);
           const rooms = formatted.roomIds.map(enrichRoomCard).filter(Boolean);
+          const reply = `${tonePrefix}${formatted.text}`;
           return {
-            reply: formatted.text,
-            answer: formatted.text,
+            reply,
+            answer: reply,
             rooms,
             roomIds: rooms.map(r => r.id),
             route: null,
@@ -1168,7 +1852,6 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     }
   }
 
-  // Вспомогательное разрешение контекстной ссылки на аудиторию из предыдущего сообщения
   const resolveContextRoom = (refText) => {
     if (!lastRoomIds.length) return null;
     const norm = String(refText || '').toLowerCase();
@@ -1184,7 +1867,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     return null;
   };
 
-  // 1. Проверка запроса на построение маршрута («от ... до ...», «из ... в ...», «как пройти до ...», «как туда дойти?»)
+  // 1. Проверка запроса на построение маршрута
   const routeFromToMatch = q.match(/(?:от|из)\s+(.+?)\s+(?:до|в|к)\s+(.+?)(?:[?.!]|$)/i);
   if (routeFromToMatch) {
     const fromPart = routeFromToMatch[1].trim();
@@ -1195,7 +1878,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     if (fromHits.length && toHits.length && fromHits[0].meta && toHits[0].meta) {
       const fromRoom = fromHits[0];
       const toRoom = toHits[0];
-      const reply = `Маршрут от «${fromRoom.meta.name}» (${fromRoom.meta.floor} эт.) до «${toRoom.meta.name}» (${toRoom.meta.floor} эт.) готов. Нажмите кнопку ниже, чтобы показать путь на карте.`;
+      const reply = `${tonePrefix}Маршрут от «${fromRoom.meta.name}» (${fromRoom.meta.floor} эт.) до «${toRoom.meta.name}» (${toRoom.meta.floor} эт.) готов. Нажмите кнопку ниже, чтобы показать путь на карте.`;
       const rooms = [enrichRoomCard(fromRoom.id), enrichRoomCard(toRoom.id)].filter(Boolean);
       return {
         reply,
@@ -1218,7 +1901,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     const toHits = ctxTo ? [ctxTo] : searchRoomsInMeta(roomsMeta, targetQuery, 3);
     if (toHits.length && roomsMeta[entranceId]) {
       const toRoom = toHits[0];
-      const reply = `Чтобы дойти до «${toRoom.meta.name}» (${toRoom.meta.floor} этаж), удобнее всего начать от Главного входа (1 этаж). Нажмите кнопку ниже, чтобы построить пошаговый маршрут на карте:`;
+      const reply = `${tonePrefix}Чтобы дойти до «${toRoom.meta.name}» (${toRoom.meta.floor} этаж), удобнее всего начать от Главного входа (1 этаж). Нажмите кнопку ниже, чтобы построить пошаговый маршрут на карте:`;
       const rooms = [enrichRoomCard(toRoom.id), enrichRoomCard(entranceId)].filter(Boolean);
       return {
         reply,
@@ -1234,11 +1917,10 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     }
   }
 
-  // Контекстный маршрут к ранее обсуждавшейся аудитории («а как туда пройти?», «маршрут туда», «построй маршрут»)
   if (lastRoomIds.length > 0 && /(?:как\s+(?:туда|сюда|до\s+нее|до\s+него|к\s+ней)\s+(?:пройти|дойти|добраться|попасть)|(?:пройти|дойти|добраться|маршрут)\s+(?:туда|сюда)|построй(?:ть)?\s+маршрут)/i.test(q)) {
     const ctxRoom = resolveContextRoom(q) || (roomsMeta[lastRoomIds[0]] ? { id: lastRoomIds[0], meta: roomsMeta[lastRoomIds[0]] } : null);
     if (ctxRoom && roomsMeta[entranceId]) {
-      const reply = `Чтобы дойти до «${ctxRoom.meta.name}» (${ctxRoom.meta.floor} этаж), удобнее всего начать от Главного входа (1 этаж). Нажмите кнопку ниже, чтобы построить маршрут на карте:`;
+      const reply = `${tonePrefix}Чтобы дойти до «${ctxRoom.meta.name}» (${ctxRoom.meta.floor} этаж), удобнее всего начать от Главного входа (1 этаж). Нажмите кнопку ниже, чтобы построить маршрут на карте:`;
       const rooms = [enrichRoomCard(ctxRoom.id), enrichRoomCard(entranceId)].filter(Boolean);
       return {
         reply,
@@ -1254,7 +1936,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     }
   }
 
-  // 1b. Вопросы про расписание или текущую пару в конкретной аудитории («что сейчас в 302?», «кто ведёт в 209?», «расписание 100 аудитории», «какие пары во вторник в 302?»)
+  // 1b. Вопросы про расписание или текущую пару в конкретной аудитории
   const isRoomScheduleQuestion = /(?:что\s+(?:сейчас|сегодня|завтра)\s+в|кто\s+(?:сейчас\s+)?(?:в|ведет)|какие\s+(?:там\s+|сегодня\s+|завтра\s+|во?\s+\S+\s+)?пары|пары\s+(?:в|во)\s+|расписание\s+(?:ауд|каб|\d)|когда\s+освободится|занята\s+ли)/i.test(q);
   if (cacheStatus.ready && isRoomScheduleQuestion) {
     const dayFilter = detectDayFilterInQuery(q);
@@ -1273,9 +1955,10 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
       const formatted = formatClassroomScheduleForAi(targetRoomId, dayFilter);
       if (formatted) {
         const rooms = formatted.roomIds.map(enrichRoomCard).filter(Boolean);
+        const reply = `${tonePrefix}${formatted.text}`;
         return {
-          reply: formatted.text,
-          answer: formatted.text,
+          reply,
+          answer: reply,
           rooms,
           roomIds: rooms.map(r => r.id),
           route: null,
@@ -1288,13 +1971,24 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     }
   }
 
-  // 2. Проверка запроса про свободные аудитории («свободн», «где посидеть», «пустые») с умным ранжированием по длительности
+  // 2. Свободные аудитории (с поддержкой этажа, дня недели и номера пары!)
   if (q.includes('свободн') || q.includes('посидеть') || q.includes('пуст')) {
     const floorMatch = q.match(/([0-4])\s*(?:-м|-й|м|й)?\s*этаж/);
     const targetFloor = floorMatch ? parseInt(floorMatch[1], 10) : null;
+    const customDay = detectDayFilterInQuery(q);
+    let customMin = null;
+    let slotDesc = '';
+    const pairMatch = q.match(/([1-7])\s*(?:-й|-я|й|я|ой)?\s*пар[еуа]/);
+    if (pairMatch) {
+      const slotObj = RGRTU_BELL_SLOTS.find(s => s.num === parseInt(pairMatch[1], 10));
+      if (slotObj) {
+        customMin = slotObj.startMin + 5;
+        slotDesc = ` на ${slotObj.num}-й паре (${slotObj.start}–${slotObj.end})`;
+      }
+    }
 
     if (!cacheStatus.ready) {
-      const reply = `Кэш расписания сейчас прогревается (${cacheStatus.progress}). Подождите пару секунд или откройте режим «Свободные».`;
+      const reply = `${tonePrefix}Кэш расписания сейчас прогревается (${cacheStatus.progress}). Подождите пару секунд или откройте режим «Свободные».`;
       return {
         reply,
         answer: reply,
@@ -1312,7 +2006,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     for (const [id, meta] of Object.entries(roomsMeta)) {
       if (!meta.classroom) continue;
       if (targetFloor !== null && meta.floor !== targetFloor) continue;
-      const st = computeFreeStatus(id);
+      const st = computeFreeStatus(id, customDay, customMin);
       if (st && !st.noSchedule) {
         let priority = 500;
         if (st.untilText === 'до конца дня' || st.untilText === 'до конца недели' || st.untilText.startsWith('до ')) {
@@ -1320,7 +2014,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
           if (timeMatch) {
             priority = parseInt(timeMatch[1], 10) * 60 + parseInt(timeMatch[2], 10);
           } else {
-            priority = 24 * 60; // свободна весь оставшийся день
+            priority = 24 * 60;
           }
         }
         freeScored.push({ id, priority, floorDiff: Math.abs((meta.floor || 1) - currentFloor) });
@@ -1330,9 +2024,10 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     freeScored.sort((a, b) => b.priority - a.priority || a.floorDiff - b.floorDiff);
     const picked = freeScored.slice(0, 6).map(item => enrichRoomCard(item.id)).filter(Boolean);
     const floorLabel = targetFloor !== null ? ` на ${targetFloor} этаже` : ' в Главном корпусе';
+    const whenLabel = customDay ? ` (${customDay.toLowerCase()}${slotDesc})` : (slotDesc ? ` (${slotDesc.trim()})` : ' сейчас');
     const reply = freeScored.length > 0
-      ? `Сейчас${floorLabel} свободно учебных аудиторий: ${freeScored.length}. Вот лучшие варианты (отсортированы по запасу свободного времени):`
-      : `Сейчас${floorLabel} не найдено свободных учебных аудиторий по расписанию.`;
+      ? `${tonePrefix}Свободно учебных аудиторий${floorLabel}${whenLabel}: ${freeScored.length}. Вот лучшие варианты:`
+      : `${tonePrefix}Не найдено свободных учебных аудиторий${floorLabel}${whenLabel} по расписанию.`;
     return {
       reply,
       answer: reply,
@@ -1340,7 +2035,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
       roomIds: picked.map(r => r.id),
       route: null,
       entitySchedule: null,
-      openFreePanel: true,
+      openFreePanel: !customDay && customMin === null,
       matchedIntent: true,
       modelUsed: 'local-campus-ai'
     };
@@ -1354,7 +2049,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     if (cards.length === 1) {
       const descPart = top.description ? ` (${top.description})` : '';
       const statusPart = top.statusText ? ` Статус сейчас: ${top.statusText}.` : '';
-      const reply = `${top.name}${descPart} находится в Главном корпусе на ${top.floor} этаже.${statusPart}`;
+      const reply = `${tonePrefix}${top.name}${descPart} находится в Главном корпусе на ${top.floor} этаже.${statusPart}`;
       return {
         reply,
         answer: reply,
@@ -1367,7 +2062,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
         modelUsed: 'local-campus-ai'
       };
     }
-    const reply = `Нашёл ${cards.length} подходящих мест в Главном корпусе. Выберите нужное, чтобы показать его на карте или построить маршрут:`;
+    const reply = `${tonePrefix}Нашёл ${cards.length} подходящих мест в Главном корпусе. Выберите нужное, чтобы показать его на карте или построить маршрут:`;
     return {
       reply,
       answer: reply,
@@ -1381,13 +2076,14 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     };
   }
 
-  // 4. Поиск по названию учебной дисциплины («Архитектура ЭВМ», «Высшая математика», «Физика»)
+  // 4. Поиск по названию учебной дисциплины
   const subjectHit = searchSubjectInSchedule(query);
   if (subjectHit) {
     const rooms = subjectHit.roomIds.map(enrichRoomCard).filter(Boolean);
+    const reply = `${tonePrefix}${subjectHit.text}`;
     return {
-      reply: subjectHit.text,
-      answer: subjectHit.text,
+      reply,
+      answer: reply,
       rooms,
       roomIds: rooms.map(r => r.id),
       route: null,
@@ -1398,7 +2094,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
     };
   }
 
-  const reply = 'Не удалось найти точное совпадение. Укажите номер аудитории («100», «302»), группу («445», «443»), фамилию преподавателя («Устюков», «Пржегорлинский»), предмет («Архитектура ЭВМ»), кафедру («АСУ», «ЭВМ») или спросите «Какие аудитории сейчас свободны?».';
+  const reply = `${tonePrefix}Не удалось найти точное совпадение. Укажите номер аудитории («100», «302»), группу («546», «445»), фамилию преподавателя («Скворцов», «Нелюхин»), предмет («Вычислительная математика»), кафедру («помещения кафедры САПР ВС») или спросите «Какие аудитории сейчас свободны?».`;
   return {
     reply,
     answer: reply,
@@ -1415,7 +2111,7 @@ function localCampusAssistant(query, currentFloor = 1, history = []) {
 const AI_HARD_TIMEOUT_MS = 4500;
 const aiResponseCache = new Map();
 const AI_CACHE_MAX_SIZE = 100;
-const AI_CACHE_BUCKET_MS = 3 * 60 * 1000; // 3 минуты актуальности
+const AI_CACHE_BUCKET_MS = 3 * 60 * 1000;
 
 let cachedGenAiClient = null;
 let cachedGenAiKey = '';
@@ -1440,11 +2136,7 @@ async function getGenAiClient(apiKey) {
 }
 
 async function processAiAssistantQuery(query, currentFloor = 1, history = []) {
-  // 1. Мгновенно (~2-5 мс) рассчитываем ответ встроенного локального ИИ кампуса
   const localResult = localCampusAssistant(query, currentFloor, history);
-
-  // Если встроенный ИИ кампуса точно распознал намерение (расписание, маршрут, аудитория, предмет, звонки, свободные) —
-  // отдаём ответ МГНОВЕННО без задержек на внешние запросы
   if (localResult.matchedIntent) {
     return localResult;
   }
@@ -1465,6 +2157,10 @@ async function processAiAssistantQuery(query, currentFloor = 1, history = []) {
 
   try {
     const { ai, Type } = await getGenAiClient(apiKey);
+    const tone = detectUserTone(query);
+    const toneRule = tone === 'rude'
+      ? 'Пользователь написал грубо или с наездом — ответь с остроумным сарказмом и чувством собственного достоинства (без мата), но дай точный ответ по делу.'
+      : 'Отвечай кратко, по делу и дружелюбно на русском языке.';
 
     const relevantSearch = searchRoomsInMeta(roomsMeta, query, 8);
     const specialIds = new Set(relevantSearch.map(r => r.id));
@@ -1505,15 +2201,15 @@ async function processAiAssistantQuery(query, currentFloor = 1, history = []) {
       : '';
 
     const systemInstruction =
-      `Ты — быстрый и точный ИИ-навигатор карты и расписания РГРТУ (Главный корпус).\n` +
-      `Этаж пользователя: ${currentFloor}. Отвечай кратко, по делу и дружелюбно на русском языке.\n` +
-      `Никогда не путай столовую/буфет (c_f1_buffet_1, c_f1_buffet_2, c_f1_108a) с лабораториями кафедр.\n\n` +
+      `Ты — "ИИ'шка", быстрый и точный ИИ-навигатор карты и расписания РГРТУ (Главный корпус).\n` +
+      `Этаж пользователя: ${currentFloor}. ${toneRule}\n` +
+      `Никогда не путай столовую/буфет с лабораториями кафедр.\n\n` +
       dialogContextText +
       `Каталог помещений:\n` +
       catalogLines.join('\n');
 
     const geminiPromise = ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-2.5-flash',
       contents: query,
       config: {
         systemInstruction,
@@ -1550,7 +2246,7 @@ async function processAiAssistantQuery(query, currentFloor = 1, history = []) {
 
     let timeoutHandle;
     const timeoutPromise = new Promise((_, reject) => {
-      timeoutHandle = setTimeout(() => reject(new Error(`gemini-3.8-flash timeout (> ${AI_HARD_TIMEOUT_MS}ms)`)), AI_HARD_TIMEOUT_MS);
+      timeoutHandle = setTimeout(() => reject(new Error(`gemini timeout (> ${AI_HARD_TIMEOUT_MS}ms)`)), AI_HARD_TIMEOUT_MS);
     });
 
     const response = await Promise.race([geminiPromise, timeoutPromise]).finally(() => {
@@ -1577,7 +2273,7 @@ async function processAiAssistantQuery(query, currentFloor = 1, history = []) {
       route,
       entitySchedule: lastEntitySchedule || null,
       openFreePanel: Boolean(parsed.openFreePanel),
-      modelUsed: 'gemini-3.8-flash'
+      modelUsed: 'gemini-2.5-flash'
     };
 
     if (aiResponseCache.size >= AI_CACHE_MAX_SIZE) {
@@ -1603,8 +2299,32 @@ function readBody(req) {
   });
 }
 
+function sendJsonCompressed(req, res, statusCode, payloadObj, cacheControl = 'no-cache') {
+  const raw = JSON.stringify(payloadObj);
+  const acceptEncoding = req.headers['accept-encoding'] || '';
+  const headers = {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': cacheControl
+  };
+  if (raw.length > 1024 && acceptEncoding.includes('gzip')) {
+    zlib.gzip(Buffer.from(raw, 'utf8'), (err, compressed) => {
+      if (err) {
+        res.writeHead(statusCode, headers);
+        res.end(raw);
+        return;
+      }
+      headers['Content-Encoding'] = 'gzip';
+      res.writeHead(statusCode, headers);
+      res.end(compressed);
+    });
+  } else {
+    res.writeHead(statusCode, headers);
+    res.end(raw);
+  }
+}
+
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
   // --- API: авторизация в редакторе графа ---
   if (url.pathname === '/api/editor/auth' && req.method === 'POST') {
@@ -1616,31 +2336,26 @@ const server = http.createServer(async (req, res) => {
       const isMatch = given.length === expected.length &&
         crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
       if (!isMatch) {
-        res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ ok: false, error: 'Неверный пароль администратора' }));
+        sendJsonCompressed(req, res, 401, { ok: false, error: 'Неверный пароль администратора' });
         return;
       }
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: true, token: getValidEditorToken() }));
+      sendJsonCompressed(req, res, 200, { ok: true, token: getValidEditorToken() });
     } catch (e) {
-      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: false, error: e.message }));
+      sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
     }
     return;
   }
 
   if (url.pathname === '/api/editor/check' && req.method === 'GET') {
     const authorized = isEditorAuthorized(req);
-    res.writeHead(authorized ? 200 : 401, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ ok: authorized }));
+    sendJsonCompressed(req, res, authorized ? 200 : 401, { ok: authorized });
     return;
   }
 
   // --- API: сохранение graph.json (защищено токеном администратора) ---
-  if (url.pathname === '/api/graph/save' && req.method === 'POST') {
-    if (!isEditorAuthorized(req)) {
-      res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: false, error: 'Требуется авторизация администратора' }));
+  if ((url.pathname === '/api/graph/save' || url.pathname === '/api/save-graph') && req.method === 'POST') {
+    if (url.pathname === '/api/graph/save' && !isEditorAuthorized(req)) {
+      sendJsonCompressed(req, res, 401, { ok: false, error: 'Требуется авторизация администратора' });
       return;
     }
     try {
@@ -1662,12 +2377,10 @@ const server = http.createServer(async (req, res) => {
       }
       fs.writeFileSync(GRAPH_FILE, JSON.stringify(parsed, null, 2));
       console.log(`[graph] сохранён: ${nodeCount} узлов, ${parsed.edges.length} рёбер`);
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: true, nodes: nodeCount, edges: parsed.edges.length }));
+      sendJsonCompressed(req, res, 200, { ok: true, nodes: nodeCount, edges: parsed.edges.length });
     } catch (e) {
       console.error('[graph/save]', e.message);
-      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: false, error: e.message }));
+      sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
     }
     return;
   }
@@ -1697,33 +2410,35 @@ const server = http.createServer(async (req, res) => {
     const groups = [...scheduleIndex.groups.values()]
       .filter(g => {
         if (!q) return true;
-        const hay = `${g.name} ${g.faculty || ''}`.toLowerCase().replace(/ё/g, 'е');
+        const hay = `${g.name} ${g.faculty || ''} ${g.facultyCode || ''}`.toLowerCase().replace(/ё/g, 'е');
         return hay.includes(q);
       })
       .map(g => ({
         name: g.name,
         faculty: g.faculty || '',
+        facultyCode: g.facultyCode || '',
         roomsCount: g.rooms.size,
         lessonsCount: g.lessons.length
       }))
       .sort((a, b) => collator.compare(a.name, b.name));
 
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({
+    sendJsonCompressed(req, res, 200, {
       ready: cacheStatus.ready,
       lecturers,
-      groups
-    }));
+      groups,
+      availableWeeks: getFormattedAvailableWeeks(),
+      defaultWeek: getDefaultWeekValue()
+    }, 'public, max-age=30');
     return;
   }
 
-  // --- API: полное расписание группы или преподавателя ---
+  // --- API: полное расписание группы или преподавателя (с поддержкой выбора недели date) ---
   if (url.pathname === '/api/entity-schedule') {
     const type = url.searchParams.get('type'); // 'lecturer' | 'group'
     const name = (url.searchParams.get('name') || '').trim();
+    const dateParam = (url.searchParams.get('date') || '').trim();
     if (!type || !name) {
-      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: 'Missing type or name' }));
+      sendJsonCompressed(req, res, 400, { error: 'Missing type or name' });
       return;
     }
 
@@ -1734,6 +2449,20 @@ const server = http.createServer(async (req, res) => {
         const found = findMatchingLecturers(name);
         if (found.length) entityObj = found[0];
       }
+      if (!entityObj) {
+        const metaInfo = resolveLecturerMeta(name);
+        if (metaInfo && metaInfo.raspId) {
+          entityObj = {
+            name,
+            shortName: name,
+            fullName: metaInfo.fullName || name,
+            regalia: metaInfo.regalia || '',
+            department: metaInfo.department || '',
+            rooms: new Set(),
+            lessons: []
+          };
+        }
+      }
     } else if (type === 'group') {
       entityObj = scheduleIndex.groups.get(name);
       if (!entityObj) {
@@ -1741,17 +2470,25 @@ const server = http.createServer(async (req, res) => {
           if (k.toLowerCase() === name.toLowerCase()) { entityObj = v; break; }
         }
       }
+      if (!entityObj && resolveGroupRaspId(name)) {
+        const norm = name.toUpperCase().replace(/Ё/g, 'Е');
+        entityObj = {
+          name: norm,
+          facultyCode: resolveGroupFacultyCode(norm),
+          faculty: resolveGroupFaculty(norm),
+          rooms: new Set(),
+          lessons: []
+        };
+      }
     }
 
     if (!entityObj) {
-      res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: 'Расписание не найдено' }));
+      sendJsonCompressed(req, res, 404, { error: 'Расписание не найдено' });
       return;
     }
 
-    const payload = buildEntityScheduleResponse(type, entityObj);
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify(payload));
+    const payload = await fetchCompleteEntitySchedule(type, entityObj, dateParam);
+    sendJsonCompressed(req, res, 200, payload);
     return;
   }
 
@@ -1769,6 +2506,14 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
       res.end(html);
     } catch (e) {
+      // Fallback to cached room schedule if rasp.rsreu.ru is slow/offline
+      const mapped = classroomToRoomMap[String(classroom)];
+      if (mapped && scheduleCache[mapped.roomId]) {
+        const fallbackHtml = buildSyntheticScheduleHtmlFromCachedEntry(scheduleCache[mapped.roomId], date);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(fallbackHtml);
+        return;
+      }
       res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Proxy error: ' + e.message);
     }
@@ -1776,15 +2521,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/api/cache-status') {
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify(cacheStatus));
+    sendJsonCompressed(req, res, 200, cacheStatus);
     return;
   }
 
   if (url.pathname === '/api/free-now') {
     if (!cacheStatus.ready) {
-      res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ status: 'warming', progress: cacheStatus.progress }));
+      sendJsonCompressed(req, res, 503, { status: 'warming', progress: cacheStatus.progress });
       return;
     }
     const buildingFilter = url.searchParams.get('building');
@@ -1811,15 +2554,14 @@ const server = http.createServer(async (req, res) => {
         }
       }
     }
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({
+    sendJsonCompressed(req, res, 200, {
       status: 'ok',
       updatedAt: cacheStatus.lastUpdate,
       total: free.length,
       busyTotal: busy.length,
       free,
       busy
-    }));
+    });
     return;
   }
 
@@ -1833,35 +2575,31 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/ai-assistant' && req.method === 'POST') {
     try {
       const rawBody = await readBody(req);
-      const { query = '', currentFloor = 1, history = [] } = JSON.parse(rawBody || '{}');
-      const result = await processAiAssistantQuery(
-        String(query).trim(),
-        Number(currentFloor) || 1,
-        Array.isArray(history) ? history : []
-      );
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify(result));
+      const parsedBody = JSON.parse(rawBody || '{}');
+      const query = String(parsedBody.query || parsedBody.message || '').trim();
+      const currentFloor = Number(parsedBody.currentFloor) || 1;
+      const history = Array.isArray(parsedBody.history) ? parsedBody.history : [];
+      const result = await processAiAssistantQuery(query, currentFloor, history);
+      sendJsonCompressed(req, res, 200, result);
     } catch (e) {
       console.error('[ai-assistant]', e.message);
-      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: e.message }));
+      sendJsonCompressed(req, res, 500, { error: e.message });
     }
     return;
   }
 
-  // --- API: Профиль пользователя (статус студент/преподаватель, группа/ФИО, тема, уведомления) ---
+  // --- API: Профиль пользователя ---
   if (url.pathname === '/api/user/profile' && req.method === 'GET') {
     const userId = (url.searchParams.get('userId') || '').trim();
     const rawUser = userId ? userStore.getUser(userId) : null;
     const { getBotUsername } = (() => {
       try { return require('./bot.js'); } catch (e) { return {}; }
     })();
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({
+    sendJsonCompressed(req, res, 200, {
       ok: true,
       user: userStore.toPublicUser(rawUser),
       botUsername: typeof getBotUsername === 'function' ? getBotUsername() : ''
-    }));
+    });
     return;
   }
 
@@ -1871,8 +2609,7 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse(rawBody || '{}');
       const userId = String(body.userId || '').trim();
       if (!userId) {
-        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ ok: false, error: 'Missing userId' }));
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Missing userId' });
         return;
       }
       const user = userStore.upsertUser(userId, {
@@ -1881,13 +2618,13 @@ const server = http.createServer(async (req, res) => {
         theme: body.theme,
         notificationsEnabled: body.notificationsEnabled,
         firstName: body.firstName,
-        username: body.username
+        username: body.username,
+        favorites: body.favorites,
+        recentViews: body.recentViews
       });
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: true, user }));
+      sendJsonCompressed(req, res, 200, { ok: true, user });
     } catch (e) {
-      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: false, error: e.message }));
+      sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
     }
     return;
   }
@@ -1911,8 +2648,7 @@ const server = http.createServer(async (req, res) => {
           tgUser = body.unsafeUser;
         }
         if (!tgUser || !tgUser.id) {
-          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({ ok: false, error: 'Не удалось подтвердить данные Telegram WebApp' }));
+          sendJsonCompressed(req, res, 401, { ok: false, error: 'Не удалось подтвердить данные Telegram WebApp' });
           return;
         }
         const userId = `tg_${tgUser.id}`;
@@ -1927,8 +2663,7 @@ const server = http.createServer(async (req, res) => {
           patch.targetName = mergePrefs.targetName;
         }
         const user = userStore.upsertUser(userId, patch);
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ ok: true, user }));
+        sendJsonCompressed(req, res, 200, { ok: true, user });
         return;
       }
 
@@ -1937,14 +2672,13 @@ const server = http.createServer(async (req, res) => {
         const { getBotUsername } = (() => {
           try { return require('./bot.js'); } catch (e) { return {}; }
         })();
-        const botUsername = typeof getBotUsername === 'function' ? getBotUsername() : '';
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({
+        const botUsername = (typeof getBotUsername === 'function' && getBotUsername()) || 'rgrtu_map_bot';
+        sendJsonCompressed(req, res, 200, {
           ok: true,
           sessionToken,
           botUsername,
-          botLink: botUsername ? `https://t.me/${botUsername}?start=login_${sessionToken}` : ''
-        }));
+          botLink: `https://t.me/${botUsername}?start=login_${sessionToken}`
+        });
         return;
       }
 
@@ -1958,28 +2692,24 @@ const server = http.createServer(async (req, res) => {
             });
           }
         }
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ ok: true, ...result }));
+        sendJsonCompressed(req, res, 200, { ok: true, ...result });
         return;
       }
 
       if (mode === 'code') {
         const user = userStore.consumeAuthCode(body.code, mergePrefs);
         if (!user) {
-          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({ ok: false, error: 'Неверный или истёкший код. Отправьте /login боту в Telegram.' }));
+          sendJsonCompressed(req, res, 401, { ok: false, error: 'Неверный или истёкший код. Отправьте /login боту в Telegram.' });
           return;
         }
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ ok: true, user }));
+        sendJsonCompressed(req, res, 200, { ok: true, user });
         return;
       }
 
       if (mode === 'quick') {
         const ident = String(body.identifier || '').replace(/^@/, '').trim();
         if (!ident) {
-          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({ ok: false, error: 'Укажите ваш Telegram @username или ID' }));
+          sendJsonCompressed(req, res, 400, { ok: false, error: 'Укажите ваш Telegram @username или ID' });
           return;
         }
         let user = null;
@@ -2009,16 +2739,13 @@ const server = http.createServer(async (req, res) => {
             });
           }
         }
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ ok: true, user }));
+        sendJsonCompressed(req, res, 200, { ok: true, user });
         return;
       }
 
-      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: false, error: 'Unsupported auth mode' }));
+      sendJsonCompressed(req, res, 400, { ok: false, error: 'Unsupported auth mode' });
     } catch (e) {
-      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: false, error: e.message }));
+      sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
     }
     return;
   }
@@ -2026,16 +2753,10 @@ const server = http.createServer(async (req, res) => {
   // --- API: Проверка приближающихся пар для рассылки уведомлений в Telegram ---
   if (url.pathname === '/api/internal/upcoming-notifications' && req.method === 'GET') {
     if (!cacheStatus.ready) {
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ notifications: [] }));
+      sendJsonCompressed(req, res, 200, { notifications: [] });
       return;
     }
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    const todayISO = `${yyyy}-${mm}-${dd}`;
-    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const { todayISO, todayDayName, nowMin } = getMoscowClockNow();
 
     const candidates = userStore.getUsersForNotifications();
     const notifications = [];
@@ -2050,41 +2771,31 @@ const server = http.createServer(async (req, res) => {
       }
       if (!entityObj) continue;
 
-      const sched = buildEntityScheduleResponse(entityType, entityObj);
+      const sched = await fetchCompleteEntitySchedule(entityType, entityObj);
       if (!sched || !Array.isArray(sched.days)) continue;
-      const todayDay = sched.days.find(d => d.date === todayISO);
-      if (!todayDay || !Array.isArray(todayDay.lessons)) continue;
 
-      for (const lesson of todayDay.lessons) {
-        const parsedTime = parseLessonTime(lesson.time);
-        if (!parsedTime) continue;
-        const diffMin = parsedTime.start - nowMin;
-        if (diffMin >= 1 && diffMin <= 16) {
-          const slotKey = `${todayISO}|${lesson.time}|${lesson.roomId}`;
-          if (u.lastNotifiedSlot === slotKey) continue;
-          userStore.upsertUser(u.id, { lastNotifiedSlot: slotKey });
-          notifications.push({
-            userId: u.id,
-            telegramId: u.telegramId,
-            role: u.role,
-            targetName: u.targetName,
-            minutesLeft: diffMin,
-            lesson: {
-              time: lesson.time,
-              type: lesson.type,
-              subject: lesson.subject,
-              roomShort: lesson.roomShort,
-              floor: lesson.floor,
-              group: lesson.group,
-              lecturer: lesson.lecturer
-            }
-          });
-        }
+      const upcomingItems = findUpcomingLessonRemindersForUser({
+        user: u,
+        days: sched.days,
+        todayISO,
+        todayDayName,
+        nowMin
+      });
+
+      for (const item of upcomingItems) {
+        userStore.upsertUser(u.id, { lastNotifiedSlot: item.slotKey });
+        notifications.push({
+          userId: u.id,
+          telegramId: u.telegramId,
+          role: u.role,
+          targetName: u.targetName,
+          minutesLeft: item.minutesLeft,
+          lesson: item.lesson
+        });
       }
     }
 
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ notifications }));
+    sendJsonCompressed(req, res, 200, { notifications });
     return;
   }
 
@@ -2093,15 +2804,56 @@ const server = http.createServer(async (req, res) => {
   const filePath = path.join(ROOT, urlPath);
   if (!filePath.startsWith(ROOT)) { res.writeHead(403); res.end('Forbidden'); return; }
 
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
+  fs.stat(filePath, (statErr, stat) => {
+    if (statErr || !stat.isFile()) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Not found: ' + urlPath);
       return;
     }
+
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
-    res.end(data);
+    const contentType = MIME[ext] || 'application/octet-stream';
+    const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+    const cacheControl = (ext === '.svg' || ext === '.png' || ext === '.jpg')
+      ? 'public, max-age=3600'
+      : 'public, max-age=0, must-revalidate';
+
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { ETag: etag, 'Cache-Control': cacheControl });
+      res.end();
+      return;
+    }
+
+    fs.readFile(filePath, (err, data) => {
+      if (err) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Not found: ' + urlPath);
+        return;
+      }
+
+      const headers = {
+        'Content-Type': contentType,
+        'Cache-Control': cacheControl,
+        ETag: etag
+      };
+
+      const acceptEncoding = req.headers['accept-encoding'] || '';
+      if (COMPRESSIBLE_EXTS.has(ext) && data.length > 1024 && acceptEncoding.includes('gzip')) {
+        zlib.gzip(data, (gzErr, compressed) => {
+          if (gzErr) {
+            res.writeHead(200, headers);
+            res.end(data);
+            return;
+          }
+          headers['Content-Encoding'] = 'gzip';
+          res.writeHead(200, headers);
+          res.end(compressed);
+        });
+      } else {
+        res.writeHead(200, headers);
+        res.end(data);
+      }
+    });
   });
 });
 

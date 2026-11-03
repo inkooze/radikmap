@@ -99,7 +99,7 @@ const QUICK_TAGS = [
 
 const AI_QUICK_PROMPTS = [
   '🟢 Какие аудитории сейчас свободны?',
-  'В каких аудиториях на этой неделе у Устюкова будут пары?',
+  'В каких аудиториях на этой неделе у Скворцова будут пары?',
   'Какие аудитории сейчас свободны на 2 этаже?',
   'Что сейчас в 302 аудитории?',
   'Расписание группы 445 на этой неделе',
@@ -118,6 +118,14 @@ function initTelegram() {
   try {
     tg.ready();
     tg.expand();
+    document.body.classList.add('tg-webapp');
+    const applyTgSafeTop = () => {
+      const safeTop = (tg.safeAreaInset?.top || 0) + (tg.contentSafeAreaInset?.top || 0);
+      const offset = safeTop > 0 ? safeTop : (tg.isExpanded ? 46 : 0);
+      document.documentElement.style.setProperty('--tg-safe-top', `${offset}px`);
+    };
+    applyTgSafeTop();
+    tg.onEvent?.('viewportChanged', applyTgSafeTop);
     telegramUser = tg.initDataUnsafe?.user || null;
     if (!localStorage.getItem('theme') && tg.colorScheme) {
       document.documentElement.dataset.theme = tg.colorScheme === 'dark' ? 'dark' : 'light';
@@ -176,12 +184,14 @@ let currentLabels = null;
 let labelTimer = null;
 let roomsMeta = {};
 let roomShapes = {};
+let roomSvgCentroids = {};
 let pendingHighlight = null;
 let selectedRoomId = null;
 let selectedShapes = [];
 let hoveredRoomId = null;
 
 let currentSvgViewBox = { W: 1000, H: 1000 };
+let mapBearingDeg = 0;
 
 let panelMode = null; // 'room' | 'free' | 'route' | 'ai' | null
 let currentRoomPanelId = null;
@@ -206,6 +216,7 @@ let routeState = {
   path: null
 };
 let routePickSide = 'from';
+let routeIncludeOutdoor = true;
 
 // ИИ-навигатор
 let aiMessages = [];
@@ -224,6 +235,9 @@ let scheduleDayFilter = 'all';   // 'all' | date string
 let currentEntityData = null;
 let entityLoading = false;
 let entityError = null;
+let selectedScheduleWeekDate = '';
+let scheduleWeekDropdownOpen = false;
+let availableScheduleWeeks = [];
 
 // Пользовательский профиль и Telegram-авторизация
 let currentUserId = localStorage.getItem('rsreu_user_id') || '';
@@ -234,10 +248,19 @@ let userProfile = {
   telegramLinked: false,
   firstName: '',
   username: '',
+  favorites: [],
+  recentViews: {},
   theme: localStorage.getItem('theme') || 'system'
 };
 let botUsername = 'rsreu_map_bot';
 let authPollTimer = null;
+let activeAuthSessionToken = '';
+const currentWeekStatusByEntityKey = new Map();
+
+// Стек истории действий для Ctrl+Z / Ctrl+Y и кнопок мыши Назад/Вперёд
+const navHistoryStack = [];
+let navHistoryIndex = -1;
+let isApplyingNavHistory = false;
 
 // Кэш для SVG документов при кросс-этажных запросах
 const svgCache = {};
@@ -262,6 +285,33 @@ map.getPane('routePane').style.zIndex = 450;
 
 routeLayer = L.layerGroup().addTo(map);
 routePickLayer = L.layerGroup().addTo(map);
+
+function syncMapRotationTransform() {
+  if (!map) return;
+  const { W, H } = currentSvgViewBox;
+  const centerLayerPt = map.latLngToLayerPoint(L.latLng((H || 1000) / 2, (W || 1000) / 2));
+  const originStr = `${Math.round(centerLayerPt.x)}px ${Math.round(centerLayerPt.y)}px`;
+  const rotStr = mapBearingDeg ? `rotate(${mapBearingDeg}deg)` : '';
+  ['overlayPane', 'routePane', 'markerPane', 'shadowPane', 'tooltipPane', 'popupPane'].forEach(paneName => {
+    const p = map.getPane(paneName);
+    if (p) {
+      p.style.transformOrigin = originStr;
+      p.style.transform = rotStr;
+    }
+  });
+}
+
+function syncMapLabelScale() {
+  if (!map) return;
+  const z = typeof map.getZoom === 'function' ? map.getZoom() : 0;
+  const scale = z < 0 ? Math.max(0.54, Math.pow(2, z * 0.42)) : 1;
+  document.documentElement.style.setProperty('--map-label-scale', scale.toFixed(3));
+}
+
+map.on('zoom zoomend viewreset moveend resize', () => {
+  syncMapRotationTransform();
+  syncMapLabelScale();
+});
 
 // На мобильных при перетаскивании карты в режиме маршрута панель автоматически прижимается вниз
 map.on('dragstart', () => {
@@ -313,6 +363,7 @@ function syncModeUI() {
   const clearBtn = document.getElementById('search-clear');
   const cornerTab = document.getElementById('schedule-corner-tab');
   const cornerTabLabel = document.getElementById('schedule-corner-label');
+  const cornerTabIcon = document.getElementById('schedule-corner-icon');
   const panel = document.getElementById('panel');
 
   const isRoute = panelMode === 'route';
@@ -328,10 +379,16 @@ function syncModeUI() {
   if (cornerTabLabel) {
     cornerTabLabel.textContent = scheduleViewOpen ? 'На карту' : 'Расписание';
   }
+  if (cornerTabIcon) {
+    cornerTabIcon.className = scheduleViewOpen
+      ? 'mdi mdi-map-outline'
+      : 'mdi mdi-calendar-month-outline';
+  }
 
   const isPanelOpen = Boolean(panel && panel.classList.contains('open'));
   const isAiPanelOpen = Boolean(isAiActive && isPanelOpen);
   document.body.classList.toggle('panel-is-open', isPanelOpen);
+  document.body.classList.toggle('route-mode-active', Boolean(isRoute && isPanelOpen));
   document.body.classList.toggle('ai-mode-active', isAiPanelOpen);
   document.body.classList.toggle('schedule-is-open', scheduleViewOpen);
 
@@ -352,13 +409,81 @@ function syncModeUI() {
 
 // ================ ПАНЕЛЬ ================
 
+function syncMobileMapViewportWithSheet() {
+  if (window.innerWidth > 768) {
+    document.documentElement.style.setProperty('--mobile-sheet-offset', '0px');
+    return;
+  }
+  const panel = document.getElementById('panel');
+  const isSheetActive = Boolean(
+    panel &&
+    panel.classList.contains('open') &&
+    !scheduleViewOpen
+  );
+  if (!isSheetActive) {
+    document.documentElement.style.setProperty('--mobile-sheet-offset', '0px');
+    map.invalidateSize({ animate: false });
+    return;
+  }
+  const rect = panel.getBoundingClientRect();
+  const visibleH = Math.max(0, Math.min(window.innerHeight - 68, window.innerHeight - rect.top));
+  document.documentElement.style.setProperty('--mobile-sheet-offset', `${Math.round(visibleH)}px`);
+  map.invalidateSize({ animate: false });
+}
+
+function applyMobileSheetSnapMeasurement(panel, { preserveHeight = false } = {}) {
+  if (!panel || window.innerWidth > 768 || panelMode === 'ai') {
+    if (panel) {
+      panel.classList.remove('mobile-no-expand');
+      panel.style.removeProperty('--mobile-base-snap');
+      if (window.innerWidth > 768) panel.style.height = '';
+    }
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    if (!panel.classList.contains('open') || panelMode === 'ai') return;
+    const dragBarEl = panel.querySelector('.panel-drag-bar');
+    const fixedEl = panel.querySelector('.panel-fixed');
+    const scrollEl = panel.querySelector('.panel-scroll');
+
+    const dragH = dragBarEl ? dragBarEl.offsetHeight : 20;
+    const fixedH = fixedEl ? fixedEl.offsetHeight : 150;
+    const hasScrollContent = Boolean(
+      scrollEl &&
+      scrollEl.children.length > 0 &&
+      scrollEl.textContent.trim().length > 0 &&
+      !scrollEl.querySelector('.no-schedule-msg')
+    );
+
+    panel.classList.toggle('mobile-no-expand', !hasScrollContent);
+    if (!hasScrollContent) {
+      panel.classList.remove('mobile-expanded');
+    }
+
+    const extraPad = panelMode === 'route' ? 24 : 14;
+    const exactSnap = Math.min(
+      Math.round(window.innerHeight * 0.68),
+      Math.max(124, dragH + fixedH + extraPad)
+    );
+    panel.dataset.baseSnapPx = String(exactSnap);
+    panel.style.setProperty('--mobile-base-snap', `${exactSnap}px`);
+    if (!preserveHeight && !panel.classList.contains('mobile-expanded') && !panel.classList.contains('mobile-minimized')) {
+      panel.style.height = '';
+    }
+    syncMobileMapViewportWithSheet();
+  });
+}
+
 function smoothInvalidateSize(duration = 260) {
   const start = performance.now();
   (function tick() {
+    syncMobileMapViewportWithSheet();
     map.invalidateSize({ animate: false });
     if (performance.now() - start < duration) {
       requestAnimationFrame(tick);
     } else {
+      syncMobileMapViewportWithSheet();
       scheduleLabelRefresh();
     }
   })();
@@ -400,8 +525,10 @@ function closePanel() {
     triggerAiModeClosingTransition();
   }
   const panel = document.getElementById('panel');
-  panel.classList.remove('open', 'mobile-compact', 'mobile-expanded', 'mobile-minimized');
-  document.body.classList.remove('panel-is-open');
+  panel.classList.remove('open', 'mobile-compact', 'mobile-expanded', 'mobile-minimized', 'mobile-no-expand');
+  panel.style.height = '';
+  panel.style.removeProperty('--mobile-base-snap');
+  document.body.classList.remove('panel-is-open', 'route-mode-active');
   clearSelectedRoom();
   updateURL(null, { push: false });
   panelMode = null;
@@ -409,6 +536,7 @@ function closePanel() {
   smoothInvalidateSize(260);
   updatePanelHandle();
   syncModeUI();
+  recordNavState();
 }
 
 function closeRoomPanel() {
@@ -424,7 +552,7 @@ function collapseFreePanel() {
   }
   const panel = document.getElementById('panel');
   panel.classList.remove('open');
-  document.body.classList.remove('panel-is-open');
+  document.body.classList.remove('panel-is-open', 'route-mode-active');
   smoothInvalidateSize(260);
   updatePanelHandle();
   syncModeUI();
@@ -525,15 +653,20 @@ function setupMobilePanelSheet() {
   let startHeight = 0;
   let currentDeltaY = 0;
   let dragging = false;
+  let activePointerId = null;
 
   const toggleMobileSheetState = () => {
+    const noExpand = panel.classList.contains('mobile-no-expand');
     if (panel.classList.contains('mobile-minimized')) {
       panel.classList.remove('mobile-minimized');
+    } else if (noExpand) {
+      panel.classList.add('mobile-minimized');
     } else if (panel.classList.contains('mobile-expanded')) {
       panel.classList.remove('mobile-expanded');
     } else {
       panel.classList.add('mobile-expanded');
     }
+    smoothInvalidateSize(260);
   };
 
   panel.addEventListener('click', (e) => {
@@ -546,7 +679,7 @@ function setupMobilePanelSheet() {
   const beginDrag = (clientY) => {
     dragging = true;
     startY = clientY;
-    startHeight = panel.getBoundingClientRect().height || Math.round(window.innerHeight * 0.68);
+    startHeight = panel.getBoundingClientRect().height || Number(panel.dataset.baseSnapPx) || Math.round(window.innerHeight * 0.45);
     currentDeltaY = 0;
     panel.classList.add('dragging');
   };
@@ -554,22 +687,31 @@ function setupMobilePanelSheet() {
   const moveDrag = (clientY) => {
     if (!dragging) return;
     currentDeltaY = clientY - startY;
-    const maxH = Math.max(240, window.innerHeight - 54);
+    const noExpand = panel.classList.contains('mobile-no-expand');
+    const baseSnap = Number(panel.dataset.baseSnapPx) || startHeight;
+    const maxH = (noExpand && panelMode !== 'ai')
+      ? Math.max(baseSnap, 140)
+      : Math.max(240, window.innerHeight - 54);
     const minH = 54;
     const nextH = Math.max(minH, Math.min(maxH, startHeight - currentDeltaY));
     panel.style.height = `${nextH}px`;
+    syncMobileMapViewportWithSheet();
   };
 
   const finishDrag = () => {
     if (!dragging) return;
     dragging = false;
+    activePointerId = null;
     panel.classList.remove('dragging');
     const finalHeight = panel.getBoundingClientRect().height;
     panel.style.height = '';
 
     const vh = window.innerHeight || 800;
+    const noExpand = panel.classList.contains('mobile-no-expand');
+    const baseSnap = Number(panel.dataset.baseSnapPx) || Math.round(vh * 0.4);
+
     if (currentDeltaY > 42) {
-      if (panel.classList.contains('mobile-expanded') && finalHeight > vh * 0.45) {
+      if (panel.classList.contains('mobile-expanded') && finalHeight > baseSnap * 0.9) {
         panel.classList.remove('mobile-expanded');
       } else if (panelMode === 'ai') {
         closeAiPanel();
@@ -580,27 +722,42 @@ function setupMobilePanelSheet() {
     } else if (currentDeltaY < -42) {
       if (panel.classList.contains('mobile-minimized')) {
         panel.classList.remove('mobile-minimized');
-      } else {
+      } else if (!noExpand) {
         panel.classList.add('mobile-expanded');
       }
     } else if (Math.abs(currentDeltaY) >= 6) {
-      // Плавная привязка по итоговой высоте шторки
-      panel.classList.remove('mobile-expanded', 'mobile-minimized', 'mobile-compact');
-      if (finalHeight >= vh * 0.78) {
+      panel.classList.remove('mobile-expanded', 'mobile-minimized');
+      if (!noExpand && finalHeight >= vh * 0.72) {
         panel.classList.add('mobile-expanded');
-      } else if (finalHeight <= vh * 0.25) {
+      } else if (finalHeight <= Math.min(120, baseSnap * 0.6)) {
         if (panelMode === 'ai') closeAiPanel();
         else panel.classList.add('mobile-minimized');
-      } else if (finalHeight <= vh * 0.45 && panelMode !== 'ai') {
-        panel.classList.add('mobile-compact');
       }
     }
 
+    smoothInvalidateSize(260);
     setTimeout(() => { currentDeltaY = 0; }, 50);
   };
 
-  panel.addEventListener('touchstart', (e) => {
+  panel.addEventListener('pointerdown', (e) => {
     if (window.innerWidth > 768) return;
+    const dragHeader = e.target.closest('[data-panel-drag], .panel-header, .ai-panel-header');
+    if (!dragHeader || e.target.closest('button, input, a')) return;
+    activePointerId = e.pointerId;
+    try { dragHeader.setPointerCapture(e.pointerId); } catch (err) {}
+    beginDrag(e.clientY);
+  });
+
+  panel.addEventListener('pointermove', (e) => {
+    if (!dragging || (activePointerId !== null && e.pointerId !== activePointerId)) return;
+    moveDrag(e.clientY);
+  });
+
+  panel.addEventListener('pointerup', finishDrag);
+  panel.addEventListener('pointercancel', finishDrag);
+
+  panel.addEventListener('touchstart', (e) => {
+    if (window.innerWidth > 768 || dragging) return;
     const dragHeader = e.target.closest('[data-panel-drag], .panel-header, .ai-panel-header');
     if (!dragHeader || e.target.closest('button, input, a')) return;
     beginDrag(e.touches[0].clientY);
@@ -613,6 +770,35 @@ function setupMobilePanelSheet() {
 
   panel.addEventListener('touchend', finishDrag);
   panel.addEventListener('touchcancel', finishDrag);
+
+  // Свайп вниз для закрытия окна профиля на мобильных
+  const userDropdown = document.getElementById('user-dropdown');
+  if (userDropdown) {
+    let udStartY = 0;
+    let udDeltaY = 0;
+    let udDragging = false;
+    userDropdown.addEventListener('touchstart', (e) => {
+      if (window.innerWidth > 768) return;
+      if (!e.target.closest('.user-dropdown-drag-pill, .user-dropdown-header')) return;
+      udDragging = true;
+      udStartY = e.touches[0].clientY;
+      udDeltaY = 0;
+    }, { passive: true });
+    userDropdown.addEventListener('touchmove', (e) => {
+      if (!udDragging) return;
+      udDeltaY = Math.max(0, e.touches[0].clientY - udStartY);
+      userDropdown.style.transform = `translateY(${udDeltaY}px)`;
+    }, { passive: true });
+    const endUdDrag = () => {
+      if (!udDragging) return;
+      udDragging = false;
+      userDropdown.style.transform = '';
+      if (udDeltaY > 60) closeUserDropdown();
+      udDeltaY = 0;
+    };
+    userDropdown.addEventListener('touchend', endUdDrag);
+    userDropdown.addEventListener('touchcancel', endUdDrag);
+  }
 }
 
 // ================ ВЫДЕЛЕНИЕ ================
@@ -753,7 +939,103 @@ function setupPanelHandle() {
   });
 }
 
-// ================ URL / HISTORY ================
+// ================ URL / HISTORY & UNDO/REDO ================
+
+function getNavSnapshot() {
+  return {
+    scheduleViewOpen: Boolean(scheduleViewOpen),
+    entity: currentEntitySchedule ? { ...currentEntitySchedule } : null,
+    weekDate: selectedScheduleWeekDate || '',
+    building: currentBuilding || 'C',
+    floor: currentFloor ?? 1,
+    panelMode: panelMode || null,
+    roomId: currentRoomPanelId || null,
+    routeFrom: routeState.fromRoomId || null,
+    routeTo: routeState.toRoomId || null
+  };
+}
+
+function snapshotsEqual(a, b) {
+  if (!a || !b) return false;
+  return (
+    a.scheduleViewOpen === b.scheduleViewOpen &&
+    (a.entity?.type || '') === (b.entity?.type || '') &&
+    (a.entity?.name || '') === (b.entity?.name || '') &&
+    a.weekDate === b.weekDate &&
+    a.building === b.building &&
+    a.floor === b.floor &&
+    a.panelMode === b.panelMode &&
+    a.roomId === b.roomId &&
+    a.routeFrom === b.routeFrom &&
+    a.routeTo === b.routeTo
+  );
+}
+
+function recordNavState() {
+  if (isPoppingState || isApplyingNavHistory) return;
+  const snap = getNavSnapshot();
+  if (navHistoryIndex >= 0 && snapshotsEqual(navHistoryStack[navHistoryIndex], snap)) {
+    return;
+  }
+  navHistoryStack.splice(navHistoryIndex + 1);
+  navHistoryStack.push(snap);
+  if (navHistoryStack.length > 50) {
+    navHistoryStack.shift();
+  }
+  navHistoryIndex = navHistoryStack.length - 1;
+}
+
+async function applyNavSnapshot(snap) {
+  if (!snap) return;
+  isApplyingNavHistory = true;
+  try {
+    if (snap.building && snap.floor != null && (snap.building !== currentBuilding || snap.floor !== currentFloor)) {
+      await showFloor(snap.building, snap.floor);
+    }
+    if (snap.scheduleViewOpen) {
+      if (snap.entity && snap.entity.type && snap.entity.name) {
+        selectedScheduleWeekDate = snap.weekDate || '';
+        await openEntitySchedule(snap.entity.type, snap.entity.name);
+      } else {
+        await openScheduleDirectory();
+      }
+      return;
+    } else if (scheduleViewOpen) {
+      closeScheduleView({ updateHistory: false });
+    }
+
+    if (snap.panelMode === 'room' && snap.roomId && roomsMeta[snap.roomId]) {
+      await onRoomClick(snap.roomId, { pushHistory: false });
+      panToRoom(snap.roomId);
+    } else if (snap.panelMode === 'route') {
+      routeState.fromRoomId = snap.routeFrom;
+      routeState.toRoomId = snap.routeTo;
+      openRoutePanel();
+      if (snap.routeFrom && snap.routeTo) {
+        await onBuildRouteClick();
+      }
+    } else {
+      if (panelMode === 'room') closeRoomPanel();
+      else if (panelMode === 'route') closeRoutePanel();
+      else if (panelMode === 'ai') closeAiPanel();
+      else if (document.getElementById('panel')?.classList.contains('open')) closePanel();
+    }
+  } finally {
+    isApplyingNavHistory = false;
+  }
+}
+
+async function undoNavHistory() {
+  if (navHistoryIndex <= 0) return;
+  navHistoryIndex--;
+  await applyNavSnapshot(navHistoryStack[navHistoryIndex]);
+}
+
+async function redoNavHistory() {
+  if (navHistoryIndex >= navHistoryStack.length - 1) return;
+  navHistoryIndex++;
+  await applyNavSnapshot(navHistoryStack[navHistoryIndex]);
+}
 
 function updateURL(id, { push = true } = {}) {
   if (isPoppingState) return;
@@ -779,17 +1061,29 @@ function updateURL(id, { push = true } = {}) {
   else history.replaceState(state, '', url);
 }
 
-window.addEventListener('popstate', () => {
+window.addEventListener('popstate', async () => {
   isPoppingState = true;
   try {
     const params = new URLSearchParams(location.search);
+    const viewParam = params.get('view');
+    const typeParam = params.get('type');
+    const nameParam = params.get('name');
     const roomId = params.get('room');
-    if (roomId && roomsMeta[roomId]) {
-      onRoomClick(roomId, { pushHistory: false });
+    if (viewParam === 'schedule') {
+      if (typeParam && nameParam) {
+        await openEntitySchedule(typeParam, nameParam);
+      } else {
+        await openScheduleDirectory();
+      }
     } else {
-      if (panelMode === 'room') closeRoomPanel();
-      else if (panelMode === 'free' || panelMode === 'route' || panelMode === 'ai') { /* оставляем */ }
-      else closePanel();
+      if (scheduleViewOpen) closeScheduleView({ updateHistory: false });
+      if (roomId && roomsMeta[roomId]) {
+        await navigateToRoom(roomId);
+      } else {
+        if (panelMode === 'room') closeRoomPanel();
+        else if (panelMode === 'route') closeRoutePanel();
+        else closePanel();
+      }
     }
   } finally {
     isPoppingState = false;
@@ -1089,43 +1383,7 @@ function setupSearch() {
       return;
     }
 
-    // Преподаватели
-    entities.lecturers.forEach(lec => {
-      const li = document.createElement('li');
-      li.innerHTML = `
-        <div class="res-main">
-          <div class="res-name">${escapeHtml(lec.fullName || lec.name)}</div>
-          <div class="res-meta">${escapeHtml(lec.regalia || 'Преподаватель')}</div>
-        </div>
-        <span class="res-badge-entity"><i class="mdi mdi-calendar-clock"></i> Расписание</span>
-      `;
-      li.addEventListener('click', () => {
-        saveHistory(raw);
-        wrap.classList.remove('open');
-        openEntitySchedule('lecturer', lec.name);
-      });
-      results.appendChild(li);
-    });
-
-    // Группы
-    entities.groups.forEach(grp => {
-      const li = document.createElement('li');
-      li.innerHTML = `
-        <div class="res-main">
-          <div class="res-name">Группа ${escapeHtml(grp.name)}</div>
-          <div class="res-meta">${escapeHtml(grp.faculty || 'Учебная группа')}</div>
-        </div>
-        <span class="res-badge-entity"><i class="mdi mdi-account-group-outline"></i> Расписание</span>
-      `;
-      li.addEventListener('click', () => {
-        saveHistory(raw);
-        wrap.classList.remove('open');
-        openEntitySchedule('group', grp.name);
-      });
-      results.appendChild(li);
-    });
-
-    // Аудитории и места
+    // 1. Сначала аудитории и помещения на карте
     found.forEach(({ id, meta }) => {
       const bName = BUILDINGS[meta.building]?.name || meta.building || '?';
       const li = document.createElement('li');
@@ -1153,6 +1411,42 @@ function setupSearch() {
           startRouteToRoom(id);
         });
       }
+      results.appendChild(li);
+    });
+
+    // 2. Группы
+    entities.groups.forEach(grp => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <div class="res-main">
+          <div class="res-name">Группа ${escapeHtml(grp.name)}</div>
+          <div class="res-meta">${escapeHtml(grp.faculty || 'Учебная группа')}</div>
+        </div>
+        <span class="res-badge-entity"><i class="mdi mdi-account-group-outline"></i> Расписание</span>
+      `;
+      li.addEventListener('click', () => {
+        saveHistory(raw);
+        wrap.classList.remove('open');
+        openEntitySchedule('group', grp.name);
+      });
+      results.appendChild(li);
+    });
+
+    // 3. Преподаватели
+    entities.lecturers.forEach(lec => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <div class="res-main">
+          <div class="res-name">${escapeHtml(lec.fullName || lec.name)}</div>
+          <div class="res-meta">${escapeHtml(lec.regalia || 'Преподаватель')}</div>
+        </div>
+        <span class="res-badge-entity"><i class="mdi mdi-calendar-clock"></i> Расписание</span>
+      `;
+      li.addEventListener('click', () => {
+        saveHistory(raw);
+        wrap.classList.remove('open');
+        openEntitySchedule('lecturer', lec.name);
+      });
       results.appendChild(li);
     });
   }
@@ -1221,16 +1515,12 @@ function setupSearch() {
     input.blur();
     if (isLikelyAiQuestion(raw, found.length + entities.lecturers.length + entities.groups.length)) {
       openAiPanel(raw);
-    } else if (entities.lecturers.length === 1 && found.length === 0) {
-      openEntitySchedule('lecturer', entities.lecturers[0].name);
-    } else if (entities.groups.length === 1 && found.length === 0) {
-      openEntitySchedule('group', entities.groups[0].name);
     } else if (found.length > 0) {
       navigateToRoom(found[0].id);
-    } else if (entities.lecturers.length > 0) {
-      openEntitySchedule('lecturer', entities.lecturers[0].name);
     } else if (entities.groups.length > 0) {
       openEntitySchedule('group', entities.groups[0].name);
+    } else if (entities.lecturers.length > 0) {
+      openEntitySchedule('lecturer', entities.lecturers[0].name);
     } else {
       openAiPanel(raw);
     }
@@ -1318,7 +1608,7 @@ function setupSearch() {
   }
 }
 
-// ================ ИИ-НАВИГАТОР КАМПУСА ================
+// ================ ИИ-НАВИГАТОР РГРТУ ================
 
 function buildAiFreeMenuHtml() {
   const filterFloor = aiFreeFloorFilter;
@@ -1658,10 +1948,21 @@ function renderAiPanel() {
 function panToRoom(roomId) {
   const centroid = getShapeCentroidSvg(roomId);
   if (!centroid) return;
-  const { H } = currentSvgViewBox;
-  const targetLatLng = [H - centroid.y, centroid.x];
+  syncMobileMapViewportWithSheet();
+  const { W, H } = currentSvgViewBox;
+  let targetLatLng = L.latLng(H - centroid.y, centroid.x);
+  if (mapBearingDeg) {
+    const cLayer = map.latLngToLayerPoint(L.latLng((H || 1000) / 2, (W || 1000) / 2));
+    const pLayer = map.latLngToLayerPoint(targetLatLng);
+    const rad = (mapBearingDeg * Math.PI) / 180;
+    const vx = pLayer.x - cLayer.x;
+    const vy = pLayer.y - cLayer.y;
+    const rx = cLayer.x + vx * Math.cos(rad) - vy * Math.sin(rad);
+    const ry = cLayer.y + vx * Math.sin(rad) + vy * Math.cos(rad);
+    targetLatLng = map.layerPointToLatLng(L.point(rx, ry));
+  }
   const targetZoom = Math.max(map.getZoom(), 0.25);
-  map.flyTo(targetLatLng, targetZoom, { animate: true, duration: 0.45 });
+  map.flyTo(targetLatLng, targetZoom, { animate: true, duration: 0.42 });
   scheduleLabelRefresh();
 }
 
@@ -1811,7 +2112,9 @@ async function syncUserProfileToServer(patch = {}) {
         role: userProfile.role,
         targetName: userProfile.targetName,
         notificationsEnabled: userProfile.notificationsEnabled,
-        theme: userProfile.theme
+        theme: userProfile.theme,
+        favorites: Array.isArray(userProfile.favorites) ? userProfile.favorites : undefined,
+        recentViews: (userProfile.recentViews && typeof userProfile.recentViews === 'object') ? userProfile.recentViews : undefined
       })
     });
     if (!res.ok) return;
@@ -1872,7 +2175,7 @@ function updateUserMenuUI() {
     } else if (isLinked) {
       subEl.textContent = 'Выберите статус и укажите свою группу или ФИО';
     } else {
-      subEl.textContent = 'Войдите через Telegram для выбора своего расписания';
+      subEl.textContent = 'Войдите через Telegram для наиболее удобного взаимодействия!';
     }
   }
   document.querySelectorAll('.user-seg-btn[data-role]').forEach(btn => {
@@ -1883,7 +2186,7 @@ function updateUserMenuUI() {
   }
   if (targetInput) {
     targetInput.placeholder = userProfile.role === 'lecturer'
-      ? 'Например: Устюков Дмитрий Игоревич'
+      ? 'Например: Скворцов Сергей Владимирович'
       : 'Например: 445 или 546М';
     if (document.activeElement !== targetInput) {
       if (userProfile.role === 'lecturer' && userProfile.targetName) {
@@ -1949,6 +2252,73 @@ function setupUserProfileAndTheme() {
 
   if (!wrap || !btn || !dropdown) return;
 
+  const stopAuthSessionPolling = () => {
+    if (authPollTimer) {
+      clearInterval(authPollTimer);
+      authPollTimer = null;
+    }
+  };
+
+  const checkPendingAuthSessionOnce = async () => {
+    if (!activeAuthSessionToken || userProfile.telegramLinked) {
+      stopAuthSessionPolling();
+      return;
+    }
+    try {
+      const res = await fetch('/api/user/auth-telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'session-check',
+          sessionToken: activeAuthSessionToken,
+          role: userProfile.role,
+          targetName: userProfile.targetName,
+          theme: userProfile.theme
+        })
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.status === 'expired') {
+        stopAuthSessionPolling();
+        activeAuthSessionToken = '';
+        return;
+      }
+      if (data.status === 'verified' && data.user) {
+        stopAuthSessionPolling();
+        activeAuthSessionToken = '';
+        currentUserId = data.user.id;
+        try { localStorage.setItem('rsreu_user_id', currentUserId); } catch (e) {}
+        Object.assign(userProfile, data.user);
+        userProfile.telegramLinked = true;
+        if (feedbackEl) feedbackEl.classList.add('hidden');
+        updateUserMenuUI();
+        if (scheduleViewOpen) {
+          const view = document.getElementById('schedule-view');
+          if (view) updateScheduleSidebarListInPlace(view);
+        }
+        showToast('Telegram успешно подключён!');
+        haptic('success');
+      }
+    } catch (e) {}
+  };
+
+  const startAuthSessionPolling = () => {
+    stopAuthSessionPolling();
+    if (!activeAuthSessionToken || userProfile.telegramLinked) return;
+    authPollTimer = setInterval(checkPendingAuthSessionOnce, 2000);
+  };
+
+  window.addEventListener('focus', () => {
+    if (activeAuthSessionToken && !userProfile.telegramLinked) {
+      checkPendingAuthSessionOnce();
+    }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && activeAuthSessionToken && !userProfile.telegramLinked) {
+      checkPendingAuthSessionOnce();
+    }
+  });
+
   const startBrowserDeepLinkSession = async () => {
     try {
       const res = await fetch('/api/user/auth-telegram', {
@@ -1956,15 +2326,41 @@ function setupUserProfileAndTheme() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: 'session-start' })
       });
-      if (!res.ok) return;
+      if (!res.ok) return null;
       const data = await res.json();
       if (data.botUsername) botUsername = data.botUsername;
+      if (data.sessionToken) {
+        activeAuthSessionToken = data.sessionToken;
+        startAuthSessionPolling();
+      }
       if (botLink && data.botLink) {
         botLink.href = data.botLink;
         botLink.classList.remove('hidden');
       }
-    } catch (e) {}
+      return data;
+    } catch (e) {
+      return null;
+    }
   };
+
+  if (botLink) {
+    botLink.addEventListener('click', async (e) => {
+      if (userProfile.telegramLinked) return;
+      if (feedbackEl) {
+        feedbackEl.textContent = 'Нажмите «Запустить / Start» в открывшемся боте Telegram — вход выполнится автоматически…';
+        feedbackEl.classList.remove('error', 'hidden');
+      }
+      if (activeAuthSessionToken && botLink.href && botLink.href.includes('start=login_')) {
+        startAuthSessionPolling();
+        return;
+      }
+      e.preventDefault();
+      const data = await startBrowserDeepLinkSession();
+      if (data && data.botLink) {
+        window.open(data.botLink, '_blank', 'noopener');
+      }
+    });
+  }
 
   const closeDropdownBtn = document.getElementById('user-dropdown-close');
   if (closeDropdownBtn) {
@@ -2243,15 +2639,24 @@ function setupResetControl() {
   return new ResetControl();
 }
 
+function fitMapToBuildingBounds(bounds) {
+  const { W, H } = currentSvgViewBox;
+  if (window.innerWidth <= 768 && W > 0 && H > 0) {
+    const mapSize = map.getSize();
+    const availH = Math.max(240, (mapSize.y || window.innerHeight) - 124);
+    const zoomByHeight = Math.log2(availH / H);
+    const snappedZoom = Math.max(-2.5, Math.min(2, Math.floor(zoomByHeight * 4) / 4));
+    map.setView([H / 2, W / 2], snappedZoom, { animate: false });
+  } else {
+    map.fitBounds(bounds);
+  }
+}
+
 function resetView() {
   if (currentOverlay) {
+    setMapBearing(0);
     const bounds = currentOverlay.getBounds();
-    map.fitBounds(bounds);
-    if (window.innerWidth <= 768) {
-      const { W, H } = currentSvgViewBox;
-      const targetZoom = map.getBoundsZoom(bounds) + 1.0;
-      map.setView([H / 2, W / 2], targetZoom, { animate: false });
-    }
+    fitMapToBuildingBounds(bounds);
     scheduleLabelRefresh();
   }
 }
@@ -2287,6 +2692,26 @@ async function navigateToRoom(roomId) {
 
 // ================ ОТРИСОВКА ЭТАЖА ================
 
+function computeShapeBBoxSvg(shape) {
+  try {
+    if (typeof shape.getBBox === 'function') {
+      const bb = shape.getBBox();
+      if (bb && (bb.width > 0 || bb.height > 0)) {
+        return { minX: bb.x, minY: bb.y, maxX: bb.x + bb.width, maxY: bb.y + bb.height };
+      }
+    }
+  } catch (e) {}
+  const tag = (shape.tagName || '').toLowerCase();
+  if (tag === 'rect') {
+    const x = parseFloat(shape.getAttribute('x') || '0');
+    const y = parseFloat(shape.getAttribute('y') || '0');
+    const w = parseFloat(shape.getAttribute('width') || '0');
+    const h = parseFloat(shape.getAttribute('height') || '0');
+    if (w > 0 || h > 0) return { minX: x, minY: y, maxX: x + w, maxY: y + h };
+  }
+  return null;
+}
+
 async function showFloor(buildingCode, floorNum) {
   const b = BUILDINGS[buildingCode];
   const svgUrl = b?.floors?.[floorNum];
@@ -2298,6 +2723,7 @@ async function showFloor(buildingCode, floorNum) {
   hoveredRoomId = null;
 
   const svgText = await fetch(svgUrl).then(r => r.text());
+  svgCache[svgUrl] = svgText;
   const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
   const svgEl = doc.querySelector('svg');
   if (!svgEl) return;
@@ -2311,16 +2737,16 @@ async function showFloor(buildingCode, floorNum) {
   currentLabels = null;
 
   const bounds = [[0, 0], [H, W]];
+  svgEl.setAttribute('preserveAspectRatio', 'none');
   currentOverlay = L.svgOverlay(svgEl, bounds).addTo(map);
-  map.fitBounds(bounds);
-  if (window.innerWidth <= 768) {
-    const targetZoom = map.getBoundsZoom(bounds) + 1.0;
-    map.setView([H / 2, W / 2], targetZoom, { animate: false });
-  }
+  fitMapToBuildingBounds(bounds);
+  syncMapRotationTransform();
+  syncMapLabelScale();
 
   svgEl.style.pointerEvents = 'none';
 
   roomShapes = {};
+  roomSvgCentroids = {};
 
   svgEl.querySelectorAll('rect[id], path[id], polygon[id], circle[id], ellipse[id]').forEach(shape => {
     const id = shape.getAttribute('id');
@@ -2339,6 +2765,9 @@ async function showFloor(buildingCode, floorNum) {
       roomShapes[id].push(shape);
     });
   });
+
+  // Очищаем кэш центров аудиторий для текущего этажа — он заполнится в placeLabels() напрямую в SVG-координатах
+  roomSvgCentroids = {};
 
   Object.values(roomShapes).forEach(shapes => {
     shapes.forEach(s => {
@@ -2399,7 +2828,7 @@ async function showFloor(buildingCode, floorNum) {
   updateFloorSwitcher();
   applyFreeHighlight();
   refreshRoutePickHighlight();
-  scheduleLabelRefresh();
+  placeLabels();
 
   if (selectedRoomId && roomShapes[selectedRoomId]) selectRoom(selectedRoomId);
   if (pendingHighlight && roomShapes[pendingHighlight]) {
@@ -2414,39 +2843,85 @@ async function showFloor(buildingCode, floorNum) {
 
 // ================ ПОДПИСИ ================
 
+function computeRoomCentroidInSvg(svgEl, shapes) {
+  if (!shapes || !shapes.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let anyValid = false;
+
+  let invSvgCtm = null;
+  try {
+    const svgCtm = svgEl && typeof svgEl.getScreenCTM === 'function' ? svgEl.getScreenCTM() : null;
+    if (svgCtm) invSvgCtm = svgCtm.inverse();
+  } catch (e) {}
+
+  for (const shape of shapes) {
+    const bb = computeShapeBBoxSvg(shape);
+    if (!bb) continue;
+    let corners = [
+      { x: bb.minX, y: bb.minY },
+      { x: bb.maxX, y: bb.minY },
+      { x: bb.minX, y: bb.maxY },
+      { x: bb.maxX, y: bb.maxY }
+    ];
+    if (invSvgCtm && svgEl && typeof svgEl.createSVGPoint === 'function' && typeof shape.getScreenCTM === 'function') {
+      try {
+        const shapeCtm = shape.getScreenCTM();
+        if (shapeCtm) {
+          const relMat = invSvgCtm.multiply(shapeCtm);
+          corners = corners.map(pt => {
+            const svgPt = svgEl.createSVGPoint();
+            svgPt.x = pt.x;
+            svgPt.y = pt.y;
+            const tr = svgPt.matrixTransform(relMat);
+            return { x: tr.x, y: tr.y };
+          });
+        }
+      } catch (e) {}
+    }
+    for (const c of corners) {
+      if (!Number.isFinite(c.x) || !Number.isFinite(c.y)) continue;
+      anyValid = true;
+      if (c.x < minX) minX = c.x;
+      if (c.y < minY) minY = c.y;
+      if (c.x > maxX) maxX = c.x;
+      if (c.y > maxY) maxY = c.y;
+    }
+  }
+
+  if (!anyValid) return null;
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
 function scheduleLabelRefresh() {
   if (labelTimer) clearTimeout(labelTimer);
-  labelTimer = setTimeout(() => { labelTimer = null; placeLabels(); }, 400);
+  labelTimer = setTimeout(() => {
+    labelTimer = null;
+    syncMapRotationTransform();
+    syncMapLabelScale();
+    if (!currentLabels) placeLabels();
+  }, 120);
 }
 
 function placeLabels() {
   if (currentLabels) map.removeLayer(currentLabels);
   currentLabels = L.layerGroup().addTo(map);
 
-  const mapRect = map.getContainer().getBoundingClientRect();
+  const { H } = currentSvgViewBox;
+  const svgEl = currentOverlay ? currentOverlay.getElement() : null;
 
   for (const [id, shapes] of Object.entries(roomShapes)) {
     const meta = roomsMeta[id];
     const labelText = meta?.shortName;
     if (!labelText) continue;
 
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    let anyValid = false;
-    for (const shape of shapes) {
-      const r = shape.getBoundingClientRect();
-      if (!r || (r.width === 0 && r.height === 0)) continue;
-      anyValid = true;
-      if (r.left   < minX) minX = r.left;
-      if (r.top    < minY) minY = r.top;
-      if (r.right  > maxX) maxX = r.right;
-      if (r.bottom > maxY) maxY = r.bottom;
+    let centroid = roomSvgCentroids[id];
+    if (!centroid) {
+      centroid = computeRoomCentroidInSvg(svgEl, shapes);
+      if (!centroid) continue;
+      roomSvgCentroids[id] = centroid;
     }
-    if (!anyValid) continue;
 
-    const cX = (minX + maxX) / 2 - mapRect.left;
-    const cY = (minY + maxY) / 2 - mapRect.top;
-    const latlng = map.containerPointToLatLng(L.point(cX, cY));
-
+    const latlng = L.latLng(H - centroid.y, centroid.x);
     const labelHtml = renderMultiline(labelText);
 
     const icon = L.divIcon({
@@ -2457,6 +2932,8 @@ function placeLabels() {
     });
     L.marker(latlng, { icon, interactive: false, keyboard: false }).addTo(currentLabels);
   }
+  syncMapRotationTransform();
+  syncMapLabelScale();
 }
 
 window.addEventListener('resize', scheduleLabelRefresh);
@@ -2468,23 +2945,29 @@ function computeNowStatus(data) {
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const todayD = now.getDate();
   const todayM = now.getMonth() + 1;
+  const todayISO = `${now.getFullYear()}-${String(todayM).padStart(2, '0')}-${String(todayD).padStart(2, '0')}`;
 
-  const totalLessons = data.days.reduce((sum, d) => sum + d.lessons.length, 0);
+  const days = Array.isArray(data?.days) ? data.days : [];
+  const totalLessons = days.reduce((sum, d) => sum + (d.lessons ? d.lessons.length : 0), 0);
   if (totalLessons === 0) return { type: 'none' };
 
   const parseStart = (t) => {
-    const m = t.match(/^(\d{1,2}):(\d{2})/);
+    const m = String(t || '').match(/^(\d{1,2}):(\d{2})/);
     return m ? +m[1] * 60 + +m[2] : null;
   };
   const parseEnd = (t) => {
-    const m = t.match(/[–-](\d{1,2}):(\d{2})/);
+    const m = String(t || '').match(/[–-](\d{1,2}):(\d{2})/);
     return m ? +m[1] * 60 + +m[2] : null;
   };
 
-  const todayIdx = data.days.findIndex(d => d.date && d.date.d === todayD && d.date.m === todayM);
+  const todayIdx = days.findIndex(d => {
+    if (!d || !d.date) return false;
+    if (typeof d.date === 'string') return d.date === todayISO;
+    return d.date.d === todayD && d.date.m === todayM;
+  });
 
   if (todayIdx !== -1) {
-    const todayLessons = data.days[todayIdx].lessons;
+    const todayLessons = days[todayIdx].lessons || [];
     const current = todayLessons.find(l => {
       const s = parseStart(l.time);
       const e = parseEnd(l.time);
@@ -2505,11 +2988,11 @@ function computeNowStatus(data) {
   }
 
   const startIdx = todayIdx === -1 ? 0 : todayIdx + 1;
-  for (let i = startIdx; i < data.days.length; i++) {
-    if (data.days[i].lessons.length > 0) {
-      const dayName = data.days[i].dayName;
+  for (let i = startIdx; i < days.length; i++) {
+    if ((days[i].lessons || []).length > 0) {
+      const dayName = days[i].dayName || '';
       const genitive = DAY_GENITIVE[dayName] || dayName.toLowerCase();
-      const firstLesson = data.days[i].lessons[0];
+      const firstLesson = days[i].lessons[0];
       const startMatch = firstLesson.time.match(/^(\d{1,2}:\d{2})/);
       return {
         type: 'free',
@@ -2518,6 +3001,136 @@ function computeNowStatus(data) {
     }
   }
   return { type: 'free', untilText: 'до конца недели' };
+}
+
+function formatStatusRoomLabelClient(lesson) {
+  if (!lesson) return '';
+  const raw = lesson.roomShort === '🏀' ? 'Спортзал' : String(lesson.roomShort || '').trim();
+  if (!raw) return '';
+  if (/^(спортзал|спортивный зал|зал|стадион|бассейн|каф)/i.test(raw)) return raw;
+  return `ауд. ${raw}`;
+}
+
+function computeClientEntityNowStatus(data) {
+  if (!data) return { type: 'free', title: 'Сейчас пар нет', details: '', roomId: null };
+  const entityKey = `${data.entityType || 'group'}:${data.name || ''}`;
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const todayISO = `${yyyy}-${mm}-${dd}`;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+
+  const sourceDays = (Array.isArray(data.currentWeekDays) && data.currentWeekDays.length > 0)
+    ? data.currentWeekDays
+    : (currentWeekStatusByEntityKey.get(entityKey) || data.days || []);
+
+  if (!Array.isArray(sourceDays) || sourceDays.length === 0) {
+    return data.nowStatus || { type: 'free', title: 'Сейчас пар нет', details: '', roomId: null };
+  }
+
+  const parseRange = (t) => {
+    const m = String(t || '').match(/^(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})/);
+    if (!m) return null;
+    return {
+      start: +m[1] * 60 + +m[2],
+      end: +m[3] * 60 + +m[4],
+      startStr: `${m[1].padStart(2, '0')}:${m[2]}`,
+      endStr: `${m[3].padStart(2, '0')}:${m[4]}`
+    };
+  };
+
+  let todayIdx = sourceDays.findIndex(d => d && d.date === todayISO);
+  if (todayIdx === -1 && data.isCurrentWeek !== false && !selectedScheduleWeekDate) {
+    const dayNamesByDow = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+    const todayName = dayNamesByDow[now.getDay()];
+    todayIdx = sourceDays.findIndex(d => d && d.dayName === todayName);
+  }
+
+  if (todayIdx !== -1) {
+    const todayLessons = sourceDays[todayIdx].lessons || [];
+    const activeLessons = todayLessons.filter(l => {
+      const r = parseRange(l.time);
+      return r && nowMin >= r.start && nowMin <= r.end;
+    });
+
+    if (activeLessons.length > 0) {
+      const first = activeLessons[0];
+      const r = parseRange(first.time);
+      const leftMin = Math.max(1, r.end - nowMin);
+      const roomLabels = [...new Set(activeLessons.map(formatStatusRoomLabelClient).filter(Boolean))];
+      const roomSuffix = roomLabels.length > 0 ? ` · ${roomLabels.join(' / ')}` : '';
+      const subjects = [...new Set(activeLessons.map(l => l.subject).filter(Boolean))];
+      const subjectText = subjects.join(' / ');
+      const primaryRoomId = activeLessons.find(l => l.roomId)?.roomId || null;
+
+      return {
+        type: 'busy',
+        title: `Сейчас идёт пара${roomSuffix}`,
+        details: `${subjectText} · до ${r.endStr} (осталось ${leftMin} мин)`,
+        roomId: primaryRoomId
+      };
+    }
+
+    const upcomingToday = todayLessons.filter(l => {
+      const r = parseRange(l.time);
+      return r && r.start > nowMin;
+    });
+
+    if (upcomingToday.length > 0) {
+      const firstNext = upcomingToday[0];
+      const nextRange = parseRange(firstNext.time);
+      const sameSlotNext = upcomingToday.filter(l => {
+        const r = parseRange(l.time);
+        return r && r.start === nextRange.start;
+      });
+      const untilMin = nextRange.start - nowMin;
+      const roomLabels = [...new Set(sameSlotNext.map(formatStatusRoomLabelClient).filter(Boolean))];
+      const roomText = roomLabels.join(' / ');
+      const subjects = [...new Set(sameSlotNext.map(l => l.subject).filter(Boolean))].join(' / ');
+      const primaryRoomId = sameSlotNext.find(l => l.roomId)?.roomId || null;
+
+      if (untilMin <= 25) {
+        return {
+          type: 'free',
+          title: `Перемена · скоро пара${roomText ? ' · ' + roomText : ''}`,
+          details: `${subjects} · начало в ${nextRange.startStr} (через ${untilMin} мин)`,
+          roomId: primaryRoomId
+        };
+      }
+      return {
+        type: 'free',
+        title: 'Сейчас пар нет',
+        details: `Следующая пара в ${nextRange.startStr}${roomText ? ' · ' + roomText : ''} (${subjects})`,
+        roomId: primaryRoomId
+      };
+    }
+  }
+
+  const searchStart = todayIdx !== -1 ? todayIdx + 1 : 0;
+  for (let i = searchStart; i < sourceDays.length; i++) {
+    const d = sourceDays[i];
+    if (d && Array.isArray(d.lessons) && d.lessons.length > 0) {
+      if (todayIdx === -1 && typeof d.date === 'string' && d.date < todayISO) continue;
+      const first = d.lessons[0];
+      const r = parseRange(first.time);
+      const roomLabel = formatStatusRoomLabelClient(first);
+      const hadLessonsToday = todayIdx !== -1 && (sourceDays[todayIdx].lessons || []).length > 0;
+      return {
+        type: 'free',
+        title: hadLessonsToday ? 'На сегодня пары закончились' : 'Сегодня по расписанию пар нет',
+        details: `Ближайшая пара: ${d.dayName}${r ? ' в ' + r.startStr : ''}${roomLabel ? ' · ' + roomLabel : ''} (${first.subject})`,
+        roomId: first.roomId || null
+      };
+    }
+  }
+
+  return {
+    type: 'free',
+    title: 'На этой неделе пар больше нет',
+    details: 'Свободное время',
+    roomId: null
+  };
 }
 
 function renderNowStatus(status) {
@@ -2608,6 +3221,8 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
       `<div class="room-notes empty">Служебное или общественное помещение корпуса.</div>`;
     panel.innerHTML = buildPanelLayout(`${header}${block}`, '');
     attachRoomActionListeners(panel, id);
+    applyMobileSheetSnapMeasurement(panel);
+    recordNavState();
     return;
   }
 
@@ -2616,6 +3231,8 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
     `<p class="muted-text">Загрузка расписания…</p>`
   );
   attachRoomActionListeners(panel, id);
+  applyMobileSheetSnapMeasurement(panel);
+  recordNavState();
 
   const today = new Date();
   const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -2645,11 +3262,13 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
         `<div class="no-schedule-msg">У этой аудитории нет расписания занятий</div>`
       );
       attachRoomActionListeners(panel, id);
+      applyMobileSheetSnapMeasurement(panel);
       return;
     }
     panel.classList.remove('mobile-compact');
     renderSchedule(panel, title, data, header, descriptionBlock);
     attachRoomActionListeners(panel, id);
+    applyMobileSheetSnapMeasurement(panel);
     haptic('success');
   } catch (err) {
     if (token !== roomRequestToken) return;
@@ -2660,6 +3279,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
       `<p style="color:#f87171">Ошибка загрузки: ${escapeHtml(err.message)}</p>`
     );
     attachRoomActionListeners(panel, id);
+    applyMobileSheetSnapMeasurement(panel);
     haptic('error');
   }
 }
@@ -2863,10 +3483,200 @@ function attachEntityInlineLinks(container) {
 
 // ================ РЕНДЕР РАСПИСАНИЯ ================
 
+const STANDARD_TIME_SLOTS = [
+  '08:10–09:45',
+  '09:55–11:30',
+  '11:40–13:15',
+  '13:35–15:10',
+  '15:20–16:55',
+  '17:05–18:40',
+  '18:45–20:10'
+];
+
+function buildWeeklyScheduleTableHtml(days = [], { mode = 'group' } = {}) {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const todayISO = `${yyyy}-${mm}-${dd}`;
+
+  const tom = new Date(now);
+  tom.setDate(now.getDate() + 1);
+  const tomorrowISO = `${tom.getFullYear()}-${String(tom.getMonth() + 1).padStart(2, '0')}-${String(tom.getDate()).padStart(2, '0')}`;
+
+  const isDayToday = (day) => {
+    if (!day) return false;
+    if (typeof day.date === 'string') return day.date === todayISO;
+    if (day.date && typeof day.date === 'object') {
+      return day.date.d === now.getDate() && day.date.m === (now.getMonth() + 1);
+    }
+    return false;
+  };
+
+  const isDayTomorrow = (day) => {
+    if (!day) return false;
+    if (typeof day.date === 'string') return day.date === tomorrowISO;
+    if (day.date && typeof day.date === 'object') {
+      return day.date.d === tom.getDate() && day.date.m === (tom.getMonth() + 1);
+    }
+    return false;
+  };
+
+  const formatDayHeaderDate = (day) => {
+    if (day.dateText) return day.dateText;
+    if (day.dateLabel) return day.dateLabel;
+    if (typeof day.date === 'string' && day.date.includes('-')) {
+      const [, mStr, dStr] = day.date.split('-');
+      if (dStr && mStr) {
+        return `${parseInt(dStr, 10)} ${MONTH_NAMES[parseInt(mStr, 10) - 1] || ''}`;
+      }
+    }
+    return '';
+  };
+
+  const slotSet = new Set(STANDARD_TIME_SLOTS);
+  days.forEach(d => {
+    (d.lessons || []).forEach(l => {
+      if (l.time) slotSet.add(l.time.replace('-', '–'));
+    });
+  });
+  const allSlots = [...slotSet].sort((a, b) => a.localeCompare(b));
+
+  const headColsHtml = days.map(day => {
+    const isToday = isDayToday(day);
+    const isTomorrow = isDayTomorrow(day);
+    const dateLabel = formatDayHeaderDate(day);
+    return `
+      <th class="${isToday ? 'today-col' : ''}">
+        <div class="th-day-top">
+          <span class="th-day-name">${escapeHtml(day.dayName || '')}</span>
+          ${isToday ? '<span class="th-today-badge">Сегодня</span>' : (isTomorrow ? '<span class="th-tomorrow-badge">Завтра</span>' : '')}
+        </div>
+        <span class="th-day-date">${escapeHtml(dateLabel)}</span>
+      </th>
+    `;
+  }).join('');
+
+  const rowsHtml = allSlots.map((slot, slotIdx) => {
+    const mStart = slot.match(/^(\d{1,2}:\d{2})/);
+    const breakRange = mStart && BREAKS[mStart[1]] ? BREAKS[mStart[1]] : '';
+    const pairLabel = `${slotIdx + 1} пара`;
+
+    const cellsHtml = days.map(day => {
+      const isToday = isDayToday(day);
+      const matching = (day.lessons || []).filter(l => (l.time || '').replace('-', '–') === slot);
+
+      if (matching.length === 0) {
+        return `<td class="slot-col empty-col ${isToday ? 'today-col' : ''}"><span class="wt-empty-dash">·</span></td>`;
+      }
+
+      const itemsHtml = matching.map(l => {
+        let badgeHtml = '';
+        if (l.type && LESSON_TYPES[l.type]) {
+          const t = LESSON_TYPES[l.type];
+          badgeHtml = `<span class="badge ${t.cls}"><i class="mdi ${t.icon}"></i>${l.type}</span>`;
+        } else if (l.type) {
+          badgeHtml = `<span class="badge pr">${escapeHtml(l.type)}</span>`;
+        }
+
+        const lecturerRaw = Array.isArray(l.lecturers) && l.lecturers.length > 0
+          ? l.lecturers.join(', ')
+          : (l.lecturer || '');
+
+        let entityHtml = '';
+        if (mode === 'room') {
+          if (l.subgroups && l.subgroups.length > 1) {
+            entityHtml = l.subgroups
+              .map(sg => formatInteractiveGroupAndLecturerHtml(sg.group, sg.lecturer))
+              .filter(Boolean)
+              .join('; ');
+          } else {
+            entityHtml = formatInteractiveGroupAndLecturerHtml(l.group, lecturerRaw);
+          }
+        } else if (mode === 'group') {
+          entityHtml = formatInteractiveGroupAndLecturerHtml('', lecturerRaw);
+        } else {
+          entityHtml = formatInteractiveGroupAndLecturerHtml(l.group, '');
+        }
+
+        let roomLinkHtml = '';
+        if (mode !== 'room') {
+          const cleanRoomShort = l.roomShort === '🏀' ? 'Спортзал' : (l.roomShort || '');
+          const isNamedVenue = /^(спортзал|спортивный зал|зал|стадион|бассейн|каф)/i.test(cleanRoomShort);
+          const prefix = isNamedVenue ? '' : 'ауд. ';
+          if (l.roomId) {
+            const bld = l.building || 'С';
+            const shortDisp = String(cleanRoomShort).endsWith(` ${bld}`) ? cleanRoomShort : `${cleanRoomShort} ${bld}`;
+            roomLinkHtml = `${prefix}<button type="button" class="wt-room-link" data-room-id="${escapeHtml(l.roomId)}" title="Открыть ${escapeHtml(cleanRoomShort)} (${l.floor ?? ''} этаж) на карте">${escapeHtml(shortDisp)}</button>`;
+          } else if (cleanRoomShort) {
+            roomLinkHtml = `<span class="wt-room-unmapped">${prefix}${escapeHtml(cleanRoomShort)}</span>`;
+          }
+        }
+
+        const detailsParts = [];
+        if (l.subgroup) detailsParts.push(escapeHtml(l.subgroup));
+        if (entityHtml) detailsParts.push(entityHtml);
+        if (roomLinkHtml) detailsParts.push(roomLinkHtml);
+        const detailsLine = detailsParts.join(', ');
+
+        return `
+          <div class="wt-cell-item">
+            <div class="wt-cell-main">${badgeHtml}<span class="wt-cell-subject">${escapeHtml(l.subject)}${detailsLine ? ',' : ''}</span></div>
+            ${detailsLine ? `<div class="wt-cell-details">${detailsLine}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      return `<td class="slot-col ${isToday ? 'today-col' : ''}">${itemsHtml}</td>`;
+    }).join('');
+
+    return `
+      <tr>
+        <td class="time-col">
+          <span class="wt-pair-num">${pairLabel}</span>
+          <div class="wt-time-range">${escapeHtml(slot)}</div>
+          ${breakRange ? `<div class="wt-time-break">перерыв<br>${escapeHtml(breakRange)}</div>` : ''}
+        </td>
+        ${cellsHtml}
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="weekly-table-wrap ${mode === 'room' ? 'room-weekly-table-wrap' : ''}">
+      <table class="weekly-schedule-table ${mode === 'room' ? 'room-weekly-schedule-table' : ''}">
+        <thead>
+          <tr>
+            <th class="time-col">Время</th>
+            ${headColsHtml}
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function scrollScheduleTableToToday(rootEl) {
+  if (!rootEl) return;
+  requestAnimationFrame(() => {
+    const wraps = rootEl.querySelectorAll('.weekly-table-wrap');
+    wraps.forEach(wrap => {
+      const todayTh = wrap.querySelector('thead th.today-col');
+      const timeTh = wrap.querySelector('thead th.time-col');
+      if (todayTh) {
+        const stickyW = timeTh ? timeTh.offsetWidth : 96;
+        const targetLeft = Math.max(0, todayTh.offsetLeft - stickyW);
+        wrap.scrollLeft = targetLeft;
+      }
+    });
+  });
+}
+
 function renderSchedule(panel, title, data, header, descriptionBlock = '') {
   const nowStatus = computeNowStatus(data);
-  const today = new Date();
-  const nowMin = today.getHours() * 60 + today.getMinutes();
 
   const fixedHtml = `
     ${header}
@@ -2874,65 +3684,12 @@ function renderSchedule(panel, title, data, header, descriptionBlock = '') {
     ${renderNowStatus(nowStatus)}
   `;
 
-  const daysHtml = data.days.map(day => {
-    const isToday = day.date
-      && day.date.d === today.getDate()
-      && day.date.m === (today.getMonth() + 1);
+  const tableHtml = buildWeeklyScheduleTableHtml(data.days || [], { mode: 'room' });
 
-    const lessonsHtml = day.lessons.length === 0
-      ? `<div class="lesson empty">—</div>`
-      : day.lessons.map(l => {
-          const m = l.time.match(/(\d{1,2}):(\d{2})[–-](\d{1,2}):(\d{2})/);
-          let status = '';
-          if (isToday && m) {
-            const s = +m[1] * 60 + +m[2];
-            const e = +m[3] * 60 + +m[4];
-            if (nowMin >= s && nowMin <= e) status = 'now';
-          }
-          const cls = status === 'now' ? 'lesson now' : 'lesson';
-
-          let badgeHtml = '';
-          if (l.type && LESSON_TYPES[l.type]) {
-            const t = LESSON_TYPES[l.type];
-            badgeHtml = `<span class="badge ${t.cls}"><i class="mdi ${t.icon}"></i>${l.type}</span>`;
-          } else if (l.type) {
-            badgeHtml = `<span class="badge pr">${escapeHtml(l.type)}</span>`;
-          }
-
-          let breakText = '';
-          const mStart = l.time.match(/^(\d{1,2}:\d{2})/);
-          if (mStart && BREAKS[mStart[1]]) {
-            breakText = ` · перерыв ${BREAKS[mStart[1]]}`;
-          }
-
-          let metaHtml = '';
-          if (l.subgroups && l.subgroups.length > 1) {
-            metaHtml = l.subgroups.map(sg => `
-              <div class="subgroup">
-                ${formatInteractiveGroupAndLecturerHtml(sg.group, sg.lecturer)}
-              </div>
-            `).join('');
-          } else {
-            metaHtml = `<div class="meta">${formatInteractiveGroupAndLecturerHtml(l.group, l.lecturer)}</div>`;
-          }
-
-          return `
-            <div class="${cls}">
-              <div class="time">${l.time}${breakText}</div>
-              <div class="subject">${badgeHtml}${escapeHtml(l.subject)}</div>
-              ${metaHtml}
-            </div>`;
-        }).join('');
-
-    return `
-      <div class="day-block${isToday ? ' today' : ''}">
-        <div class="day-header">${day.dayName}${day.dateText ? ', ' + day.dateText : ''}${isToday ? ' · сегодня' : ''}</div>
-        ${lessonsHtml}
-      </div>`;
-  }).join('');
-
-  panel.innerHTML = buildPanelLayout(fixedHtml, daysHtml);
+  panel.innerHTML = buildPanelLayout(fixedHtml, tableHtml);
   attachEntityInlineLinks(panel);
+  scrollScheduleTableToToday(panel);
+  applyMobileSheetSnapMeasurement(panel);
 }
 
 // ================ ПОЛНОЭКРАННЫЙ РАЗДЕЛ РАСПИСАНИЯ (ГРУППЫ И ПРЕПОДАВАТЕЛИ) ================
@@ -2947,6 +3704,9 @@ async function loadScheduleDirectory() {
       groups: data.groups || [],
       lecturers: data.lecturers || []
     };
+    if (Array.isArray(data.availableWeeks) && data.availableWeeks.length > 0 && availableScheduleWeeks.length === 0) {
+      availableScheduleWeeks = data.availableWeeks;
+    }
   } catch (e) {
     console.warn('[schedule-directory]', e.message);
   }
@@ -2986,8 +3746,10 @@ function closeScheduleView({ updateHistory = true } = {}) {
   if (updateHistory) updateScheduleURL({ push: false });
   updatePanelHandle();
   syncModeUI();
+  recordNavState();
   setTimeout(() => {
     if (!scheduleViewOpen) view.classList.add('hidden');
+    syncMobileMapViewportWithSheet();
     map.invalidateSize({ animate: false });
     scheduleLabelRefresh();
   }, 380);
@@ -3001,6 +3763,8 @@ async function openScheduleDirectory(tab = null) {
 
   closeUserDropdown();
   closeSearchDropdown();
+  if (panelMode === 'room') closeRoomPanel();
+  else if (panelMode === 'route') closeRoutePanel();
 
   if (tab) directoryActiveTab = tab;
   scheduleViewOpen = true;
@@ -3015,26 +3779,33 @@ async function openScheduleDirectory(tab = null) {
 
   updatePanelHandle();
   syncModeUI();
+  recordNavState();
 
   if (!scheduleDirectory.ready || (scheduleDirectory.groups.length === 0 && scheduleDirectory.lecturers.length === 0)) {
     renderScheduleWorkspace();
     await loadScheduleDirectory();
   }
 
-  // Если у пользователя выбрана своя группа/преподаватель в профиле или открывается на десктопе — сразу показываем расписание
   if (!currentEntitySchedule) {
-    if (userProfile.targetName) {
+    if (userProfile.telegramLinked && userProfile.targetName) {
       const entityType = userProfile.role === 'lecturer' ? 'lecturer' : 'group';
-      directoryActiveTab = entityType === 'lecturer' ? 'lecturers' : 'groups';
       await selectScheduleEntity(entityType, userProfile.targetName, { switchMobileToDetail: false });
       return;
     }
     if (window.innerWidth > 768) {
-      if (directoryActiveTab === 'lecturers' && scheduleDirectory.lecturers.length > 0) {
-        await selectScheduleEntity('lecturer', scheduleDirectory.lecturers[0].name, { switchMobileToDetail: false });
-        return;
-      } else if (scheduleDirectory.groups.length > 0) {
-        const preferred = scheduleDirectory.groups.find(g => g.name === '445') || scheduleDirectory.groups[0];
+      const favFirst = userProfile.telegramLinked && Array.isArray(userProfile.favorites) ? userProfile.favorites[0] : '';
+      if (favFirst && favFirst.includes(':')) {
+        const [fType, ...fRest] = favFirst.split(':');
+        const fName = fRest.join(':');
+        if ((fType === 'group' || fType === 'lecturer') && fName) {
+          await selectScheduleEntity(fType, fName, { switchMobileToDetail: false });
+          return;
+        }
+      }
+      if (scheduleDirectory.groups.length > 0) {
+        const preferred = scheduleDirectory.groups.find(g => g.name === '546')
+          || scheduleDirectory.groups.find(g => g.name === '445')
+          || scheduleDirectory.groups[0];
         await selectScheduleEntity('group', preferred.name, { switchMobileToDetail: false });
         return;
       }
@@ -3048,6 +3819,9 @@ async function openScheduleDirectory(tab = null) {
 async function openEntitySchedule(type, name) {
   closeUserDropdown();
   closeSearchDropdown();
+  if (panelMode === 'room') closeRoomPanel();
+  else if (panelMode === 'route') closeRoutePanel();
+
   scheduleViewOpen = true;
   scheduleMobileStep = 'detail';
   directoryActiveTab = type === 'group' ? 'groups' : 'lecturers';
@@ -3069,7 +3843,48 @@ async function openEntitySchedule(type, name) {
   await selectScheduleEntity(type, name, { switchMobileToDetail: true });
 }
 
-async function selectScheduleEntity(type, name, { switchMobileToDetail = true } = {}) {
+function getDefaultAcademicWeekDisplay() {
+  const now = new Date();
+  const day = now.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const mon = new Date(now);
+  mon.setDate(now.getDate() + diffToMonday);
+  const dd = String(mon.getDate()).padStart(2, '0');
+  const mm = String(mon.getMonth() + 1).padStart(2, '0');
+  const yyyy = mon.getFullYear();
+  return `${dd}.${mm}.${yyyy} · знаменатель`;
+}
+
+function getCurrentWeekTriggerLabel() {
+  let mondayDDMMYYYY = '';
+  if (currentEntityData && Array.isArray(currentEntityData.days) && currentEntityData.days[0]?.date) {
+    const [yyyy, mm, dd] = String(currentEntityData.days[0].date).split('-');
+    if (yyyy && mm && dd) mondayDDMMYYYY = `${dd}.${mm}.${yyyy}`;
+  }
+
+  if (availableScheduleWeeks.length > 0) {
+    const targetDate = selectedScheduleWeekDate || mondayDDMMYYYY;
+    const found = (targetDate && availableScheduleWeeks.find(w => w.value === targetDate || String(w.label || '').startsWith(targetDate))) ||
+                  availableScheduleWeeks.find(w => w.selected || String(w.label || '').toLowerCase().includes('текущ'));
+    if (found) {
+      const raw = String(found.label || found.value || '').trim();
+      const m = raw.match(/(\d{2}\.\d{2}\.\d{4})/);
+      const datePart = m ? m[1] : raw;
+      const lower = raw.toLowerCase();
+      let kind = '';
+      if (lower.includes('знам')) kind = 'знаменатель';
+      else if (lower.includes('числ')) kind = 'числитель';
+      return kind ? `${datePart} · ${kind}` : datePart;
+    }
+  }
+
+  if (mondayDDMMYYYY) {
+    return `${mondayDDMMYYYY} · знаменатель`;
+  }
+  return getDefaultAcademicWeekDisplay();
+}
+
+async function selectScheduleEntity(type, name, { switchMobileToDetail = true, weekDate = selectedScheduleWeekDate } = {}) {
   currentEntitySchedule = { type, name };
   scheduleDayFilter = 'all';
   if (switchMobileToDetail) scheduleMobileStep = 'detail';
@@ -3079,11 +3894,38 @@ async function selectScheduleEntity(type, name, { switchMobileToDetail = true } 
   renderScheduleWorkspace();
 
   try {
-    const res = await fetch(`/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}`);
+    const dateQuery = weekDate ? `&date=${encodeURIComponent(weekDate)}` : '';
+    const res = await fetch(`/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}${dateQuery}`);
     if (!res.ok) throw new Error('Расписание не найдено');
     const data = await res.json();
     currentEntityData = data;
     currentEntitySchedule = { type: data.entityType || type, name: data.name || name };
+    const entityKey = `${currentEntitySchedule.type}:${currentEntitySchedule.name}`;
+    if (Array.isArray(data.currentWeekDays) && data.currentWeekDays.length > 0) {
+      currentWeekStatusByEntityKey.set(entityKey, data.currentWeekDays);
+    } else if (data.isCurrentWeek !== false && Array.isArray(data.days) && data.days.length > 0) {
+      currentWeekStatusByEntityKey.set(entityKey, data.days);
+    }
+    if (Array.isArray(data.availableWeeks) && data.availableWeeks.length > 0) {
+      availableScheduleWeeks = data.availableWeeks;
+    }
+    if (data.selectedWeek && data.selectedWeek.value) {
+      selectedScheduleWeekDate = data.selectedWeek.value;
+    } else if (data.selectedWeekDate) {
+      selectedScheduleWeekDate = data.selectedWeekDate;
+    }
+    if (userProfile.telegramLinked) {
+      if (!userProfile.recentViews || typeof userProfile.recentViews !== 'object') {
+        userProfile.recentViews = {};
+      }
+      const prevEntry = userProfile.recentViews[entityKey];
+      const prevCount = (prevEntry && typeof prevEntry === 'object') ? (Number(prevEntry.count) || 0) : (Number(prevEntry) ? 1 : 0);
+      userProfile.recentViews[entityKey] = {
+        count: prevCount + 1,
+        lastViewedAt: Date.now()
+      };
+      syncUserProfileToServer({ recentViews: userProfile.recentViews });
+    }
     entityLoading = false;
     renderScheduleWorkspace();
     haptic('success');
@@ -3094,25 +3936,93 @@ async function selectScheduleEntity(type, name, { switchMobileToDetail = true } 
   }
 }
 
+function toggleScheduleFavorite(entityType, entityName) {
+  if (!userProfile.telegramLinked) return;
+  const key = `${entityType}:${entityName}`;
+  const favs = Array.isArray(userProfile.favorites) ? [...userProfile.favorites] : [];
+  const idx = favs.indexOf(key);
+  if (idx >= 0) {
+    favs.splice(idx, 1);
+  } else {
+    favs.unshift(key);
+  }
+  userProfile.favorites = favs;
+  syncUserProfileToServer({ favorites: favs });
+  const view = document.getElementById('schedule-view');
+  if (view) updateScheduleSidebarListInPlace(view);
+}
+
 function buildScheduleSidebarData() {
   const q = directoryFilterQuery.toLowerCase().replace(/ё/g, 'е').trim();
-  const filteredGroups = scheduleDirectory.groups.filter(g =>
-    !q || `${g.name} ${g.faculty || ''}`.toLowerCase().replace(/ё/g, 'е').includes(q)
-  );
-  const filteredLecturers = scheduleDirectory.lecturers.filter(l =>
-    !q || `${l.name} ${l.shortName} ${l.fullName || ''} ${l.regalia || ''}`.toLowerCase().replace(/ё/g, 'е').includes(q)
-  );
+  const isLinked = Boolean(userProfile.telegramLinked);
+  const favSet = new Set(isLinked && Array.isArray(userProfile.favorites) ? userProfile.favorites : []);
+  const recentMap = (isLinked && userProfile.recentViews && typeof userProfile.recentViews === 'object')
+    ? userProfile.recentViews
+    : {};
 
-  const listItems = directoryActiveTab === 'groups' ? filteredGroups : filteredLecturers;
+  const getRecentScore = (key) => {
+    if (!isLinked) return { count: 0, lastViewedAt: 0 };
+    const val = recentMap[key];
+    if (!val) return { count: 0, lastViewedAt: 0 };
+    if (typeof val === 'number') return { count: 1, lastViewedAt: val };
+    return {
+      count: Number(val.count) || 0,
+      lastViewedAt: Number(val.lastViewedAt) || 0
+    };
+  };
+
+  const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
+  const matchedGroups = scheduleDirectory.groups
+    .filter(g => !q || `${g.name} группа ${g.faculty || ''} ${g.facultyCode || ''}`.toLowerCase().replace(/ё/g, 'е').includes(q))
+    .map(g => ({ ...g, itemType: 'group' }));
+
+  const matchedLecturers = scheduleDirectory.lecturers
+    .filter(l => !q || `${l.name} ${l.shortName || ''} ${l.fullName || ''} ${l.regalia || ''}`.toLowerCase().replace(/ё/g, 'е').includes(q))
+    .map(l => ({ ...l, itemType: 'lecturer' }));
+
+  const unifiedItems = [...matchedGroups, ...matchedLecturers].sort((a, b) => {
+    const kA = `${a.itemType}:${a.name}`;
+    const kB = `${b.itemType}:${b.name}`;
+
+    if (isLinked) {
+      const fA = favSet.has(kA) ? 1 : 0;
+      const fB = favSet.has(kB) ? 1 : 0;
+      if (fA !== fB) return fB - fA;
+
+      const rA = getRecentScore(kA);
+      const rB = getRecentScore(kB);
+      if (rA.count !== rB.count) return rB.count - rA.count;
+      if (rA.lastViewedAt !== rB.lastViewedAt) return rB.lastViewedAt - rA.lastViewedAt;
+    }
+
+    if (q) {
+      const aLabel = (a.itemType === 'group' ? a.name : (a.fullName || a.name)).toLowerCase().replace(/ё/g, 'е');
+      const bLabel = (b.itemType === 'group' ? b.name : (b.fullName || b.name)).toLowerCase().replace(/ё/g, 'е');
+      const aStarts = aLabel.startsWith(q) ? 1 : 0;
+      const bStarts = bLabel.startsWith(q) ? 1 : 0;
+      if (aStarts !== bStarts) return bStarts - aStarts;
+    }
+
+    if (a.itemType !== b.itemType) {
+      return a.itemType === 'group' ? -1 : 1;
+    }
+
+    const labelA = a.itemType === 'group' ? a.name : (a.fullName || a.name);
+    const labelB = b.itemType === 'group' ? b.name : (b.fullName || b.name);
+    return collator.compare(labelA, labelB);
+  });
+
   let sidebarListHtml = '';
 
   if (!scheduleDirectory.ready) {
     sidebarListHtml = `<div class="free-warming"><div class="spinner"></div><div>Загружаем справочник расписания…</div></div>`;
-  } else if (listItems.length === 0) {
+  } else if (unifiedItems.length === 0) {
     sidebarListHtml = `<div class="free-panel-empty">Ничего не найдено по запросу «${escapeHtml(directoryFilterQuery)}»</div>`;
   } else {
-    sidebarListHtml = listItems.map(item => {
-      const itemType = directoryActiveTab === 'groups' ? 'group' : 'lecturer';
+    sidebarListHtml = unifiedItems.map(item => {
+      const itemType = item.itemType;
+      const entityKey = `${itemType}:${item.name}`;
+      const isFav = isLinked && favSet.has(entityKey);
       const isActive = currentEntitySchedule &&
         currentEntitySchedule.type === itemType &&
         currentEntitySchedule.name === item.name;
@@ -3120,27 +4030,41 @@ function buildScheduleSidebarData() {
         ? `Группа ${item.name}`
         : (item.fullName || item.shortName || item.name);
       const subText = itemType === 'group'
-        ? (item.faculty || '')
+        ? (item.facultyCode || item.faculty || '')
         : (item.regalia || '');
       return `
-        <button type="button" class="sched-dir-item ${isActive ? 'active' : ''}" data-entity-type="${itemType}" data-entity-name="${escapeHtml(item.name)}">
+        <div class="sched-dir-item ${isActive ? 'active' : ''}" role="button" tabindex="0" data-entity-type="${itemType}" data-entity-name="${escapeHtml(item.name)}">
           <div class="sched-dir-main">
             <div class="sched-dir-title">${escapeHtml(titleText)}</div>
             ${subText ? `<div class="sched-dir-sub">${escapeHtml(subText)}</div>` : ''}
           </div>
-          <i class="mdi mdi-chevron-right sched-dir-arrow"></i>
-        </button>
+          <div class="sched-dir-right">
+            ${isLinked ? `
+              <button type="button" class="sched-fav-btn ${isFav ? 'active' : ''}" data-fav-type="${itemType}" data-fav-name="${escapeHtml(item.name)}" title="${isFav ? 'Убрать из избранного' : 'В избранное'}" aria-label="Избранное">
+                <i class="mdi ${isFav ? 'mdi-star' : 'mdi-star-outline'}"></i>
+              </button>
+            ` : ''}
+            <i class="mdi mdi-chevron-right sched-dir-arrow"></i>
+          </div>
+        </div>
       `;
     }).join('');
   }
 
-  return { filteredGroups, filteredLecturers, sidebarListHtml };
+  return { filteredGroups: matchedGroups, filteredLecturers: matchedLecturers, sidebarListHtml };
 }
 
 function attachScheduleSidebarItemListeners(container) {
   if (!container) return;
+  container.querySelectorAll('.sched-fav-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleScheduleFavorite(btn.dataset.favType, btn.dataset.favName);
+    });
+  });
   container.querySelectorAll('.sched-dir-item').forEach(item => {
-    item.addEventListener('click', () => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.sched-fav-btn')) return;
       selectScheduleEntity(item.dataset.entityType, item.dataset.entityName, { switchMobileToDetail: true });
     });
   });
@@ -3148,17 +4072,12 @@ function attachScheduleSidebarItemListeners(container) {
 
 // Обновление списка без пересоздания <input id="sched-view-search"> (исправляет сброс цифровой клавиатуры на iOS/iPhone)
 function updateScheduleSidebarListInPlace(view) {
-  const { filteredGroups, filteredLecturers, sidebarListHtml } = buildScheduleSidebarData();
+  const { sidebarListHtml } = buildScheduleSidebarData();
   const listEl = view.querySelector('#schedule-sidebar-list');
   if (listEl) {
     listEl.innerHTML = sidebarListHtml;
     attachScheduleSidebarItemListeners(listEl);
   }
-  const groupCountEl = view.querySelector('.sched-tab[data-tab="groups"] .sched-tab-count');
-  const lecCountEl = view.querySelector('.sched-tab[data-tab="lecturers"] .sched-tab-count');
-  if (groupCountEl) groupCountEl.textContent = String(filteredGroups.length);
-  if (lecCountEl) lecCountEl.textContent = String(filteredLecturers.length);
-
   const clearBtn = view.querySelector('#sched-view-clear');
   if (clearBtn) {
     clearBtn.classList.toggle('hidden', !directoryFilterQuery);
@@ -3171,33 +4090,48 @@ function renderScheduleWorkspace() {
 
   view.dataset.mobileStep = scheduleMobileStep;
 
-  const { filteredGroups, filteredLecturers, sidebarListHtml } = buildScheduleSidebarData();
+  const { sidebarListHtml } = buildScheduleSidebarData();
   const mainHtml = renderScheduleMainPane();
+
+  const weekTriggerLabel = getCurrentWeekTriggerLabel();
+  const weekOptionsHtml = (availableScheduleWeeks.length > 0 ? availableScheduleWeeks : [
+    { value: '', label: weekTriggerLabel, selected: true }
+  ]).map(w => {
+    const isSelected = selectedScheduleWeekDate
+      ? w.value === selectedScheduleWeekDate
+      : Boolean(w.selected);
+    const isCurrentWeek = String(w.label || '').toLowerCase().includes('текущ');
+    return `
+      <button type="button" class="schedule-week-option ${isSelected ? 'active' : ''}" data-week-val="${escapeHtml(w.value || '')}">
+        <span>${escapeHtml(w.label || w.value)}</span>
+        ${isCurrentWeek ? '<span class="schedule-week-option-tag">текущая</span>' : ''}
+      </button>
+    `;
+  }).join('');
 
   view.innerHTML = `
     <div class="schedule-workspace ${scheduleSidebarCollapsed ? 'sidebar-collapsed' : ''}">
       <div class="schedule-sidebar-wrap">
         <aside class="schedule-sidebar ${scheduleSidebarCollapsed ? 'collapsed' : ''}" id="schedule-sidebar">
           <div class="schedule-sidebar-top">
+            <div class="schedule-week-picker-row">
+              <button type="button" class="schedule-week-trigger ${scheduleWeekDropdownOpen ? 'open' : ''}" id="schedule-week-trigger" title="Выбрать учебную неделю">
+                <span>${escapeHtml(weekTriggerLabel)}</span>
+                <i class="mdi mdi-chevron-down"></i>
+              </button>
+              <div class="schedule-week-dropdown ${scheduleWeekDropdownOpen ? '' : 'hidden'}" id="schedule-week-dropdown">
+                ${weekOptionsHtml}
+              </div>
+            </div>
             <div class="schedule-sidebar-title-row">
               <h2 class="schedule-sidebar-heading">Расписание</h2>
             </div>
 
-            <div class="sched-tabs">
-              <button type="button" class="sched-tab ${directoryActiveTab === 'groups' ? 'active' : ''}" data-tab="groups">
-                <span>Группы</span>
-                <span class="sched-tab-count">${filteredGroups.length}</span>
-              </button>
-              <button type="button" class="sched-tab ${directoryActiveTab === 'lecturers' ? 'active' : ''}" data-tab="lecturers">
-                <span>Преподаватели</span>
-                <span class="sched-tab-count">${filteredLecturers.length}</span>
-              </button>
-            </div>
-
+            <div class="sched-filter-caption">Можно вводить номер группы или фамилию преподавателя</div>
             <div class="sched-filter-wrap">
               <i class="mdi mdi-magnify sched-filter-icon"></i>
               <input type="text" class="sched-filter-input" id="sched-view-search"
-                     placeholder="${directoryActiveTab === 'groups' ? 'Поиск группы (например, 445 или 546М)…' : 'Поиск преподавателя (например, Устюков)…'}"
+                     placeholder="Например: 546 или Скворцов…"
                      value="${escapeHtml(directoryFilterQuery)}" autocomplete="off">
               <button type="button" class="input-clear-btn ${directoryFilterQuery ? '' : 'hidden'}" id="sched-view-clear" title="Очистить поиск" aria-label="Очистить поиск">
                 <i class="mdi mdi-close"></i>
@@ -3221,17 +4155,8 @@ function renderScheduleWorkspace() {
   `;
 
   attachScheduleWorkspaceListeners(view);
+  scrollScheduleTableToToday(view);
 }
-
-const STANDARD_TIME_SLOTS = [
-  '08:10–09:45',
-  '09:55–11:30',
-  '11:40–13:15',
-  '13:35–15:10',
-  '15:20–16:55',
-  '17:05–18:40',
-  '18:45–20:10'
-];
 
 function renderScheduleMainPane() {
   if (entityLoading) {
@@ -3268,106 +4193,37 @@ function renderScheduleMainPane() {
   const data = currentEntityData;
   const isGroup = data.entityType === 'group';
   const title = isGroup ? `Группа ${data.name}` : (data.fullName || data.shortName || data.name);
-  const kickerText = isGroup ? (data.faculty || '') : (data.regalia || '');
+  const kickerText = isGroup ? (data.facultyCode || data.faculty || '') : (data.regalia || '');
 
-  const st = data.nowStatus || { type: 'free', title: 'Сейчас пар нет', details: '' };
+  const st = computeClientEntityNowStatus(data);
   const statusCardHtml = `
-    <div class="now-status ${st.type === 'busy' ? 'busy' : 'free'} schedule-hero-status" ${st.roomId ? `data-room-id="${escapeHtml(st.roomId)}" style="cursor:pointer" title="Показать аудиторию на карте"` : ''}>
+    <div class="now-status ${st.type === 'busy' ? 'busy' : 'free'} schedule-hero-status" ${st.roomId ? `data-room-id="${escapeHtml(st.roomId)}" style="cursor:pointer" title="Открыть расписание аудитории на карте"` : ''}>
       <div class="now-dot"></div>
       <div class="now-body">
         <div class="now-title">${escapeHtml(st.title)}</div>
-        <div class="now-details">${escapeHtml(st.details)}</div>
+        ${st.details ? `<div class="now-details">${escapeHtml(st.details)}</div>` : ''}
       </div>
-      ${st.roomId ? `<span class="schedule-status-map-link"><i class="mdi mdi-map-marker-radius-outline"></i></span>` : ''}
+      ${st.roomId ? `<span class="schedule-status-map-link" title="Открыть на карте"><i class="mdi mdi-map-marker-radius-outline"></i><span>На карте</span></span>` : ''}
     </div>
   `;
 
-  const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const todayISO = `${yyyy}-${mm}-${dd}`;
+  const toolbarHtml = `
+    <div class="schedule-toolbar-row">
+      ${isGroup ? `
+        <button type="button" class="schedule-action-chip" id="schedule-cheatsheet-btn" title="Шпаргалка: дисциплины и преподаватели группы">
+          <i class="mdi mdi-notebook-outline"></i>
+          <span>Шпаргалка</span>
+        </button>
+      ` : ''}
+      <button type="button" class="schedule-action-chip" id="schedule-export-png-btn" title="Скачать расписание картинкой PNG">
+        <i class="mdi mdi-image-outline"></i>
+        <span>Скачать PNG</span>
+      </button>
+    </div>
+  `;
 
   const days = data.days || [];
-
-  // Собираем все временные слоты (стандартные + любые нестандартные из расписания)
-  const slotSet = new Set(STANDARD_TIME_SLOTS);
-  days.forEach(d => {
-    (d.lessons || []).forEach(l => {
-      if (l.time) slotSet.add(l.time.replace('-', '–'));
-    });
-  });
-  const allSlots = [...slotSet].sort((a, b) => a.localeCompare(b));
-
-  const headColsHtml = days.map(day => {
-    const isToday = day.date === todayISO;
-    const [, mStr, dStr] = (day.date || '').split('-');
-    const dateLabel = dStr && mStr ? `${parseInt(dStr, 10)} ${MONTH_NAMES[parseInt(mStr, 10) - 1] || ''}` : '';
-    return `
-      <th class="${isToday ? 'today-col' : ''}">
-        <div class="th-day-top">
-          <span class="th-day-name">${escapeHtml(day.dayName)}</span>
-          ${isToday ? '<span class="th-today-badge">Сегодня</span>' : ''}
-        </div>
-        <span class="th-day-date">${escapeHtml(dateLabel)}</span>
-      </th>
-    `;
-  }).join('');
-
-  const rowsHtml = allSlots.map((slot, slotIdx) => {
-    const mStart = slot.match(/^(\d{1,2}:\d{2})/);
-    const breakRange = mStart && BREAKS[mStart[1]] ? BREAKS[mStart[1]] : '';
-    const pairLabel = `${slotIdx + 1} пара`;
-
-    const cellsHtml = days.map(day => {
-      const isToday = day.date === todayISO;
-      const matching = (day.lessons || []).filter(l => (l.time || '').replace('-', '–') === slot);
-
-      if (matching.length === 0) {
-        return `<td class="slot-col empty-col ${isToday ? 'today-col' : ''}"><span class="wt-empty-dash">·</span></td>`;
-      }
-
-      const itemsHtml = matching.map(l => {
-        let badgeHtml = '';
-        if (l.type && LESSON_TYPES[l.type]) {
-          const t = LESSON_TYPES[l.type];
-          badgeHtml = `<span class="badge ${t.cls}"><i class="mdi ${t.icon}"></i>${l.type}</span>`;
-        } else if (l.type) {
-          badgeHtml = `<span class="badge pr">${escapeHtml(l.type)}</span>`;
-        }
-
-        const entityHtml = isGroup
-          ? formatInteractiveGroupAndLecturerHtml('', l.lecturer)
-          : formatInteractiveGroupAndLecturerHtml(l.group, '');
-
-        const roomLinkHtml = `ауд. <button type="button" class="wt-room-link" data-room-id="${escapeHtml(l.roomId)}" title="Показать аудиторию ${escapeHtml(l.roomShort)} (${l.floor} этаж) на карте">${escapeHtml(l.roomShort)} С</button>`;
-
-        const detailsLine = entityHtml
-          ? `${entityHtml}, ${roomLinkHtml}`
-          : roomLinkHtml;
-
-        return `
-          <div class="wt-cell-item">
-            <div class="wt-cell-main">${badgeHtml}<span class="wt-cell-subject">${escapeHtml(l.subject)},</span></div>
-            <div class="wt-cell-details">${detailsLine}</div>
-          </div>
-        `;
-      }).join('');
-
-      return `<td class="slot-col ${isToday ? 'today-col' : ''}">${itemsHtml}</td>`;
-    }).join('');
-
-    return `
-      <tr>
-        <td class="time-col">
-          <span class="wt-pair-num">${pairLabel}</span>
-          <div class="wt-time-range">${escapeHtml(slot)}</div>
-          ${breakRange ? `<div class="wt-time-break">перерыв<br>${escapeHtml(breakRange)}</div>` : ''}
-        </td>
-        ${cellsHtml}
-      </tr>
-    `;
-  }).join('');
+  const tableHtml = buildWeeklyScheduleTableHtml(days, { mode: isGroup ? 'group' : 'lecturer' });
 
   return `
     <div class="schedule-main-header">
@@ -3375,35 +4231,396 @@ function renderScheduleMainPane() {
         <div class="schedule-hero-title-block">
           ${kickerText ? `<div class="schedule-entity-kicker">${escapeHtml(kickerText)}</div>` : ''}
           <h1 class="schedule-entity-title">
-            <span>${escapeHtml(title)}</span>
-            <i class="mdi mdi-link-variant share-icon schedule-share-icon" id="schedule-share-btn" role="button" tabindex="0" title="Скопировать прямую ссылку на расписание" aria-label="Скопировать прямую ссылку на расписание"></i>
+            <span class="schedule-entity-title-text">${escapeHtml(title)}</span><button type="button" class="share-icon schedule-share-icon" id="schedule-share-btn" title="Скопировать прямую ссылку на расписание" aria-label="Скопировать прямую ссылку на расписание"><i class="mdi mdi-link-variant"></i></button>
           </h1>
         </div>
-        <button type="button" class="schedule-back-arrow-btn" id="sched-mobile-back" title="К списку" aria-label="К списку">
-          <i class="mdi mdi-chevron-left"></i>
-        </button>
+        <div class="schedule-header-actions">
+          <button type="button" class="schedule-back-arrow-btn" id="sched-mobile-back" title="К списку" aria-label="К списку">
+            <i class="mdi mdi-chevron-left"></i>
+          </button>
+        </div>
       </div>
 
       ${statusCardHtml}
     </div>
 
-    <div class="weekly-table-wrap">
-      <table class="weekly-schedule-table">
-        <thead>
-          <tr>
-            <th class="time-col">Время</th>
-            ${headColsHtml}
-          </tr>
-        </thead>
-        <tbody>
-          ${rowsHtml}
-        </tbody>
-      </table>
-    </div>
+    ${toolbarHtml}
+
+    ${tableHtml}
   `;
 }
 
+function renderLessonTypeBadgeHtml(typeStr) {
+  const t = LESSON_TYPES[typeStr];
+  if (t) {
+    return `<span class="badge ${t.cls}"><i class="mdi ${t.icon}"></i>${escapeHtml(typeStr)}</span>`;
+  }
+  return `<span class="badge pr">${escapeHtml(typeStr || 'Занятие')}</span>`;
+}
+
+function openCheatSheetModal() {
+  const modal = document.getElementById('cheatsheet-modal-backdrop');
+  if (!modal || !currentEntityData) return;
+  const list = Array.isArray(currentEntityData.cheatSheet) ? currentEntityData.cheatSheet : [];
+
+  const renderLecturerInteractive = (lec) => {
+    const display = lec.displayTitle || lec.display || lec.fullFio || lec.fullName || lec.shortName || '';
+    const lookup = lec.shortName || lec.fullFio || lec.fullName || '';
+    if (!lookup) return escapeHtml(display);
+    return `<button type="button" class="cheatsheet-lecturer-inline" data-cs-lecturer="${escapeHtml(lookup)}">${escapeHtml(display)}</button>`;
+  };
+
+  let bodyHtml = '';
+  if (list.length === 0) {
+    bodyHtml = `<div class="free-panel-empty">На выбранной неделе дисциплины и преподаватели не указаны</div>`;
+  } else {
+    const trsHtml = list.map((item) => {
+      const subjectFull = String(item.subject || item.headerLabel || 'Дисциплина').replace(/:+$/, '');
+      const rows = Array.isArray(item.rows) ? item.rows : [];
+      const rowsHtml = rows.map(row => {
+        const badgesHtml = (row.types || []).map(renderLessonTypeBadgeHtml).join(' ');
+        const lecsHtml = Array.isArray(row.lecturers) && row.lecturers.length > 0
+          ? row.lecturers.map(renderLecturerInteractive).join(' и ')
+          : escapeHtml(row.text || 'преподаватель не указан');
+        return `
+          <div class="cheatsheet-table-row-item">
+            <div class="cheatsheet-table-badges">${badgesHtml}</div>
+            <div class="cheatsheet-table-lecturers">${lecsHtml}</div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <tr>
+          <td class="cs-col-subject">${escapeHtml(subjectFull)}</td>
+          <td class="cs-col-details">${rowsHtml}</td>
+        </tr>
+      `;
+    }).join('');
+
+    bodyHtml = `
+      <div class="cheatsheet-table-wrap">
+        <table class="cheatsheet-table">
+          <thead>
+            <tr>
+              <th class="cs-col-subject">Дисциплина</th>
+              <th class="cs-col-details">Вид занятий и преподаватели</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${trsHtml}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  modal.innerHTML = `
+    <div class="cheatsheet-modal-card">
+      <div class="cheatsheet-modal-header">
+        <div class="cheatsheet-modal-title">
+          <i class="mdi mdi-notebook-outline"></i>
+          <span>Шпаргалка · Группа ${escapeHtml(currentEntityData.name)}</span>
+        </div>
+        <div class="cheatsheet-modal-header-actions">
+          ${list.length > 0 ? `
+            <button type="button" class="schedule-action-chip" id="cheatsheet-export-png-btn" title="Скачать шпаргалку картинкой PNG">
+              <i class="mdi mdi-image-outline"></i>
+              <span>PNG</span>
+            </button>
+          ` : ''}
+          <button type="button" class="cheatsheet-modal-close" id="cheatsheet-modal-close" aria-label="Закрыть">✕</button>
+        </div>
+      </div>
+      <div class="cheatsheet-modal-body">${bodyHtml}</div>
+    </div>
+  `;
+  modal.classList.remove('hidden');
+
+  modal.querySelector('#cheatsheet-modal-close')?.addEventListener('click', () => {
+    modal.classList.add('hidden');
+  });
+  modal.querySelector('#cheatsheet-export-png-btn')?.addEventListener('click', () => {
+    exportCheatSheetToPng();
+  });
+  modal.onclick = (e) => {
+    if (e.target === modal) modal.classList.add('hidden');
+  };
+  modal.querySelectorAll('[data-cs-lecturer]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const lec = btn.dataset.csLecturer;
+      modal.classList.add('hidden');
+      if (lec) selectScheduleEntity('lecturer', lec, { switchMobileToDetail: true });
+    });
+  });
+}
+
+function exportCheatSheetToPng() {
+  if (!currentEntityData) return;
+  const list = Array.isArray(currentEntityData.cheatSheet) ? currentEntityData.cheatSheet : [];
+  if (!list.length) return;
+
+  const isDark = document.documentElement.dataset.theme === 'dark';
+  const bg = isDark ? '#1e222d' : '#ffffff';
+  const cardBg = isDark ? '#252a37' : '#f8fafc';
+  const textMain = isDark ? '#f1f5f9' : '#0f172a';
+  const textMuted = isDark ? '#94a3b8' : '#64748b';
+  const borderCol = isDark ? '#333b4d' : '#e2e8f0';
+
+  const badgeColors = {
+    'Лек.': { bg: '#e4ffe8', text: '#1b952d' },
+    'Упр.': { bg: '#eff7fd', text: '#4386bb' },
+    'Лаб.': { bg: '#fbf0fe', text: '#c05fdd' }
+  };
+
+  const W = 920;
+  const subjColW = 310;
+  const padX = 24;
+  const tableTop = 84;
+  const headerH = 40;
+
+  const rowHeights = list.map(item => {
+    const rowsCount = Math.max(1, (item.rows || []).length);
+    return Math.max(54, rowsCount * 32 + 18);
+  });
+  const totalTableH = headerH + rowHeights.reduce((a, b) => a + b, 0);
+  const H = tableTop + totalTableH + 28;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W * 2;
+  canvas.height = H * 2;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(2, 2);
+
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = textMain;
+  ctx.font = 'bold 20px Onest, sans-serif';
+  ctx.fillText(`Шпаргалка · Группа ${currentEntityData.name}`, padX, 38);
+
+  ctx.fillStyle = textMuted;
+  ctx.font = '500 13px Onest, sans-serif';
+  ctx.fillText(`${getCurrentWeekTriggerLabel()} · Карта РГРТУ`, padX, 60);
+
+  ctx.fillStyle = cardBg;
+  ctx.fillRect(padX, tableTop, W - padX * 2, headerH);
+
+  ctx.strokeStyle = borderCol;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(padX, tableTop, W - padX * 2, totalTableH);
+
+  ctx.fillStyle = textMuted;
+  ctx.font = 'bold 12px Onest, sans-serif';
+  ctx.fillText('ДИСЦИПЛИНА', padX + 14, tableTop + 25);
+  ctx.fillText('ВИД ЗАНЯТИЙ И ПРЕПОДАВАТЕЛИ', padX + subjColW + 14, tableTop + 25);
+
+  ctx.beginPath();
+  ctx.moveTo(padX + subjColW, tableTop);
+  ctx.lineTo(padX + subjColW, tableTop + totalTableH);
+  ctx.stroke();
+
+  let curY = tableTop + headerH;
+  list.forEach((item, idx) => {
+    const rH = rowHeights[idx];
+    ctx.beginPath();
+    ctx.moveTo(padX, curY);
+    ctx.lineTo(W - padX, curY);
+    ctx.stroke();
+
+    ctx.fillStyle = textMain;
+    ctx.font = '600 13px Onest, sans-serif';
+    const subj = String(item.subject || item.headerLabel || '').replace(/:+$/, '');
+    const subjLines = [];
+    const words = subj.split(' ');
+    let line = '';
+    for (const w of words) {
+      const test = line ? `${line} ${w}` : w;
+      if (test.length > 34 && line) {
+        subjLines.push(line);
+        line = w;
+      } else {
+        line = test;
+      }
+    }
+    if (line) subjLines.push(line);
+    subjLines.slice(0, 3).forEach((ln, lIdx) => {
+      ctx.fillText(ln, padX + 14, curY + 24 + lIdx * 17);
+    });
+
+    const rows = Array.isArray(item.rows) ? item.rows : [];
+    rows.forEach((row, rIdx) => {
+      const ry = curY + 14 + rIdx * 30;
+      let bx = padX + subjColW + 14;
+      (row.types || []).forEach(t => {
+        const pal = badgeColors[t] || badgeColors['Упр.'];
+        const bw = 44;
+        const bh = 20;
+        ctx.fillStyle = pal.bg;
+        ctx.beginPath();
+        ctx.roundRect(bx, ry, bw, bh, 6);
+        ctx.fill();
+        ctx.fillStyle = pal.text;
+        ctx.font = 'bold 11px Onest, sans-serif';
+        ctx.fillText(t, bx + 8, ry + 14);
+        bx += bw + 6;
+      });
+
+      ctx.fillStyle = textMain;
+      ctx.font = '500 12.5px Onest, sans-serif';
+      const lecStr = String(row.text || '').slice(0, 68);
+      ctx.fillText(lecStr, bx + 4, ry + 14);
+    });
+
+    curY += rH;
+  });
+
+  const link = document.createElement('a');
+  link.download = `cheatsheet-${currentEntityData.name}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+  showToast('Шпаргалка сохранена в PNG');
+}
+
+function exportScheduleToPng() {
+  if (!currentEntityData) return;
+  const isDark = document.documentElement.dataset.theme === 'dark';
+  const bg = isDark ? '#1e222d' : '#ffffff';
+  const cardBg = isDark ? '#252a37' : '#f8fafc';
+  const textMain = isDark ? '#f1f5f9' : '#0f172a';
+  const textMuted = isDark ? '#94a3b8' : '#64748b';
+  const borderCol = isDark ? '#333b4d' : '#e2e8f0';
+
+  const days = currentEntityData.days || [];
+  const slots = STANDARD_TIME_SLOTS;
+  const colW = 220;
+  const timeW = 96;
+  const rowH = 92;
+  const headH = 90;
+  const W = timeW + days.length * colW + 40;
+  const H = headH + 46 + slots.length * rowH + 30;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W * 2;
+  canvas.height = H * 2;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(2, 2);
+
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const title = currentEntityData.entityType === 'group'
+    ? `Группа ${currentEntityData.name}`
+    : (currentEntityData.fullName || currentEntityData.name);
+  ctx.fillStyle = textMain;
+  ctx.font = 'bold 20px Onest, sans-serif';
+  ctx.fillText(title, 20, 36);
+
+  ctx.fillStyle = textMuted;
+  ctx.font = '500 13px Onest, sans-serif';
+  ctx.fillText(`${getCurrentWeekTriggerLabel()} · Карта РГРТУ`, 20, 58);
+
+  const tableTop = 76;
+  ctx.fillStyle = cardBg;
+  ctx.fillRect(20, tableTop, W - 40, 42);
+
+  ctx.strokeStyle = borderCol;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(20, tableTop, W - 40, 42 + slots.length * rowH);
+
+  ctx.fillStyle = textMuted;
+  ctx.font = 'bold 12px Onest, sans-serif';
+  ctx.fillText('Время', 28, tableTop + 25);
+
+  days.forEach((d, idx) => {
+    const x = 20 + timeW + idx * colW;
+    ctx.beginPath();
+    ctx.moveTo(x, tableTop);
+    ctx.lineTo(x, tableTop + 42 + slots.length * rowH);
+    ctx.stroke();
+    ctx.fillStyle = textMain;
+    ctx.font = 'bold 13px Onest, sans-serif';
+    ctx.fillText(d.dayName, x + 10, tableTop + 25);
+  });
+
+  slots.forEach((slot, sIdx) => {
+    const y = tableTop + 42 + sIdx * rowH;
+    ctx.beginPath();
+    ctx.moveTo(20, y);
+    ctx.lineTo(W - 20, y);
+    ctx.stroke();
+
+    ctx.fillStyle = textMain;
+    ctx.font = 'bold 12px Onest, sans-serif';
+    ctx.fillText(`${sIdx + 1} пара`, 28, y + 24);
+    ctx.fillStyle = textMuted;
+    ctx.font = '500 11px Onest, sans-serif';
+    ctx.fillText(slot, 28, y + 42);
+
+    days.forEach((d, dIdx) => {
+      const x = 20 + timeW + dIdx * colW;
+      const matching = (d.lessons || []).filter(l => (l.time || '').replace('-', '–') === slot);
+      matching.slice(0, 2).forEach((l, mIdx) => {
+        const ly = y + 18 + mIdx * 38;
+        ctx.fillStyle = textMain;
+        ctx.font = '600 11px Onest, sans-serif';
+        const subj = `${l.type ? l.type + ' ' : ''}${l.subject || ''}`.slice(0, 28);
+        ctx.fillText(subj, x + 8, ly);
+        ctx.fillStyle = textMuted;
+        ctx.font = '500 10px Onest, sans-serif';
+        const meta = [l.subgroup, l.lecturer || l.group, l.roomShort].filter(Boolean).join(', ').slice(0, 32);
+        ctx.fillText(meta, x + 8, ly + 14);
+      });
+    });
+  });
+
+  const link = document.createElement('a');
+  link.download = `schedule-${currentEntityData.name}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+  showToast('Расписание сохранено в PNG');
+}
+
 function attachScheduleWorkspaceListeners(view) {
+  const weekTrigger = view.querySelector('#schedule-week-trigger');
+  const weekDropdown = view.querySelector('#schedule-week-dropdown');
+  if (weekTrigger && weekDropdown) {
+    weekTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      scheduleWeekDropdownOpen = !scheduleWeekDropdownOpen;
+      weekTrigger.classList.toggle('open', scheduleWeekDropdownOpen);
+      weekDropdown.classList.toggle('hidden', !scheduleWeekDropdownOpen);
+    });
+    view.querySelectorAll('.schedule-week-option').forEach(opt => {
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nextWeek = opt.dataset.weekVal || '';
+        selectedScheduleWeekDate = nextWeek;
+        scheduleWeekDropdownOpen = false;
+        weekTrigger.classList.remove('open');
+        weekDropdown.classList.add('hidden');
+        if (currentEntitySchedule) {
+          selectScheduleEntity(currentEntitySchedule.type, currentEntitySchedule.name, {
+            switchMobileToDetail: false,
+            weekDate: nextWeek
+          });
+        } else {
+          renderScheduleWorkspace();
+        }
+      });
+    });
+  }
+
+  const csBtn = view.querySelector('#schedule-cheatsheet-btn');
+  if (csBtn) {
+    csBtn.addEventListener('click', openCheatSheetModal);
+  }
+
+  const pngBtn = view.querySelector('#schedule-export-png-btn');
+  if (pngBtn) {
+    pngBtn.addEventListener('click', exportScheduleToPng);
+  }
+
   const sidebarHandle = view.querySelector('#schedule-sidebar-handle');
   if (sidebarHandle) {
     sidebarHandle.addEventListener('click', () => {
@@ -3454,13 +4671,6 @@ function attachScheduleWorkspaceListeners(view) {
     });
   }
 
-  view.querySelectorAll('.sched-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      directoryActiveTab = btn.dataset.tab;
-      renderScheduleWorkspace();
-    });
-  });
-
   const searchInput = view.querySelector('#sched-view-search');
   const clearBtn = view.querySelector('#sched-view-clear');
   if (searchInput) {
@@ -3489,8 +4699,7 @@ function attachScheduleWorkspaceListeners(view) {
       e.stopPropagation();
       const roomId = el.dataset.roomId;
       if (roomId) {
-        closeScheduleView();
-        focusRoomFromAi(roomId);
+        navigateToRoom(roomId);
       }
     });
   });
@@ -3520,8 +4729,18 @@ function dijkstra(startId, endId) {
   if (!graph.nodes[startId] || !graph.nodes[endId]) return null;
   if (startId === endId) return [startId];
 
+  const isAllowed = (id) => {
+    if (id === startId || id === endId) return true;
+    const n = graph.nodes[id];
+    if (!n) return false;
+    if (!routeIncludeOutdoor && n.type === 'outdoor') return false;
+    return true;
+  };
+
   const adj = {};
-  for (const id of Object.keys(graph.nodes)) adj[id] = [];
+  for (const id of Object.keys(graph.nodes)) {
+    if (isAllowed(id)) adj[id] = [];
+  }
   for (const e of graph.edges) {
     if (adj[e.from] && adj[e.to]) {
       const weight = Number(e.weight) || 1;
@@ -3533,12 +4752,12 @@ function dijkstra(startId, endId) {
   const dist = {};
   const prev = {};
   const visited = new Set();
-  for (const id of Object.keys(graph.nodes)) dist[id] = Infinity;
+  for (const id of Object.keys(adj)) dist[id] = Infinity;
   dist[startId] = 0;
 
   while (true) {
     let u = null, minD = Infinity;
-    for (const id of Object.keys(graph.nodes)) {
+    for (const id of Object.keys(adj)) {
       if (!visited.has(id) && dist[id] < minD) {
         minD = dist[id];
         u = id;
@@ -3570,27 +4789,15 @@ function dijkstra(startId, endId) {
 }
 
 function getShapeCentroidSvg(id) {
+  if (roomSvgCentroids[id]) return roomSvgCentroids[id];
   const shapes = roomShapes[id];
   if (!shapes || !shapes.length) return null;
-  const mapRect = map.getContainer().getBoundingClientRect();
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  let anyValid = false;
-  for (const shape of shapes) {
-    const r = shape.getBoundingClientRect();
-    if (!r || (r.width === 0 && r.height === 0)) continue;
-    anyValid = true;
-    if (r.left   < minX) minX = r.left;
-    if (r.top    < minY) minY = r.top;
-    if (r.right  > maxX) maxX = r.right;
-    if (r.bottom > maxY) maxY = r.bottom;
+  const svgEl = currentOverlay ? currentOverlay.getElement() : null;
+  const centroid = computeRoomCentroidInSvg(svgEl, shapes);
+  if (centroid) {
+    roomSvgCentroids[id] = centroid;
   }
-  if (!anyValid) return null;
-
-  const cX = (minX + maxX) / 2 - mapRect.left;
-  const cY = (minY + maxY) / 2 - mapRect.top;
-  const latlng = map.containerPointToLatLng(L.point(cX, cY));
-  const { H } = currentSvgViewBox;
-  return { x: latlng.lng, y: H - latlng.lat };
+  return centroid;
 }
 
 async function fetchSvgCentroid(building, floor, roomId) {
@@ -3926,18 +5133,19 @@ function renderRoutePanel() {
   const fromValue = fromMeta ? formatRoomName(fromMeta.name) : '';
   const toValue = toMeta ? formatRoomName(toMeta.name) : '';
 
+  const shareIconHtml = `<i class="mdi mdi-link-variant share-icon" id="route-share-btn" title="Скопировать ссылку на маршрут"></i>`;
   const header = `
     <div class="panel-header">
       <button class="close" onclick="closeRoutePanel()" title="Закрыть и сбросить маршрут">✕</button>
       <div class="panel-crumbs">${BUILDINGS[currentBuilding]?.name || ''} · ${currentFloor} этаж</div>
-      <h2>Маршрут</h2>
+      <h2>Маршрут${shareIconHtml}</h2>
     </div>
   `;
 
   const fixed = `
     ${header}
     <div class="route-field">
-      <label>Откуда <span class="label-hint">${routePickSide === 'from' ? '← или ткните на карте' : ''}</span></label>
+      <label><span>Откуда</span> <span class="label-hint ${routePickSide === 'from' ? 'active' : ''}"><i class="mdi mdi-cursor-default-click-outline"></i> можно выбрать на карте</span></label>
       <div class="route-input-wrap">
         <input class="route-input has-clear ${fromValue ? 'filled' : ''}" id="route-from" placeholder="Аудитория, вход…" value="${escapeHtml(fromValue)}" autocomplete="off">
         <button type="button" class="input-clear-btn ${fromValue ? '' : 'hidden'}" id="route-from-clear" title="Очистить" aria-label="Очистить поле Откуда">
@@ -3947,7 +5155,7 @@ function renderRoutePanel() {
       </div>
     </div>
     <div class="route-field">
-      <label>Куда <span class="label-hint">${routePickSide === 'to' ? '← или ткните на карте' : ''}</span></label>
+      <label><span>Куда</span> <span class="label-hint ${routePickSide === 'to' ? 'active' : ''}"><i class="mdi mdi-cursor-default-click-outline"></i> можно выбрать на карте</span></label>
       <div class="route-input-wrap">
         <input class="route-input has-clear ${toValue ? 'filled' : ''}" id="route-to" placeholder="Аудитория, вход…" value="${escapeHtml(toValue)}" autocomplete="off">
         <button type="button" class="input-clear-btn ${toValue ? '' : 'hidden'}" id="route-to-clear" title="Очистить" aria-label="Очистить поле Куда">
@@ -3956,23 +5164,55 @@ function renderRoutePanel() {
         <ul class="route-results" id="route-to-results"></ul>
       </div>
     </div>
+    <div class="route-options-row">
+      <label class="route-outdoor-toggle" title="Разрешить построение маршрута через уличные переходы">
+        <input type="checkbox" id="route-outdoor-check" ${routeIncludeOutdoor ? 'checked' : ''}>
+        <span class="route-outdoor-check-ui" aria-hidden="true"><i class="mdi mdi-check"></i></span>
+        <span class="route-outdoor-label-text">Также через улицу</span>
+      </label>
+    </div>
   `;
 
-  let scroll = '';
-  if (routeState.path) {
-    scroll = renderRouteResult(routeState.path);
-  } else {
-    scroll = `
-      <div class="route-hint">
-        Выберите начальную и конечную точки в полях выше или просто кликните по нужным аудиториям на карте — маршрут построится автоматически.
-      </div>
-    `;
-  }
+  const scroll = routeState.path ? renderRouteResult(routeState.path) : '';
 
+  if (panel) {
+    panel.classList.toggle('mobile-compact', !routeState.path);
+  }
   panel.innerHTML = buildPanelLayout(fixed, scroll);
 
   setupRouteInput('from');
   setupRouteInput('to');
+
+  const outdoorCheck = panel.querySelector('#route-outdoor-check');
+  if (outdoorCheck) {
+    outdoorCheck.addEventListener('change', () => {
+      routeIncludeOutdoor = outdoorCheck.checked;
+      if (routeState.fromRoomId && routeState.toRoomId) {
+        onBuildRouteClick();
+      }
+    });
+  }
+
+  const shareRouteBtn = panel.querySelector('#route-share-btn');
+  if (shareRouteBtn) {
+    shareRouteBtn.addEventListener('click', async () => {
+      const url = new URL(location);
+      url.searchParams.delete('view');
+      url.searchParams.delete('room');
+      if (routeState.fromRoomId) url.searchParams.set('from', routeState.fromRoomId);
+      if (routeState.toRoomId) url.searchParams.set('to', routeState.toRoomId);
+      if (routeIncludeOutdoor) url.searchParams.set('outdoor', '1');
+      else url.searchParams.delete('outdoor');
+      try {
+        await navigator.clipboard.writeText(url.toString());
+        showToast('Ссылка на маршрут скопирована');
+        haptic('success');
+      } catch (e) {
+        history.replaceState({}, '', url);
+        showToast('Ссылка на маршрут обновлена');
+      }
+    });
+  }
 
   panel.querySelectorAll('.step-floor-link').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -3985,6 +5225,7 @@ function renderRoutePanel() {
     });
   });
 
+  applyMobileSheetSnapMeasurement(panel);
   updatePanelHandle();
 }
 
@@ -4026,8 +5267,8 @@ function setupRouteInput(side) {
     if (panel) panel.classList.remove('mobile-minimized');
     const labelFrom = document.querySelector('#route-from')?.closest('.route-field')?.querySelector('.label-hint');
     const labelTo = document.querySelector('#route-to')?.closest('.route-field')?.querySelector('.label-hint');
-    if (labelFrom) labelFrom.textContent = side === 'from' ? '← или ткните на карте' : '';
-    if (labelTo) labelTo.textContent = side === 'to' ? '← или ткните на карте' : '';
+    if (labelFrom) labelFrom.classList.toggle('active', side === 'from');
+    if (labelTo) labelTo.classList.toggle('active', side === 'to');
   });
 
   input.addEventListener('input', () => {
@@ -4330,10 +5571,154 @@ function setupHotkeys() {
   });
 }
 
+// ================ ВРАЩЕНИЕ КАРТЫ И УМНАЯ ПОДСКАЗКА ================
+
+function setMapBearing(deg, pivotContainerPt = null) {
+  const oldBearing = mapBearingDeg;
+  let nextBearing = ((deg % 360) + 360) % 360;
+  if (nextBearing > 180) nextBearing -= 360;
+  if (Math.abs(nextBearing) < 1.5) nextBearing = 0;
+
+  if (map && nextBearing !== oldBearing) {
+    const { W, H } = currentSvgViewBox;
+    const cLayer = map.latLngToLayerPoint(L.latLng((H || 1000) / 2, (W || 1000) / 2));
+    const size = map.getSize();
+    const camContainer = pivotContainerPt || L.point(size.x / 2, size.y / 2);
+    const sLayer = map.containerPointToLayerPoint(camContainer);
+    const vx = sLayer.x - cLayer.x;
+    const vy = sLayer.y - cLayer.y;
+    const dRad = ((nextBearing - oldBearing) * Math.PI) / 180;
+    const rvx = vx * Math.cos(dRad) - vy * Math.sin(dRad);
+    const rvy = vx * Math.sin(dRad) + vy * Math.cos(dRad);
+    const shiftX = rvx - vx;
+    const shiftY = rvy - vy;
+    mapBearingDeg = nextBearing;
+    if (Math.abs(shiftX) > 0.05 || Math.abs(shiftY) > 0.05) {
+      map.panBy([shiftX, shiftY], { animate: false, noMoveStart: true });
+    }
+  } else {
+    mapBearingDeg = nextBearing;
+  }
+
+  syncMapRotationTransform();
+  document.documentElement.style.setProperty('--map-counter-rotation', `${-mapBearingDeg}deg`);
+
+  const compassBtn = document.getElementById('map-compass-btn');
+  const compassIcon = document.getElementById('map-compass-icon');
+  if (compassBtn) {
+    compassBtn.classList.toggle('hidden', mapBearingDeg === 0);
+  }
+  if (compassIcon) {
+    compassIcon.style.transform = `rotate(${mapBearingDeg}deg)`;
+  }
+}
+
+function setupMapRotation() {
+  const mapEl = document.getElementById('map');
+  const compassBtn = document.getElementById('map-compass-btn');
+  if (!mapEl) return;
+
+  if (compassBtn) {
+    compassBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setMapBearing(0);
+    });
+  }
+
+  // Десктоп: Ctrl + зажатая кнопка мыши (вращение вокруг центра камеры)
+  let ctrlDrag = false;
+  let startX = 0;
+  let startBearing = 0;
+  mapEl.addEventListener('mousedown', (e) => {
+    if (!e.ctrlKey) return;
+    ctrlDrag = true;
+    startX = e.clientX;
+    startBearing = mapBearingDeg;
+    map.dragging.disable();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!ctrlDrag) return;
+    const dx = e.clientX - startX;
+    const size = map.getSize();
+    setMapBearing(startBearing + dx * 0.45, L.point(size.x / 2, size.y / 2));
+  });
+  window.addEventListener('mouseup', () => {
+    if (!ctrlDrag) return;
+    ctrlDrag = false;
+    map.dragging.enable();
+  });
+
+  // Мобильные: поворот двумя пальцами вокруг средней точки между пальцами (камеры)
+  let touchStartAngle = null;
+  let touchStartBearing = 0;
+  mapEl.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[1].clientX - e.touches[0].clientX;
+      const dy = e.touches[1].clientY - e.touches[0].clientY;
+      touchStartAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+      touchStartBearing = mapBearingDeg;
+    }
+  }, { passive: true });
+  mapEl.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2 && touchStartAngle !== null) {
+      const dx = e.touches[1].clientX - e.touches[0].clientX;
+      const dy = e.touches[1].clientY - e.touches[0].clientY;
+      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+      const delta = angle - touchStartAngle;
+      if (Math.abs(delta) > 3) {
+        const rect = mapEl.getBoundingClientRect();
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+        setMapBearing(touchStartBearing + delta, L.point(midX, midY));
+      }
+    }
+  }, { passive: true });
+  mapEl.addEventListener('touchend', () => {
+    touchStartAngle = null;
+  });
+}
+
+async function updateSmartNextClassPill() {
+  const pill = document.getElementById('smart-next-class-pill');
+  if (!pill) return;
+  if (!userProfile.targetName) {
+    pill.classList.add('hidden');
+    return;
+  }
+  try {
+    const type = userProfile.role === 'lecturer' ? 'lecturer' : 'group';
+    const res = await fetch(`/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(userProfile.targetName)}`);
+    if (!res.ok) {
+      pill.classList.add('hidden');
+      return;
+    }
+    const data = await res.json();
+    const st = computeClientEntityNowStatus(data);
+    if (!st || (!st.roomId && st.type === 'free' && !st.details)) {
+      pill.classList.add('hidden');
+      return;
+    }
+    pill.innerHTML = `<i class="mdi mdi-navigation-variant-outline"></i><span>${escapeHtml(st.title)}${st.details ? ': ' + escapeHtml(st.details) : ''}</span>`;
+    pill.classList.remove('hidden');
+    pill.onclick = () => {
+      if (st.roomId && roomsMeta[st.roomId]) {
+        navigateToRoom(st.roomId);
+      } else {
+        openEntitySchedule(type, userProfile.targetName);
+      }
+    };
+  } catch (e) {
+    pill.classList.add('hidden');
+  }
+}
+
 // ================ СТАРТ ================
 
 (async function init() {
   initTelegram();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
   roomsMeta = await fetch('data/rooms.json').then(r => r.json());
   await Promise.all([loadGraph(), loadScheduleDirectory()]);
 
@@ -4342,6 +5727,7 @@ function setupHotkeys() {
   createFloorSwitcher().addTo(map);
   setupPanelHandle();
   setupMobilePanelSheet();
+  setupMapRotation();
   setupHotkeys();
 
   const cornerTab = document.getElementById('schedule-corner-tab');
@@ -4355,15 +5741,34 @@ function setupHotkeys() {
     });
   }
 
+  document.addEventListener('click', (e) => {
+    if (scheduleWeekDropdownOpen && !e.target.closest('.schedule-week-picker-row')) {
+      scheduleWeekDropdownOpen = false;
+      const dd = document.getElementById('schedule-week-dropdown');
+      const tr = document.getElementById('schedule-week-trigger');
+      if (dd) dd.classList.add('hidden');
+      if (tr) tr.classList.remove('open');
+    }
+  });
+
   syncModeUI();
+  updateSmartNextClassPill();
 
   const params = new URLSearchParams(location.search);
   const viewParam = params.get('view');
   const entityTypeParam = params.get('type');
   const entityNameParam = params.get('name');
   const roomId = params.get('room');
+  const fromParam = params.get('from');
+  const toParam = params.get('to');
+  const outdoorParam = params.get('outdoor');
 
-  if (roomId && roomsMeta[roomId]) {
+  if (outdoorParam === '1') routeIncludeOutdoor = true;
+
+  if (fromParam && toParam && roomsMeta[fromParam] && roomsMeta[toParam]) {
+    await showFloor(roomsMeta[fromParam].building || 'C', roomsMeta[fromParam].floor ?? 1);
+    await executeRouteBetween(fromParam, toParam);
+  } else if (roomId && roomsMeta[roomId]) {
     isPoppingState = true;
     await navigateToRoom(roomId);
     isPoppingState = false;

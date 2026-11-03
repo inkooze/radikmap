@@ -159,7 +159,7 @@
   "C_archive_f1_161": { "name": "Архив (161)", "shortName": "161", "type": "archive", "building": "C", "floor": 1 },
   "C_archive_f1_161a": { "name": "Архив (161а)", "shortName": "161а", "type": "archive", "building": "C", "floor": 1 },
   "C_auditori_136": { "name": "Кафедра физвоспитания (136)", "shortName": "Физвосп.\n136", "type": "kafedra", "building": "C", "floor": 1, "classroom": null },
-  "C_gym_main": { "name": "Спортивный зал", "shortName": "🏀", "type": "gym", "building": "C", "floor": 1 },
+  "C_gym_main": { "name": "Спортивный зал", "shortName": "🏀", "type": "gym", "building": "C", "floor": 1, "classroom": "430" },
   "C_utility_f1_gym_l": { "name": "Служебное помещение", "shortName": null, "type": "utility", "building": "C", "floor": 1 },
   "C_utility_f1_gym_r": { "name": "Коморка Дедулечки", "shortName": null, "type": "utility", "building": "C", "floor": 1 },
   "C_wc_f1_l": { "name": "Женский туалет", "shortName": "🚾 (Ж)", "type": "wc", "building": "C", "floor": 1 },

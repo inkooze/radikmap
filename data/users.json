@@ -29,15 +29,10 @@
   },
   "authCodes": {},
   "authSessions": {
-    "e53a087242281ff90ad041048c27eed1": {
+    "17c0761c1be58ce203943297a8fff1cb": {
       "status": "pending",
       "userId": null,
-      "expiresAt": 1793641645825
-    },
-    "3c28b69090c1aea341bf860a61d35c1a": {
-      "status": "pending",
-      "userId": null,
-      "expiresAt": 1793641778822
+      "expiresAt": 1793725216767
     }
   }
 }

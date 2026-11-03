@@ -15,11 +15,13 @@
       document.documentElement.dataset.themePref = 'system';
     }
   </script>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Карта РГРТУ — Интерактивная навигация и расписание</title>
   <meta name="description" content="Интерактивная карта Главного корпуса РГРТУ: расписание аудиторий, свободные кабинеты, маршруты по этажам и умный ИИ-помощник.">
   <meta property="og:title" content="Карта РГРТУ — Интерактивная навигация и расписание">
   <meta property="og:description" content="Интерактивная карта Главного корпуса РГРТУ: расписание аудиторий, свободные кабинеты, маршруты по этажам и умный ИИ-помощник.">
+  <meta name="theme-color" content="#1e222d">
+  <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -33,7 +35,6 @@
   <button type="button" id="schedule-corner-tab" class="schedule-corner-tab" aria-label="Открыть расписание">
     <i class="mdi mdi-calendar-month-outline" id="schedule-corner-icon"></i>
     <span id="schedule-corner-label">Расписание</span>
-    <i class="mdi mdi-chevron-down schedule-corner-arrow" id="schedule-corner-arrow"></i>
   </button>
 
   <!-- Парящие островки в правом верхнем углу (поверх карты и поверх расписания) -->
@@ -93,12 +94,9 @@
       <div class="user-dropdown hidden" id="user-dropdown" role="dialog" aria-label="Профиль и настройки">
         <div class="user-dropdown-drag-pill" aria-hidden="true"></div>
         <div class="user-dropdown-header">
-          <div class="user-dropdown-avatar" id="user-dropdown-avatar">
-            <i class="mdi mdi-account"></i>
-          </div>
           <div class="user-dropdown-meta">
             <div class="user-dropdown-name" id="user-dropdown-name">Гость</div>
-            <div class="user-dropdown-sub" id="user-dropdown-sub">Войдите через Telegram для выбора своего расписания</div>
+            <div class="user-dropdown-sub" id="user-dropdown-sub">Войдите через Telegram для наиболее удобного взаимодействия!</div>
           </div>
           <button type="button" class="user-dropdown-close" id="user-dropdown-close" aria-label="Закрыть профиль" title="Закрыть">✕</button>
         </div>
@@ -129,6 +127,11 @@
             <i class="mdi mdi-calendar-check-outline"></i>
             <span id="user-open-schedule-text">Моё расписание</span>
           </button>
+
+          <button type="button" class="user-my-schedule-btn user-cheatsheet-btn hidden" id="user-open-cheatsheet-btn">
+            <i class="mdi mdi-notebook-outline"></i>
+            <span id="user-open-cheatsheet-text">Шпаргалка</span>
+          </button>
         </div>
 
         <div class="user-dropdown-section">
@@ -150,14 +153,10 @@
           <div class="user-dropdown-label">Telegram и уведомления</div>
 
           <div id="user-tg-unlinked" class="user-tg-box">
-            <p class="user-tg-hint">Привяжите Telegram, чтобы выбрать свою группу или ФИО и получать уведомления за 15 мин до пары:</p>
-            <a href="#" target="_blank" rel="noopener" class="user-tg-bot-link hidden" id="user-tg-deeplink">
-              <i class="mdi mdi-send"></i> Войти в 1 клик через Telegram
+            <p class="user-tg-hint">Привяжите Telegram в один клик, чтобы выбрать свою группу или ФИО, добавлять расписания в избранное и получать уведомления за 15 мин до пары:</p>
+            <a href="https://t.me/rgrtu_map_bot" target="_blank" rel="noopener" class="user-tg-bot-link" id="user-tg-deeplink">
+              <i class="mdi mdi-send"></i> Войти через Telegram
             </a>
-            <div class="user-tg-code-row">
-              <input type="text" id="user-tg-code-input" class="user-tg-code-input" placeholder="Код из /login или @username" autocomplete="off">
-              <button type="button" class="user-tg-code-btn" id="user-tg-code-submit">Войти</button>
-            </div>
             <div class="user-tg-feedback hidden" id="user-tg-feedback"></div>
           </div>
 
@@ -181,6 +180,10 @@
   <div id="app">
     <div id="map-wrap">
       <div id="map"></div>
+      <button type="button" id="smart-next-class-pill" class="smart-next-class-pill hidden" aria-label="Куда мне сейчас?"></button>
+      <button type="button" id="map-compass-btn" class="map-compass-btn hidden" title="Сбросить поворот карты" aria-label="Сбросить поворот карты">
+        <i class="mdi mdi-compass-outline" id="map-compass-icon"></i>
+      </button>
     </div>
     <aside id="panel"></aside>
     <section id="schedule-view" class="schedule-view" aria-label="Расписание групп и преподавателей" aria-hidden="true"></section>
@@ -189,6 +192,8 @@
   <button id="panel-handle" class="panel-handle hidden" title="Свернуть / развернуть">
     <i class="mdi mdi-chevron-right"></i>
   </button>
+
+  <div id="cheatsheet-modal-backdrop" class="cheatsheet-modal-backdrop hidden" role="dialog" aria-modal="true" aria-label="Шпаргалка группы"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="js/app.js"></script>

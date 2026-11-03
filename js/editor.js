@@ -291,6 +291,7 @@ function drawGraphForCurrentFloor() {
     const latlng = [H - node.y, node.x];
     const isStairs = node.type === 'stairs';
     const isEntrance = node.type === 'entrance';
+    const isOutdoor = node.type === 'outdoor';
     const isSelected = id === selectedNodeId;
 
     // Визуальный маркер
@@ -299,7 +300,7 @@ function drawGraphForCurrentFloor() {
       radius: 4,
       color: isSelected ? '#f59e0b' : '#ffffff',
       weight: isSelected ? 3 : 1.5,
-      fillColor: isStairs ? '#a855f7' : (isEntrance ? '#22c55e' : '#3b82f6'),
+      fillColor: isStairs ? '#a855f7' : (isEntrance ? '#22c55e' : (isOutdoor ? '#06b6d4' : '#3b82f6')),
       fillOpacity: 1,
       className: 'graph-node-marker',
       interactive: false
@@ -440,6 +441,10 @@ function showAddNodeModal(x, y) {
         <label class="radio-label">
           <input type="radio" name="node-type" value="entrance">
           Вход
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="node-type" value="outdoor">
+          Улица
         </label>
       </div>
     </div>
@@ -586,7 +591,15 @@ function showNodeInfo(id) {
 
   let html = `
     <p><strong>${id}</strong></p>
-    <p>Тип: <code>${node.type}</code></p>
+    <div class="stair-link-row" style="margin: 6px 0;">
+      <span>Тип узла</span>
+      <select id="node-info-type-select" class="node-type-select" aria-label="Тип узла">
+        <option value="corridor" ${node.type === 'corridor' ? 'selected' : ''}>Коридор</option>
+        <option value="stairs" ${node.type === 'stairs' ? 'selected' : ''}>Лестница</option>
+        <option value="entrance" ${node.type === 'entrance' ? 'selected' : ''}>Вход</option>
+        <option value="outdoor" ${node.type === 'outdoor' ? 'selected' : ''}>Улица</option>
+      </select>
+    </div>
     <p>Корпус: <code>${node.building}</code>, этаж: <code>${node.floor}</code></p>
     <p>Координаты: <code>${node.x}, ${node.y}</code></p>
     ${node.group ? `<p>Группа лестницы: <code style="color:var(--btn-flr-active)">${node.group}</code></p>` : ''}
@@ -617,6 +630,24 @@ function showNodeInfo(id) {
   }
 
   el.innerHTML = html;
+
+  const typeSelect = el.querySelector('#node-info-type-select');
+  if (typeSelect) {
+    typeSelect.addEventListener('change', () => {
+      const nextType = typeSelect.value;
+      node.type = nextType;
+      if (nextType === 'stairs' && !node.group) {
+        node.group = 'stairs_main';
+      } else if (nextType !== 'stairs') {
+        delete node.group;
+      }
+      markDirty();
+      drawGraphForCurrentFloor();
+      showNodeInfo(id);
+      showToast('Тип узла обновлён');
+    });
+  }
+
   bindWeightInputs(el);
 }
 
