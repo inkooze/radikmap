@@ -85,12 +85,14 @@ class UserStore {
       authSessions: {} // sessionToken -> { status: 'pending'|'verified', userId, expiresAt }
     };
     this._saveTimer = null;
+    this._lastMtime = 0;
     this.load();
   }
 
   load() {
     try {
       if (fs.existsSync(this.filePath)) {
+        const stat = fs.statSync(this.filePath);
         const parsed = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
         if (parsed && typeof parsed === 'object') {
           if (parsed.users || parsed.authCodes || parsed.authSessions) {
@@ -100,11 +102,22 @@ class UserStore {
           } else {
             this.data.users = parsed;
           }
+          this._lastMtime = stat.mtimeMs;
         }
       }
     } catch (e) {
       console.error('[users] Ошибка чтения базы пользователей:', e.message);
     }
+  }
+
+  reloadIfChanged() {
+    try {
+      if (!fs.existsSync(this.filePath)) return;
+      const stat = fs.statSync(this.filePath);
+      if (!this._lastMtime || stat.mtimeMs > this._lastMtime) {
+        this.load();
+      }
+    } catch (e) {}
   }
 
   save(immediate = false) {
@@ -131,6 +144,9 @@ class UserStore {
       const tmpFile = `${this.filePath}.tmp`;
       fs.writeFileSync(tmpFile, JSON.stringify(this.data, null, 2), 'utf8');
       fs.renameSync(tmpFile, this.filePath);
+      try {
+        this._lastMtime = fs.statSync(this.filePath).mtimeMs;
+      } catch (e) {}
     } catch (e) {
       console.error('[users] Ошибка сохранения базы пользователей:', e.message);
     }
@@ -143,6 +159,10 @@ class UserStore {
       const tmpFile = `${this.filePath}.tmp`;
       await fs.promises.writeFile(tmpFile, JSON.stringify(this.data, null, 2), 'utf8');
       await fs.promises.rename(tmpFile, this.filePath);
+      try {
+        const stat = await fs.promises.stat(this.filePath);
+        this._lastMtime = stat.mtimeMs;
+      } catch (e) {}
     } catch (e) {
       console.error('[users] Ошибка асинхронного сохранения базы пользователей:', e.message);
     }
@@ -162,7 +182,7 @@ class UserStore {
     const role = input.role === 'lecturer' ? 'lecturer' : 'student';
     const targetName = String(input.targetName || '').trim().slice(0, 120);
     const theme = (input.theme === 'dark' || input.theme === 'light' || input.theme === 'system') ? input.theme : 'system';
-    const notificationsEnabled = Boolean(input.notificationsEnabled);
+    const notificationsEnabled = input.notificationsEnabled !== false;
     const firstName = String(input.firstName || '').trim().slice(0, 64);
     const username = String(input.username || '').replace(/^@/, '').trim().slice(0, 64);
     const favorites = Array.isArray(input.favorites)
@@ -176,17 +196,20 @@ class UserStore {
 
   getUser(userId) {
     if (!userId) return null;
+    this.reloadIfChanged();
     return this.data.users[String(userId)] || null;
   }
 
   getUserByTelegramId(telegramId) {
     if (!telegramId) return null;
+    this.reloadIfChanged();
     return this.getUser(`tg_${telegramId}`) || this.getUser(String(telegramId));
   }
 
   findUserByUsername(username) {
     const clean = String(username || '').replace(/^@/, '').trim().toLowerCase();
     if (!clean) return null;
+    this.reloadIfChanged();
     for (const u of Object.values(this.data.users)) {
       if (u && String(u.username || '').toLowerCase() === clean) return u;
     }
@@ -195,6 +218,7 @@ class UserStore {
 
   upsertUser(userId, patch = {}) {
     if (!userId) throw new Error('userId is required');
+    this.reloadIfChanged();
     const key = String(userId);
     const existing = this.data.users[key] || {
       id: key,
@@ -203,7 +227,7 @@ class UserStore {
       username: '',
       role: 'student',
       targetName: '',
-      notificationsEnabled: false,
+      notificationsEnabled: true,
       theme: 'system',
       favorites: [],
       recentViews: {},
@@ -221,7 +245,10 @@ class UserStore {
     if (patch.firstName !== undefined && String(patch.firstName).trim()) updated.firstName = String(patch.firstName).trim().slice(0, 64);
     if (patch.username !== undefined && String(patch.username).trim()) updated.username = String(patch.username).replace(/^@/, '').trim().slice(0, 64);
     if (patch.role === 'student' || patch.role === 'lecturer') updated.role = patch.role;
-    if (patch.targetName !== undefined) updated.targetName = String(patch.targetName).trim().slice(0, 120);
+    if (patch.targetName !== undefined) {
+      const trimmedTarget = String(patch.targetName).trim().slice(0, 120);
+      if (trimmedTarget || patch.explicitClear) updated.targetName = trimmedTarget;
+    }
     if (patch.notificationsEnabled !== undefined) updated.notificationsEnabled = Boolean(patch.notificationsEnabled);
     if (patch.theme === 'light' || patch.theme === 'dark' || patch.theme === 'system') updated.theme = patch.theme;
     if (Array.isArray(patch.favorites)) {
@@ -255,10 +282,10 @@ class UserStore {
       username: u.username || '',
       role: u.role || 'student',
       targetName: u.targetName || '',
-      notificationsEnabled: Boolean(u.notificationsEnabled),
+      notificationsEnabled: u.notificationsEnabled !== false,
       theme: u.theme || 'system',
-      favorites: isTelegramLinked && Array.isArray(u.favorites) ? u.favorites : [],
-      recentViews: isTelegramLinked && u.recentViews && typeof u.recentViews === 'object' ? u.recentViews : {},
+      favorites: Array.isArray(u.favorites) ? u.favorites : [],
+      recentViews: u.recentViews && typeof u.recentViews === 'object' ? u.recentViews : {},
       isTelegramLinked,
       updatedAt: u.updatedAt
     };
@@ -266,6 +293,7 @@ class UserStore {
 
   createAuthCodeForTelegramUser({ telegramId, firstName = '', username = '' }) {
     if (!telegramId) throw new Error('telegramId is required');
+    this.reloadIfChanged();
     this.upsertUser(`tg_${telegramId}`, { telegramId, firstName, username });
 
     const code = String(crypto.randomInt(100000, 999999));
@@ -280,6 +308,7 @@ class UserStore {
   }
 
   consumeAuthCode(code, mergePreferences = {}) {
+    this.reloadIfChanged();
     this.cleanupExpired();
     const cleanCode = String(code || '').trim();
     const entry = this.data.authCodes[cleanCode];

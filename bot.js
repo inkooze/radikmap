@@ -11,6 +11,13 @@ const WEBAPP_URL = (!rawWebAppUrl || rawWebAppUrl.includes('ngrok'))
 const SCHEDULE_WEBAPP_URL = `${WEBAPP_URL}?view=schedule`;
 const API_BASE = `http://localhost:${process.env.PORT || 3000}`;
 
+const mainReplyKeyboard = Markup.keyboard([
+  [
+    Markup.button.webApp('🗺 Карта', WEBAPP_URL),
+    Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
+  ]
+]).resize().persistent();
+
 const userStore = defaultUserStore;
 let cachedBotUsername = (process.env.BOT_USERNAME || process.env.TELEGRAM_BOT_USERNAME || 'rgrtu_map_bot').replace(/^@/, '').trim();
 
@@ -43,7 +50,7 @@ if (bot) {
     return next();
   });
 
-  bot.start((ctx) => {
+  bot.start(async (ctx) => {
     const name = ctx.from.first_name || 'друг';
     const payload = String(ctx.startPayload || '').trim();
     console.log('[bot] /start от', ctx.from.id, name, payload);
@@ -56,14 +63,14 @@ if (bot) {
         username: ctx.from.username || ''
       });
       if (ok) {
-        return ctx.reply(
+        await ctx.reply(
           `✅ Привет, ${name}! Вход на сайте Карты РГРТУ подтверждён.\n\n` +
           `Можешь вернуться в браузер — твой профиль и настройки расписания уже подключены автоматически.`,
+          mainReplyKeyboard
+        );
+        return ctx.reply(
+          'Управление профилем:',
           Markup.inlineKeyboard([
-            [
-              Markup.button.webApp('🗺 Карта', WEBAPP_URL),
-              Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
-            ],
             [Markup.button.callback('👤 Мой профиль и уведомления', 'my_profile')]
           ])
         );
@@ -76,7 +83,7 @@ if (bot) {
       username: ctx.from.username || ''
     });
 
-    return ctx.reply(
+    await ctx.reply(
       `Привет, ${name}! 👋\n\n` +
       `Это бот интерактивной карты и расписания РГРТУ:\n` +
       `• 🗺 интерактивная карта Главного корпуса\n` +
@@ -84,12 +91,13 @@ if (bot) {
       `• 🟢 свободные аудитории прямо сейчас\n` +
       `• 🔔 уведомления за 15 минут до начала твоих пар\n` +
       `• 🔑 код для быстрого входа на сайте: ${code}\n\n` +
-      `Выбери действие ниже или напиши любой вопрос ИИ'шке прямо в чат:`,
+      `Кнопки «🗺 Карта» и «📅 Расписание» закреплены внизу чата.`,
+      mainReplyKeyboard
+    );
+
+    return ctx.reply(
+      'Выбери действие ниже или напиши любой вопрос ИИ\'шке прямо в чат:',
       Markup.inlineKeyboard([
-        [
-          Markup.button.webApp('🗺 Карта', WEBAPP_URL),
-          Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
-        ],
         [Markup.button.callback('🔑 Получить код входа для сайта', 'login_code')],
         [Markup.button.callback('👤 Моё расписание и уведомления', 'my_profile')],
         [Markup.button.callback('🟢 Свободные аудитории', 'free_now')]
@@ -106,7 +114,8 @@ if (bot) {
     return ctx.reply(
       `🔑 Твой одноразовый код для входа на сайте:\n\n` +
       `${code}\n\n` +
-      `Открой меню профиля (👤) в правом верхнем углу на сайте и введи этот код (действует 10 минут).`
+      `Открой меню профиля (👤) в правом верхнем углу на сайте и введи этот код (действует 10 минут).`,
+      mainReplyKeyboard
     );
   });
 
@@ -137,11 +146,7 @@ if (bot) {
       `• Уведомления за 15 мин до пары: ${notifLabel}\n\n` +
       `Ты можешь выбрать свою группу или ФИО преподавателя на сайте в меню профиля (👤).`,
       Markup.inlineKeyboard([
-        [Markup.button.callback(toggleText, 'toggle_notif')],
-        [
-          Markup.button.webApp('🗺 Карта', WEBAPP_URL),
-          Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
-        ]
+        [Markup.button.callback(toggleText, 'toggle_notif')]
       ])
     );
   }
@@ -161,6 +166,9 @@ if (bot) {
       notificationsEnabled: nextState
     });
     await ctx.answerCbQuery(nextState ? 'Уведомления включены!' : 'Уведомления выключены');
+    if (nextState) {
+      setTimeout(checkUpcomingLessonNotifications, 500);
+    }
     return replyWithProfile(ctx);
   });
 
@@ -170,20 +178,18 @@ if (bot) {
     '/login — получить 6-значный код для входа на сайте\n' +
     '/my — профиль и настройки уведомлений о парах\n' +
     '/map — открыть карту\n' +
+    '/schedule — открыть расписание\n' +
     '/free — свободные аудитории сейчас\n' +
-    '/schedule — открыть расписание\n'
+    '/help — список команд',
+    mainReplyKeyboard
   ));
 
   bot.command('map', (ctx) => {
-    return ctx.reply(
-      'Выбери раздел:',
-      Markup.inlineKeyboard([
-        [
-          Markup.button.webApp('🗺 Карта', WEBAPP_URL),
-          Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
-        ]
-      ])
-    );
+    return ctx.reply('Открой карту по кнопке «🗺 Карта» внизу экрана:', mainReplyKeyboard);
+  });
+
+  bot.command('schedule', (ctx) => {
+    return ctx.reply('Открой расписание по кнопке «📅 Расписание» внизу экрана:', mainReplyKeyboard);
   });
 
   bot.command('free', async (ctx) => {
@@ -213,24 +219,18 @@ if (bot) {
       if (mainRooms.length === 0) {
         await ctx.telegram.editMessageText(
           ctx.chat.id, loading.message_id, null,
-          '😔 Свободных аудиторий сейчас нет.\nОткрой карту, чтобы увидеть занятые.',
-          Markup.inlineKeyboard([
-            [Markup.button.webApp('🗺 Открыть карту', WEBAPP_URL)]
-          ])
+          '😔 Свободных аудиторий сейчас нет.\nОткрой карту по кнопке «🗺 Карта» внизу экрана, чтобы увидеть занятые.'
         );
         return;
       }
 
       const lines = mainRooms.map(r => `• ${r.name} — ${r.untilText}`);
       const header = `🟢 Свободно в Главном корпусе: ${totalC}\n\n`;
-      const footer = totalC > 20 ? '\n\n…и другие. Открой карту, чтобы увидеть все.' : '';
+      const footer = totalC > 20 ? '\n\n…и другие. Открой карту по кнопке «🗺 Карта» внизу экрана, чтобы увидеть все.' : '';
 
       await ctx.telegram.editMessageText(
         ctx.chat.id, loading.message_id, null,
-        header + lines.join('\n') + footer,
-        Markup.inlineKeyboard([
-          [Markup.button.webApp('🗺 Показать на карте', WEBAPP_URL)]
-        ])
+        header + lines.join('\n') + footer
       );
     } catch (e) {
       console.error('[bot/free]', e);
@@ -243,25 +243,7 @@ if (bot) {
 
   bot.action('free_now', async (ctx) => {
     await ctx.answerCbQuery();
-    return ctx.reply('Используй /free');
-  });
-
-  bot.command('schedule', async (ctx) => {
-    const text = ctx.message.text.replace('/schedule', '').trim();
-    if (!text) {
-      return ctx.reply(
-        'Открываю раздел расписания групп и преподавателей:',
-        Markup.inlineKeyboard([
-          [Markup.button.webApp('📅 Открыть расписание', SCHEDULE_WEBAPP_URL)]
-        ])
-      );
-    }
-    return ctx.reply(
-      `Открываю карту и ищу «${text}»:`,
-      Markup.inlineKeyboard([
-        [Markup.button.webApp('🗺 Открыть', `${WEBAPP_URL}?search=${encodeURIComponent(text)}`)]
-      ])
-    );
+    return ctx.reply('Используй /free', mainReplyKeyboard);
   });
 
   bot.on('text', async (ctx) => {
@@ -277,15 +259,7 @@ if (bot) {
       const data = await res.json();
       const answer = data.answer || data.reply;
       if (answer) {
-        await ctx.reply(
-          answer,
-          Markup.inlineKeyboard([
-            [
-              Markup.button.webApp('🗺 Карта', WEBAPP_URL),
-              Markup.button.webApp('📅 Расписание', SCHEDULE_WEBAPP_URL)
-            ]
-          ])
-        );
+        await ctx.reply(answer, mainReplyKeyboard);
       }
     } catch (e) {}
   });
@@ -293,6 +267,30 @@ if (bot) {
   bot.catch((err, ctx) => {
     console.error('[bot] error для', ctx?.updateType, err);
   });
+}
+
+async function sendPngToTelegramUser(telegramId, pngBuffer, filename = 'schedule.png', caption = '') {
+  if (!bot || !telegramId || !pngBuffer) return false;
+  try {
+    await bot.telegram.sendDocument(
+      telegramId,
+      { source: pngBuffer, filename },
+      caption ? { caption } : undefined
+    );
+    return true;
+  } catch (e) {
+    try {
+      await bot.telegram.sendPhoto(
+        telegramId,
+        { source: pngBuffer, filename },
+        caption ? { caption } : undefined
+      );
+      return true;
+    } catch (e2) {
+      console.warn('[bot/sendPng]', e2.message);
+      return false;
+    }
+  }
 }
 
 async function checkUpcomingLessonNotifications() {
@@ -309,16 +307,15 @@ async function checkUpcomingLessonNotifications() {
       const extraInfo = item.role === 'lecturer'
         ? (l.group ? `\n👥 Группа: ${l.group}` : '')
         : (l.lecturer ? `\n👤 Преподаватель: ${l.lecturer}` : '');
+      const floorText = l.floor != null ? `${l.floor} этаж, ` : '';
       const text =
         `🔔 Через ${item.minutesLeft} мин начнётся пара!\n\n` +
         `📚 ${l.type ? `[${l.type}] ` : ''}${l.subject}\n` +
-        `📍 Ауд. ${l.roomShort} (${l.floor} этаж, Главный корпус)\n` +
+        `📍 ${l.roomShort ? `Ауд. ${l.roomShort} (${floorText}Главный корпус)` : 'Главный корпус'}\n` +
         `🕒 Время: ${l.time}` +
         extraInfo;
       try {
-        await bot.telegram.sendMessage(item.telegramId, text, Markup.inlineKeyboard([
-          [Markup.button.webApp('🗺 Показать на карте', `${WEBAPP_URL}?search=${encodeURIComponent(l.roomShort)}`)]
-        ]));
+        await bot.telegram.sendMessage(item.telegramId, text, mainReplyKeyboard);
       } catch (sendErr) {
         console.warn(`[bot/notify] Не удалось отправить уведомление ${item.telegramId}:`, sendErr.message);
       }
@@ -342,8 +339,25 @@ function startBot(retryCount = 0) {
     })
     .catch(() => {});
 
+  bot.telegram.setMyCommands([
+    { command: 'start', description: 'Главное меню' },
+    { command: 'login', description: 'Код входа на сайте' },
+    { command: 'my', description: 'Мой профиль и уведомления' },
+    { command: 'map', description: 'Интерактивная карта' },
+    { command: 'schedule', description: 'Расписание занятий' },
+    { command: 'free', description: 'Свободные аудитории' },
+    { command: 'help', description: 'Помощь и команды' }
+  ]).catch(err => {
+    console.warn('[bot] Не удалось установить команды бота:', err.message);
+  });
+
+  bot.telegram.setChatMenuButton({
+    menuButton: { type: 'commands' }
+  }).catch(() => {});
+
   if (!notifyTimer) {
-    notifyTimer = setInterval(checkUpcomingLessonNotifications, 60 * 1000);
+    setTimeout(checkUpcomingLessonNotifications, 5000);
+    notifyTimer = setInterval(checkUpcomingLessonNotifications, 30 * 1000);
   }
 
   bot.launch()
@@ -367,4 +381,4 @@ if (require.main === module) {
   startBot();
 }
 
-module.exports = { bot, startBot, getBotUsername };
+module.exports = { bot, startBot, getBotUsername, checkUpcomingLessonNotifications, sendPngToTelegramUser };

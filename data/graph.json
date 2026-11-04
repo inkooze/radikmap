@@ -371,35 +371,35 @@
       "y": 629,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n30_c_f1": {
       "x": 830,
       "y": 547,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n38_c_f1": {
       "x": 885,
       "y": 495,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n43_c_f1": {
       "x": 880,
       "y": 357,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n57_c_f1": {
       "x": 1131,
       "y": 350,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n58_c_f1": {
       "x": 1229,
@@ -1166,56 +1166,56 @@
       "y": 623,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n167_c_f1": {
       "x": 1600,
       "y": 522,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n168_c_f1": {
       "x": 1576,
       "y": 352,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n169_c_f1": {
       "x": 1308,
       "y": 352,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n170_c_f1": {
       "x": 1232,
       "y": 629,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n171_c_f1": {
       "x": 1229,
       "y": 356,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n172_c_f1": {
       "x": 885,
       "y": 546,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n173_c_f1": {
       "x": 887,
       "y": 628,
       "building": "C",
       "floor": 1,
-      "type": "corridor"
+      "type": "outdoor"
     },
     "n174_c_f1": {
       "x": 1739,
@@ -3968,6 +3968,16 @@
       "from": "n44_c_f1",
       "to": "n45_c_f1",
       "weight": 214
+    },
+    {
+      "from": "n267_c_f0",
+      "to": "n268_c_f0",
+      "weight": 191
+    },
+    {
+      "from": "n117_c_f1",
+      "to": "n187_c_f1",
+      "weight": 600
     }
   ]
 }

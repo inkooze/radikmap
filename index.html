@@ -27,7 +27,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=1.2.9">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -161,12 +161,13 @@
           </div>
 
           <div id="user-tg-linked" class="user-tg-box hidden">
-            <label class="user-notif-row" for="user-notif-checkbox">
+            <label class="user-notif-toggle" for="user-notif-checkbox">
+              <input type="checkbox" id="user-notif-checkbox" class="user-notif-checkbox">
+              <span class="user-notif-check-ui" aria-hidden="true"><i class="mdi mdi-check"></i></span>
               <span class="user-notif-text">
                 <i class="mdi mdi-bell-ring-outline"></i>
                 Уведомлять о парах в Telegram
               </span>
-              <input type="checkbox" id="user-notif-checkbox" class="user-notif-checkbox">
             </label>
             <button type="button" class="user-logout-btn" id="user-logout-btn">
               <i class="mdi mdi-logout"></i> Выйти из аккаунта
@@ -196,6 +197,6 @@
   <div id="cheatsheet-modal-backdrop" class="cheatsheet-modal-backdrop hidden" role="dialog" aria-modal="true" aria-label="Шпаргалка группы"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/app.js?v=1.2.9"></script>
 </body>
 </html>

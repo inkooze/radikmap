@@ -44,6 +44,22 @@ const DAY_GENITIVE = {
   'Воскресенье': 'воскресенья'
 };
 
+const FACULTY_FULL_NAMES = {
+  'ФРТ': 'Факультет радиотехники и телекоммуникаций',
+  'ФЭ': 'Факультет электроники',
+  'ФАИТУ': 'Факультет автоматики и информационных технологий в управлении',
+  'ФВТ': 'Факультет вычислительной техники',
+  'ИЭФ': 'Инженерно-экономический факультет',
+  'ОА': 'Отдел аспирантуры',
+  'ИДО': 'Институт дополнительного образования'
+};
+
+function formatFacultyFullName(fac) {
+  const raw = String(fac || '').trim();
+  if (!raw) return '';
+  return FACULTY_FULL_NAMES[raw] || FACULTY_FULL_NAMES[raw.toUpperCase()] || raw;
+}
+
 const SEARCH_CATEGORY_RULES = [
   {
     triggers: ['столовая', 'столовка', 'буфет', 'поесть', 'еда', 'перекус', 'обед', 'кафе', 'кофе', 'кофейня', 'питание'],
@@ -119,13 +135,7 @@ function initTelegram() {
     tg.ready();
     tg.expand();
     document.body.classList.add('tg-webapp');
-    const applyTgSafeTop = () => {
-      const safeTop = (tg.safeAreaInset?.top || 0) + (tg.contentSafeAreaInset?.top || 0);
-      const offset = safeTop > 0 ? safeTop : (tg.isExpanded ? 46 : 0);
-      document.documentElement.style.setProperty('--tg-safe-top', `${offset}px`);
-    };
-    applyTgSafeTop();
-    tg.onEvent?.('viewportChanged', applyTgSafeTop);
+    document.documentElement.style.setProperty('--tg-safe-top', '0px');
     telegramUser = tg.initDataUnsafe?.user || null;
     if (!localStorage.getItem('theme') && tg.colorScheme) {
       document.documentElement.dataset.theme = tg.colorScheme === 'dark' ? 'dark' : 'light';
@@ -244,12 +254,12 @@ let currentUserId = localStorage.getItem('rsreu_user_id') || '';
 let userProfile = {
   role: localStorage.getItem('rsreu_user_role') || 'student',
   targetName: localStorage.getItem('rsreu_user_target') || '',
-  notificationsEnabled: true,
-  telegramLinked: false,
-  firstName: '',
-  username: '',
-  favorites: [],
-  recentViews: {},
+  notificationsEnabled: localStorage.getItem('rsreu_user_notif') !== 'false',
+  telegramLinked: localStorage.getItem('rsreu_user_linked') === 'true',
+  firstName: localStorage.getItem('rsreu_user_first_name') || '',
+  username: localStorage.getItem('rsreu_user_username') || '',
+  favorites: (() => { try { return JSON.parse(localStorage.getItem('rsreu_user_favorites') || '[]'); } catch (e) { return []; } })(),
+  recentViews: (() => { try { return JSON.parse(localStorage.getItem('rsreu_user_recent') || '{}'); } catch (e) { return {}; } })(),
   theme: localStorage.getItem('theme') || 'system'
 };
 let botUsername = 'rsreu_map_bot';
@@ -1174,17 +1184,17 @@ function wordMatchesToken(words, queryToken) {
     if (w === queryToken) return true;
     // Защита: слово «кафе» не должно совпадать с «кафедра» / «кафедры»
     if (queryToken === 'кафе' && w.startsWith('кафедр')) continue;
-    if (queryToken.length >= 3 && w.startsWith(queryToken)) {
-      if (queryToken.length <= 4 && w.length > queryToken.length + 2) continue;
-      return true;
-    }
+    if (w.startsWith(queryToken)) return true;
   }
   return false;
 }
 
-function searchRooms(query, limit = 20) {
+function searchRooms(query, limit = 30) {
   const q = String(query || '').toLowerCase().replace(/ё/g, 'е').trim();
   if (!q) return [];
+
+  const isStairsQuery = q.includes('лестниц');
+  const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
 
   // 1. Проверяем семантическую категорию (столовая/буфет, спортзал, туалет, деканат и т.д.)
   const matchedRule = SEARCH_CATEGORY_RULES.find(rule =>
@@ -1194,6 +1204,7 @@ function searchRooms(query, limit = 20) {
   if (matchedRule) {
     const results = [];
     for (const [id, meta] of Object.entries(roomsMeta)) {
+      if (!meta || (meta.type === 'stairs' && !isStairsQuery)) continue;
       const typeMatch = matchedRule.types.includes(meta.type);
       const textWords = tokenizeWords(`${meta.name || ''} ${meta.shortName || ''} ${meta.description || ''}`);
       const kwMatch = matchedRule.keywords.some(kw => wordMatchesToken(textWords, kw.toLowerCase()));
@@ -1205,48 +1216,78 @@ function searchRooms(query, limit = 20) {
     return results.slice(0, limit);
   }
 
-  // 2. Поиск по номеру аудитории, названию и описанию с учётом границ слов
+  // 2. Поиск по номеру аудитории, названию и описанию (включая префиксы и подстроки от 1 символа)
   const queryTokens = tokenizeWords(q);
-  const exact = [];
-  const prefix = [];
-  const fuzzy = [];
-  const seen = new Set();
+  const scored = [];
 
   for (const [id, meta] of Object.entries(roomsMeta)) {
+    if (!meta || (meta.type === 'stairs' && !isStairsQuery)) continue;
+
     const name = (meta.name || '').toLowerCase().replace(/ё/g, 'е');
     const shortName = (meta.shortName || '').toLowerCase().replace(/ё/g, 'е');
     const desc = (meta.description || '').toLowerCase().replace(/ё/g, 'е');
     const classroom = String(meta.classroom || '').toLowerCase();
 
-    if (shortName === q || classroom === q || id.toLowerCase() === q) {
-      exact.push({ id, meta });
-      seen.add(id);
+    if (shortName === q || name === q || id.toLowerCase() === q) {
+      scored.push({ id, meta, score: 200 });
       continue;
     }
 
-    const words = tokenizeWords(`${name} ${shortName} ${desc} ${classroom}`);
-    if (queryTokens.length > 0 && queryTokens.every(qt => wordMatchesToken(words, qt))) {
-      prefix.push({ id, meta });
-      seen.add(id);
+    if (shortName && shortName.startsWith(q)) {
+      scored.push({ id, meta, score: 150 });
       continue;
     }
 
-    if (q.length >= 4 && queryTokens.length === 1) {
-      const qt = queryTokens[0];
+    const shortTokens = tokenizeWords(shortName);
+    if (shortTokens.some(t => t === q || t.startsWith(q))) {
+      scored.push({ id, meta, score: 125 });
+      continue;
+    }
+
+    if (shortName && shortName.includes(q)) {
+      scored.push({ id, meta, score: 105 });
+      continue;
+    }
+
+    const words = tokenizeWords(`${name} ${shortName} ${desc}`);
+    let allTokensMatched = queryTokens.length > 0;
+    let tokenScoreSum = 0;
+
+    for (const qt of queryTokens) {
+      let bestTokenScore = 0;
       for (const w of words) {
-        if (w.length >= 4 && Math.abs(w.length - qt.length) <= 1 && levenshtein(qt, w) <= 1) {
-          if (qt === 'кафе' && w.startsWith('кафедр')) continue;
-          if (!seen.has(id)) {
-            fuzzy.push({ id, meta });
-            seen.add(id);
-          }
-          break;
+        if (qt === 'кафе' && w.startsWith('кафедр')) continue;
+        if (w === qt) {
+          bestTokenScore = Math.max(bestTokenScore, 85);
+        } else if (w.startsWith(qt)) {
+          bestTokenScore = Math.max(bestTokenScore, 70);
+        } else if (qt.length >= 2 && w.includes(qt)) {
+          bestTokenScore = Math.max(bestTokenScore, 50);
+        } else if (qt.length >= 4 && w.length >= 4 && Math.abs(w.length - qt.length) <= 1 && levenshtein(qt, w) <= 1) {
+          bestTokenScore = Math.max(bestTokenScore, 35);
         }
       }
+      if (bestTokenScore === 0) {
+        allTokensMatched = false;
+        break;
+      }
+      tokenScoreSum += bestTokenScore;
+    }
+
+    if (allTokensMatched && tokenScoreSum > 0) {
+      const typeBoost = meta.type === 'room' && classroom ? 5 : 0;
+      scored.push({ id, meta, score: tokenScoreSum + typeBoost });
     }
   }
 
-  return [...exact, ...prefix, ...fuzzy].slice(0, limit);
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const keyA = String(a.meta.shortName || formatRoomName(a.meta.name || ''));
+    const keyB = String(b.meta.shortName || formatRoomName(b.meta.name || ''));
+    return collator.compare(keyA, keyB);
+  });
+
+  return scored.slice(0, limit).map(({ id, meta }) => ({ id, meta }));
 }
 
 function searchEntitiesLocal(query, limit = 5) {
@@ -1373,7 +1414,7 @@ function setupSearch() {
     }
     historyEl.innerHTML = '';
     const entities = searchEntitiesLocal(raw, 4);
-    const found = searchRooms(raw, 16);
+    const found = searchRooms(raw, 40);
 
     if (!found.length && !entities.lecturers.length && !entities.groups.length) {
       const li = document.createElement('li');
@@ -1420,7 +1461,7 @@ function setupSearch() {
       li.innerHTML = `
         <div class="res-main">
           <div class="res-name">Группа ${escapeHtml(grp.name)}</div>
-          <div class="res-meta">${escapeHtml(grp.faculty || 'Учебная группа')}</div>
+          <div class="res-meta">${escapeHtml(formatFacultyFullName(grp.faculty || grp.facultyCode || 'Учебная группа'))}</div>
         </div>
         <span class="res-badge-entity"><i class="mdi mdi-account-group-outline"></i> Расписание</span>
       `;
@@ -2095,27 +2136,49 @@ function applyTheme(themePref) {
   });
 }
 
-async function syncUserProfileToServer(patch = {}) {
-  Object.assign(userProfile, patch);
+function saveUserProfileLocalCache() {
   try {
     localStorage.setItem('rsreu_user_role', userProfile.role || 'student');
     localStorage.setItem('rsreu_user_target', userProfile.targetName || '');
+    localStorage.setItem('rsreu_user_notif', userProfile.notificationsEnabled === false ? 'false' : 'true');
+    localStorage.setItem('rsreu_user_linked', userProfile.telegramLinked ? 'true' : 'false');
+    localStorage.setItem('rsreu_user_first_name', userProfile.firstName || '');
+    localStorage.setItem('rsreu_user_username', userProfile.username || '');
+    if (Array.isArray(userProfile.favorites)) {
+      localStorage.setItem('rsreu_user_favorites', JSON.stringify(userProfile.favorites));
+    }
+    if (userProfile.recentViews && typeof userProfile.recentViews === 'object') {
+      localStorage.setItem('rsreu_user_recent', JSON.stringify(userProfile.recentViews));
+    }
   } catch (e) {}
+}
+
+function mergeServerUserIntoProfile(srvUser) {
+  if (!srvUser) return;
+  const localFavs = Array.isArray(userProfile.favorites) ? [...userProfile.favorites] : [];
+  const localRecent = (userProfile.recentViews && typeof userProfile.recentViews === 'object') ? { ...userProfile.recentViews } : {};
+  Object.assign(userProfile, srvUser);
+  userProfile.telegramLinked = Boolean(srvUser.isTelegramLinked || srvUser.telegramLinked || srvUser.telegramId || srvUser.username);
+  if ((!Array.isArray(userProfile.favorites) || userProfile.favorites.length === 0) && localFavs.length > 0) {
+    userProfile.favorites = localFavs;
+  }
+  if ((!userProfile.recentViews || Object.keys(userProfile.recentViews).length === 0) && Object.keys(localRecent).length > 0) {
+    userProfile.recentViews = localRecent;
+  }
+  saveUserProfileLocalCache();
+}
+
+async function syncUserProfileToServer(patch = {}) {
+  Object.assign(userProfile, patch);
+  saveUserProfileLocalCache();
 
   try {
     const uid = ensureUserId();
+    const payload = { userId: uid, ...patch };
     const res = await fetch('/api/user/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: uid,
-        role: userProfile.role,
-        targetName: userProfile.targetName,
-        notificationsEnabled: userProfile.notificationsEnabled,
-        theme: userProfile.theme,
-        favorites: Array.isArray(userProfile.favorites) ? userProfile.favorites : undefined,
-        recentViews: (userProfile.recentViews && typeof userProfile.recentViews === 'object') ? userProfile.recentViews : undefined
-      })
+      body: JSON.stringify(payload)
     });
     if (!res.ok) return;
     const data = await res.json();
@@ -2123,9 +2186,9 @@ async function syncUserProfileToServer(patch = {}) {
     if (data.ok && srvUser) {
       currentUserId = srvUser.id || uid;
       try { localStorage.setItem('rsreu_user_id', currentUserId); } catch (e) {}
-      Object.assign(userProfile, srvUser);
-      userProfile.telegramLinked = Boolean(srvUser.isTelegramLinked || srvUser.telegramLinked || srvUser.telegramId || srvUser.username);
+      mergeServerUserIntoProfile(srvUser);
       updateUserMenuUI();
+      updateSmartNextClassPill();
     }
   } catch (e) {
     console.warn('[profile] sync failed', e.message);
@@ -2202,6 +2265,11 @@ function updateUserMenuUI() {
   }
   if (openSchedBtn) {
     openSchedBtn.classList.toggle('hidden', !(isLinked && userProfile.targetName));
+  }
+  const openCheatsheetBtn = document.getElementById('user-open-cheatsheet-btn');
+  if (openCheatsheetBtn) {
+    const canShowCheatsheet = Boolean(isLinked && userProfile.role === 'student' && userProfile.targetName);
+    openCheatsheetBtn.classList.toggle('hidden', !canShowCheatsheet);
   }
   if (openSchedText && userProfile.targetName) {
     const displayLec = scheduleDirectory.lecturers.find(l => l.name === userProfile.targetName);
@@ -2437,7 +2505,7 @@ function setupUserProfileAndTheme() {
 
     suggestions.innerHTML = matches.map(item => {
       const label = userProfile.role === 'student' ? `Группа ${item.name}` : (item.fullName || item.name);
-      const meta = userProfile.role === 'student' ? (item.faculty || '') : (item.regalia || '');
+      const meta = userProfile.role === 'student' ? formatFacultyFullName(item.faculty || item.facultyCode || '') : (item.regalia || '');
       return `
         <button type="button" class="user-target-option ${userProfile.targetName === item.name ? 'active' : ''}" data-target-val="${escapeHtml(item.name)}" data-target-display="${escapeHtml(userProfile.role === 'student' ? item.name : (item.fullName || item.name))}">
           <span>${escapeHtml(label)}</span>
@@ -2483,6 +2551,16 @@ function setupUserProfileAndTheme() {
       closeUserDropdown();
       const entityType = userProfile.role === 'lecturer' ? 'lecturer' : 'group';
       openEntitySchedule(entityType, userProfile.targetName);
+    });
+  }
+
+  const openCheatsheetBtn = document.getElementById('user-open-cheatsheet-btn');
+  if (openCheatsheetBtn) {
+    openCheatsheetBtn.addEventListener('click', async () => {
+      if (!userProfile.targetName) return;
+      closeUserDropdown();
+      await openEntitySchedule('group', userProfile.targetName);
+      openCheatSheetModal();
     });
   }
 
@@ -2554,14 +2632,26 @@ function setupUserProfileAndTheme() {
         telegramLinked: false,
         firstName: '',
         username: '',
+        favorites: [],
+        recentViews: {},
         theme: userProfile.theme || 'system'
       };
       try {
         localStorage.removeItem('rsreu_user_id');
         localStorage.removeItem('rsreu_user_role');
         localStorage.removeItem('rsreu_user_target');
+        localStorage.removeItem('rsreu_user_notif');
+        localStorage.removeItem('rsreu_user_linked');
+        localStorage.removeItem('rsreu_user_first_name');
+        localStorage.removeItem('rsreu_user_username');
+        localStorage.removeItem('rsreu_user_favorites');
+        localStorage.removeItem('rsreu_user_recent');
       } catch (e) {}
       updateUserMenuUI();
+      if (scheduleViewOpen) {
+        const view = document.getElementById('schedule-view');
+        if (view) updateScheduleSidebarListInPlace(view);
+      }
       showToast('Вы вышли из аккаунта');
     });
   }
@@ -2587,9 +2677,19 @@ function setupUserProfileAndTheme() {
           if (data.ok && srvUser) {
             currentUserId = srvUser.id;
             try { localStorage.setItem('rsreu_user_id', currentUserId); } catch (e) {}
-            Object.assign(userProfile, srvUser);
+            const prevLocalFavs = Array.isArray(userProfile.favorites) ? [...userProfile.favorites] : [];
+            mergeServerUserIntoProfile(srvUser);
             userProfile.telegramLinked = true;
+            saveUserProfileLocalCache();
+            if ((!Array.isArray(srvUser.favorites) || srvUser.favorites.length === 0) && prevLocalFavs.length > 0) {
+              syncUserProfileToServer({ favorites: prevLocalFavs });
+            }
             updateUserMenuUI();
+            updateSmartNextClassPill();
+            if (scheduleViewOpen) {
+              const view = document.getElementById('schedule-view');
+              if (view) updateScheduleSidebarListInPlace(view);
+            }
             return;
           }
         }
@@ -2603,16 +2703,20 @@ function setupUserProfileAndTheme() {
           const srvUser = data.user || data.profile;
           if (srvUser) {
             const localTheme = localStorage.getItem('theme');
-            Object.assign(userProfile, srvUser);
-            userProfile.telegramLinked = Boolean(srvUser.isTelegramLinked || srvUser.telegramLinked || srvUser.telegramId || srvUser.username);
+            const prevLocalFavs = Array.isArray(userProfile.favorites) ? [...userProfile.favorites] : [];
+            mergeServerUserIntoProfile(srvUser);
             if (!localTheme) {
               userProfile.theme = 'system';
             }
             applyTheme(userProfile.theme);
-            try {
-              localStorage.setItem('rsreu_user_role', userProfile.role || 'student');
-              localStorage.setItem('rsreu_user_target', userProfile.targetName || '');
-            } catch (e) {}
+            if ((!Array.isArray(srvUser.favorites) || srvUser.favorites.length === 0) && prevLocalFavs.length > 0) {
+              syncUserProfileToServer({ favorites: prevLocalFavs });
+            }
+            updateSmartNextClassPill();
+            if (scheduleViewOpen) {
+              const view = document.getElementById('schedule-view');
+              if (view) updateScheduleSidebarListInPlace(view);
+            }
           }
         }
       }
@@ -3008,7 +3112,9 @@ function formatStatusRoomLabelClient(lesson) {
   const raw = lesson.roomShort === '🏀' ? 'Спортзал' : String(lesson.roomShort || '').trim();
   if (!raw) return '';
   if (/^(спортзал|спортивный зал|зал|стадион|бассейн|каф)/i.test(raw)) return raw;
-  return `ауд. ${raw}`;
+  const bld = lesson.building || 'С';
+  const withBld = String(raw).endsWith(` ${bld}`) ? raw : `${raw} ${bld}`;
+  return `ауд. ${withBld}`;
 }
 
 function computeClientEntityNowStatus(data) {
@@ -3135,12 +3241,45 @@ function computeClientEntityNowStatus(data) {
 
 function renderNowStatus(status) {
   if (status.type === 'none') {
-    return `<div class="now-status none"><div class="now-dot"></div><div class="now-body"><div class="now-title">Пар на этой неделе нет</div><div class="now-details">Аудитория всегда свободна</div></div></div>`;
+    return `
+      <div class="now-status none">
+        <div class="now-body">
+          <div class="now-top-row">
+            <div class="now-title">Пар на этой неделе нет</div>
+          </div>
+          <div class="now-bottom-row">
+            <div class="now-details">Аудитория всегда свободна</div>
+          </div>
+        </div>
+      </div>
+    `;
   }
   if (status.type === 'busy') {
-    return `<div class="now-status busy"><div class="now-dot"></div><div class="now-body"><div class="now-title">Сейчас идёт пара</div><div class="now-details">${escapeHtml(status.subject)}${status.untilText ? ' · до ' + status.untilText : ''}</div></div></div>`;
+    return `
+      <div class="now-status busy">
+        <div class="now-body">
+          <div class="now-top-row">
+            <div class="now-title">Сейчас идёт пара</div>
+          </div>
+          <div class="now-bottom-row">
+            <div class="now-details">${escapeHtml(status.subject)}${status.untilText ? ' · до ' + status.untilText : ''}</div>
+          </div>
+        </div>
+      </div>
+    `;
   }
-  return `<div class="now-status free"><div class="now-dot"></div><div class="now-body"><div class="now-title">Аудитория свободна</div><div class="now-details">${status.untilText ? 'до ' + status.untilText : 'до конца дня'}</div></div></div>`;
+  return `
+    <div class="now-status free">
+      <div class="now-body">
+        <div class="now-top-row">
+          <div class="now-title">Аудитория свободна</div>
+        </div>
+        <div class="now-bottom-row">
+          <div class="now-details">${status.untilText ? 'до ' + status.untilText : 'до конца дня'}</div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function buildRoomActionBar(roomId) {
@@ -3201,7 +3340,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
   const b = meta ? BUILDINGS[meta.building] : null;
 
   const crumbs = b ? `${b.name}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}` : '';
-  const shareIcon = `<i class="mdi mdi-link-variant share-icon" title="Скопировать ссылку"></i>`;
+  const shareIcon = `<i class="mdi mdi-share share-icon" title="Скопировать ссылку"></i>`;
   const closeBtn = `<button class="close" onclick="closeRoomPanel()">✕</button>`;
 
   const header = `
@@ -3241,7 +3380,14 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
   const yyyy = monday.getFullYear();
   const mm = String(monday.getMonth() + 1).padStart(2, '0');
   const dd = String(monday.getDate()).padStart(2, '0');
-  const isoDate = `${yyyy}-${mm}-${dd}`;
+  let isoDate = `${yyyy}-${mm}-${dd}`;
+  if (selectedRoomWeekDate) {
+    if (selectedRoomWeekDate.includes('-')) {
+      isoDate = selectedRoomWeekDate;
+    } else if (selectedRoomWeekDate.includes('.')) {
+      isoDate = selectedRoomWeekDate.split('.').reverse().join('-');
+    }
+  }
 
   const url = `/api/schedule?building=${encodeURIComponent(meta.building)}&classroom=${encodeURIComponent(meta.classroom)}&date=${isoDate}`;
 
@@ -3449,7 +3595,21 @@ function parseSchedule(html) {
     day.lessons.sort((a, b) => a.time.localeCompare(b.time));
   });
 
-  return { empty: false, days, weekType };
+  const availableWeeks = dateOptions.map(o => ({
+    value: o.value,
+    label: o.textContent.trim(),
+    selected: o.selected
+  }));
+
+  return { empty: false, days, weekType, availableWeeks };
+}
+
+function formatSubgroupDisplay(sg) {
+  if (!sg) return '';
+  const s = String(sg).trim();
+  const m = s.match(/(\d+)/);
+  if (m) return `п.г. ${m[1]}`;
+  return s;
 }
 
 function formatInteractiveGroupAndLecturerHtml(groupStr, lecturerStr) {
@@ -3570,59 +3730,95 @@ function buildWeeklyScheduleTableHtml(days = [], { mode = 'group' } = {}) {
         return `<td class="slot-col empty-col ${isToday ? 'today-col' : ''}"><span class="wt-empty-dash">·</span></td>`;
       }
 
-      const itemsHtml = matching.map(l => {
+      // Group matching lessons by subject + type so multiple subgroups share ONE badge and ONE title:
+      const groupedLessons = [];
+      const groupMap = new Map();
+      matching.forEach(l => {
+        const key = `${(l.subject || '').trim()}|${(l.type || '').trim()}`;
+        if (!groupMap.has(key)) {
+          const entry = { subject: l.subject, type: l.type, items: [] };
+          groupMap.set(key, entry);
+          groupedLessons.push(entry);
+        }
+        groupMap.get(key).items.push(l);
+      });
+
+      const itemsHtml = groupedLessons.map(entry => {
         let badgeHtml = '';
-        if (l.type && LESSON_TYPES[l.type]) {
-          const t = LESSON_TYPES[l.type];
-          badgeHtml = `<span class="badge ${t.cls}"><i class="mdi ${t.icon}"></i>${l.type}</span>`;
-        } else if (l.type) {
-          badgeHtml = `<span class="badge pr">${escapeHtml(l.type)}</span>`;
+        if (entry.type && LESSON_TYPES[entry.type]) {
+          const t = LESSON_TYPES[entry.type];
+          badgeHtml = `<span class="badge ${t.cls}"><i class="mdi ${t.icon}"></i>${escapeHtml(entry.type)}</span>`;
+        } else if (entry.type) {
+          badgeHtml = `<span class="badge pr">${escapeHtml(entry.type)}</span>`;
         }
 
-        const lecturerRaw = Array.isArray(l.lecturers) && l.lecturers.length > 0
-          ? l.lecturers.join(', ')
-          : (l.lecturer || '');
+        const buildSubDetails = (l) => {
+          const lecturerRaw = Array.isArray(l.lecturers) && l.lecturers.length > 0
+            ? l.lecturers.join(', ')
+            : (l.lecturer || '');
 
-        let entityHtml = '';
-        if (mode === 'room') {
-          if (l.subgroups && l.subgroups.length > 1) {
-            entityHtml = l.subgroups
-              .map(sg => formatInteractiveGroupAndLecturerHtml(sg.group, sg.lecturer))
-              .filter(Boolean)
-              .join('; ');
+          let entityHtml = '';
+          if (mode === 'room') {
+            if (l.subgroups && l.subgroups.length > 1) {
+              entityHtml = l.subgroups
+                .map(sg => formatInteractiveGroupAndLecturerHtml(sg.group, sg.lecturer))
+                .filter(Boolean)
+                .join('; ');
+            } else {
+              entityHtml = formatInteractiveGroupAndLecturerHtml(l.group, lecturerRaw);
+            }
+          } else if (mode === 'group') {
+            entityHtml = formatInteractiveGroupAndLecturerHtml('', lecturerRaw);
           } else {
-            entityHtml = formatInteractiveGroupAndLecturerHtml(l.group, lecturerRaw);
+            entityHtml = formatInteractiveGroupAndLecturerHtml(l.group, '');
           }
-        } else if (mode === 'group') {
-          entityHtml = formatInteractiveGroupAndLecturerHtml('', lecturerRaw);
-        } else {
-          entityHtml = formatInteractiveGroupAndLecturerHtml(l.group, '');
-        }
 
-        let roomLinkHtml = '';
-        if (mode !== 'room') {
-          const cleanRoomShort = l.roomShort === '🏀' ? 'Спортзал' : (l.roomShort || '');
-          const isNamedVenue = /^(спортзал|спортивный зал|зал|стадион|бассейн|каф)/i.test(cleanRoomShort);
-          const prefix = isNamedVenue ? '' : 'ауд. ';
-          if (l.roomId) {
+          let roomLinkHtml = '';
+          if (mode !== 'room') {
+            const cleanRoomShort = l.roomShort === '🏀' ? 'Спортзал' : (l.roomShort || '');
+            const isNamedVenue = /^(спортзал|спортивный зал|зал|стадион|бассейн|каф)/i.test(cleanRoomShort);
+            const prefix = isNamedVenue ? '' : 'ауд. ';
             const bld = l.building || 'С';
-            const shortDisp = String(cleanRoomShort).endsWith(` ${bld}`) ? cleanRoomShort : `${cleanRoomShort} ${bld}`;
-            roomLinkHtml = `${prefix}<button type="button" class="wt-room-link" data-room-id="${escapeHtml(l.roomId)}" title="Открыть ${escapeHtml(cleanRoomShort)} (${l.floor ?? ''} этаж) на карте">${escapeHtml(shortDisp)}</button>`;
-          } else if (cleanRoomShort) {
-            roomLinkHtml = `<span class="wt-room-unmapped">${prefix}${escapeHtml(cleanRoomShort)}</span>`;
+            if (l.roomId) {
+              const shortDisp = String(cleanRoomShort).endsWith(` ${bld}`) ? cleanRoomShort : `${cleanRoomShort} ${bld}`;
+              roomLinkHtml = `${prefix}<button type="button" class="wt-room-link" data-room-id="${escapeHtml(l.roomId)}" title="Открыть ${escapeHtml(cleanRoomShort)} (${l.floor ?? ''} этаж) на карте">${escapeHtml(shortDisp)}</button>`;
+            } else if (cleanRoomShort) {
+              const shortDisp = String(cleanRoomShort).endsWith(` ${bld}`) ? cleanRoomShort : `${cleanRoomShort} ${bld}`;
+              roomLinkHtml = `<span class="wt-room-unmapped">${prefix}${escapeHtml(shortDisp)}</span>`;
+            }
           }
+
+          const detailsParts = [];
+          if (l.subgroup) detailsParts.push(escapeHtml(formatSubgroupDisplay(l.subgroup)));
+          if (entityHtml) detailsParts.push(entityHtml);
+          if (roomLinkHtml) detailsParts.push(roomLinkHtml);
+          return detailsParts.join(', ');
+        };
+
+        if (entry.items.length === 1) {
+          const l = entry.items[0];
+          const detailsLine = buildSubDetails(l);
+          return `
+            <div class="wt-cell-item">
+              <div class="wt-cell-main">${badgeHtml}<span class="wt-cell-subject">${escapeHtml(entry.subject)}${detailsLine ? ',' : ''}</span></div>
+              ${detailsLine ? `<div class="wt-cell-details">${detailsLine}</div>` : ''}
+            </div>
+          `;
         }
 
-        const detailsParts = [];
-        if (l.subgroup) detailsParts.push(escapeHtml(l.subgroup));
-        if (entityHtml) detailsParts.push(entityHtml);
-        if (roomLinkHtml) detailsParts.push(roomLinkHtml);
-        const detailsLine = detailsParts.join(', ');
+        // Multiple subgroups for same subject & type:
+        // Render ONE badge and ONE title, with each subgroup description on its own line:
+        const linesHtml = entry.items.map(l => {
+          const line = buildSubDetails(l);
+          return `<div class="wt-subgroup-line">${line}</div>`;
+        }).join('');
 
         return `
-          <div class="wt-cell-item">
-            <div class="wt-cell-main">${badgeHtml}<span class="wt-cell-subject">${escapeHtml(l.subject)}${detailsLine ? ',' : ''}</span></div>
-            ${detailsLine ? `<div class="wt-cell-details">${detailsLine}</div>` : ''}
+          <div class="wt-cell-item wt-subgrouped-item">
+            <div class="wt-cell-main">${badgeHtml}<span class="wt-cell-subject">${escapeHtml(entry.subject)},</span></div>
+            <div class="wt-cell-subgroups">
+              ${linesHtml}
+            </div>
           </div>
         `;
       }).join('');
@@ -3675,6 +3871,41 @@ function scrollScheduleTableToToday(rootEl) {
   });
 }
 
+let selectedRoomWeekDate = '';
+let roomWeekDropdownOpen = false;
+
+function getMondayDDMMYYYY(dateObj = new Date()) {
+  const day = dateObj.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const mon = new Date(dateObj);
+  mon.setDate(dateObj.getDate() + diffToMonday);
+  const dd = String(mon.getDate()).padStart(2, '0');
+  const mm = String(mon.getMonth() + 1).padStart(2, '0');
+  const yyyy = mon.getFullYear();
+  return `${dd}.${mm}.${yyyy}`;
+}
+
+function getRoomWeekTriggerLabel(data) {
+  if (selectedRoomWeekDate && availableScheduleWeeks.length > 0) {
+    const found = availableScheduleWeeks.find(w => w.value === selectedRoomWeekDate || String(w.label || '').startsWith(selectedRoomWeekDate));
+    if (found) {
+      const raw = String(found.label || found.value || '').trim();
+      const m = raw.match(/(\d{2}\.\d{2}\.\d{4})/);
+      const datePart = m ? m[1] : raw;
+      const lower = raw.toLowerCase();
+      let kind = '';
+      if (lower.includes('знам')) kind = 'знаменатель';
+      else if (lower.includes('числ')) kind = 'числитель';
+      return kind ? `${datePart} · ${kind}` : datePart;
+    }
+  }
+  if (data && data.weekType) {
+    const mondayStr = getMondayDDMMYYYY();
+    return `${mondayStr} · ${data.weekType.toLowerCase()}`;
+  }
+  return getDefaultAcademicWeekDisplay();
+}
+
 function renderSchedule(panel, title, data, header, descriptionBlock = '') {
   const nowStatus = computeNowStatus(data);
 
@@ -3684,12 +3915,78 @@ function renderSchedule(panel, title, data, header, descriptionBlock = '') {
     ${renderNowStatus(nowStatus)}
   `;
 
+  const roomWeekTriggerLabel = getRoomWeekTriggerLabel(data);
+  const weeks = (Array.isArray(data.availableWeeks) && data.availableWeeks.length > 0)
+    ? data.availableWeeks
+    : (availableScheduleWeeks.length > 0 ? availableScheduleWeeks : [{ value: '', label: roomWeekTriggerLabel, selected: true }]);
+
+  const roomWeekOptionsHtml = weeks.map(w => {
+    const isSelected = selectedRoomWeekDate
+      ? w.value === selectedRoomWeekDate
+      : Boolean(w.selected);
+    const isCurrentWeek = String(w.label || '').toLowerCase().includes('текущ');
+    return `
+      <button type="button" class="schedule-week-option ${isSelected ? 'active' : ''}" data-room-week-val="${escapeHtml(w.value || '')}">
+        <span>${escapeHtml(w.label || w.value)}</span>
+        ${isCurrentWeek ? '<span class="schedule-week-option-tag">текущая</span>' : ''}
+      </button>
+    `;
+  }).join('');
+
+  const roomToolbarHtml = `
+    <div class="room-schedule-toolbar">
+      <div class="schedule-week-picker-row borderless-picker">
+        <button type="button" class="schedule-week-trigger borderless ${roomWeekDropdownOpen ? 'open' : ''}" id="room-week-trigger" title="Выбрать учебную неделю">
+          <span>${escapeHtml(roomWeekTriggerLabel)}</span>
+          <i class="mdi mdi-chevron-down"></i>
+        </button>
+        <div class="schedule-week-dropdown ${roomWeekDropdownOpen ? '' : 'hidden'}" id="room-week-dropdown">
+          ${roomWeekOptionsHtml}
+        </div>
+      </div>
+      <button type="button" class="schedule-icon-btn-borderless schedule-export-right" id="room-export-png-btn" title="Скачать расписание аудитории в PNG" aria-label="Скачать расписание аудитории в PNG">
+        ${DOWNLOAD_SVG_ICON}
+      </button>
+    </div>
+  `;
+
   const tableHtml = buildWeeklyScheduleTableHtml(data.days || [], { mode: 'room' });
 
-  panel.innerHTML = buildPanelLayout(fixedHtml, tableHtml);
+  panel.innerHTML = buildPanelLayout(fixedHtml, `${roomToolbarHtml}${tableHtml}`);
   attachEntityInlineLinks(panel);
   scrollScheduleTableToToday(panel);
   applyMobileSheetSnapMeasurement(panel);
+
+  const roomWeekTrig = panel.querySelector('#room-week-trigger');
+  const roomWeekDd = panel.querySelector('#room-week-dropdown');
+  if (roomWeekTrig && roomWeekDd) {
+    roomWeekTrig.addEventListener('click', (e) => {
+      e.stopPropagation();
+      roomWeekDropdownOpen = !roomWeekDropdownOpen;
+      roomWeekTrig.classList.toggle('open', roomWeekDropdownOpen);
+      roomWeekDd.classList.toggle('hidden', !roomWeekDropdownOpen);
+    });
+    panel.querySelectorAll('[data-room-week-val]').forEach(opt => {
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nextWeek = opt.dataset.roomWeekVal || '';
+        selectedRoomWeekDate = nextWeek;
+        roomWeekDropdownOpen = false;
+        roomWeekTrig.classList.remove('open');
+        roomWeekDd.classList.add('hidden');
+        if (currentRoomPanelId) {
+          openRoom(currentRoomPanelId, { preserveView: true });
+        }
+      });
+    });
+  }
+
+  const roomPngBtn = panel.querySelector('#room-export-png-btn');
+  if (roomPngBtn) {
+    roomPngBtn.addEventListener('click', () => {
+      exportRoomScheduleToPng(title, data);
+    });
+  }
 }
 
 // ================ ПОЛНОЭКРАННЫЙ РАЗДЕЛ РАСПИСАНИЯ (ГРУППЫ И ПРЕПОДАВАТЕЛИ) ================
@@ -3914,18 +4211,16 @@ async function selectScheduleEntity(type, name, { switchMobileToDetail = true, w
     } else if (data.selectedWeekDate) {
       selectedScheduleWeekDate = data.selectedWeekDate;
     }
-    if (userProfile.telegramLinked) {
-      if (!userProfile.recentViews || typeof userProfile.recentViews !== 'object') {
-        userProfile.recentViews = {};
-      }
-      const prevEntry = userProfile.recentViews[entityKey];
-      const prevCount = (prevEntry && typeof prevEntry === 'object') ? (Number(prevEntry.count) || 0) : (Number(prevEntry) ? 1 : 0);
-      userProfile.recentViews[entityKey] = {
-        count: prevCount + 1,
-        lastViewedAt: Date.now()
-      };
-      syncUserProfileToServer({ recentViews: userProfile.recentViews });
+    if (!userProfile.recentViews || typeof userProfile.recentViews !== 'object') {
+      userProfile.recentViews = {};
     }
+    const prevEntry = userProfile.recentViews[entityKey];
+    const prevCount = (prevEntry && typeof prevEntry === 'object') ? (Number(prevEntry.count) || 0) : (Number(prevEntry) ? 1 : 0);
+    userProfile.recentViews[entityKey] = {
+      count: prevCount + 1,
+      lastViewedAt: Date.now()
+    };
+    syncUserProfileToServer({ recentViews: userProfile.recentViews });
     entityLoading = false;
     renderScheduleWorkspace();
     haptic('success');
@@ -3937,7 +4232,6 @@ async function selectScheduleEntity(type, name, { switchMobileToDetail = true, w
 }
 
 function toggleScheduleFavorite(entityType, entityName) {
-  if (!userProfile.telegramLinked) return;
   const key = `${entityType}:${entityName}`;
   const favs = Array.isArray(userProfile.favorites) ? [...userProfile.favorites] : [];
   const idx = favs.indexOf(key);
@@ -3954,14 +4248,12 @@ function toggleScheduleFavorite(entityType, entityName) {
 
 function buildScheduleSidebarData() {
   const q = directoryFilterQuery.toLowerCase().replace(/ё/g, 'е').trim();
-  const isLinked = Boolean(userProfile.telegramLinked);
-  const favSet = new Set(isLinked && Array.isArray(userProfile.favorites) ? userProfile.favorites : []);
-  const recentMap = (isLinked && userProfile.recentViews && typeof userProfile.recentViews === 'object')
+  const favSet = new Set(Array.isArray(userProfile.favorites) ? userProfile.favorites : []);
+  const recentMap = (userProfile.recentViews && typeof userProfile.recentViews === 'object')
     ? userProfile.recentViews
     : {};
 
   const getRecentScore = (key) => {
-    if (!isLinked) return { count: 0, lastViewedAt: 0 };
     const val = recentMap[key];
     if (!val) return { count: 0, lastViewedAt: 0 };
     if (typeof val === 'number') return { count: 1, lastViewedAt: val };
@@ -3984,16 +4276,14 @@ function buildScheduleSidebarData() {
     const kA = `${a.itemType}:${a.name}`;
     const kB = `${b.itemType}:${b.name}`;
 
-    if (isLinked) {
-      const fA = favSet.has(kA) ? 1 : 0;
-      const fB = favSet.has(kB) ? 1 : 0;
-      if (fA !== fB) return fB - fA;
+    const fA = favSet.has(kA) ? 1 : 0;
+    const fB = favSet.has(kB) ? 1 : 0;
+    if (fA !== fB) return fB - fA;
 
-      const rA = getRecentScore(kA);
-      const rB = getRecentScore(kB);
-      if (rA.count !== rB.count) return rB.count - rA.count;
-      if (rA.lastViewedAt !== rB.lastViewedAt) return rB.lastViewedAt - rA.lastViewedAt;
-    }
+    const rA = getRecentScore(kA);
+    const rB = getRecentScore(kB);
+    if (rA.count !== rB.count) return rB.count - rA.count;
+    if (rA.lastViewedAt !== rB.lastViewedAt) return rB.lastViewedAt - rA.lastViewedAt;
 
     if (q) {
       const aLabel = (a.itemType === 'group' ? a.name : (a.fullName || a.name)).toLowerCase().replace(/ё/g, 'е');
@@ -4022,7 +4312,7 @@ function buildScheduleSidebarData() {
     sidebarListHtml = unifiedItems.map(item => {
       const itemType = item.itemType;
       const entityKey = `${itemType}:${item.name}`;
-      const isFav = isLinked && favSet.has(entityKey);
+      const isFav = favSet.has(entityKey);
       const isActive = currentEntitySchedule &&
         currentEntitySchedule.type === itemType &&
         currentEntitySchedule.name === item.name;
@@ -4030,7 +4320,7 @@ function buildScheduleSidebarData() {
         ? `Группа ${item.name}`
         : (item.fullName || item.shortName || item.name);
       const subText = itemType === 'group'
-        ? (item.facultyCode || item.faculty || '')
+        ? formatFacultyFullName(item.faculty || item.facultyCode || '')
         : (item.regalia || '');
       return `
         <div class="sched-dir-item ${isActive ? 'active' : ''}" role="button" tabindex="0" data-entity-type="${itemType}" data-entity-name="${escapeHtml(item.name)}">
@@ -4039,11 +4329,9 @@ function buildScheduleSidebarData() {
             ${subText ? `<div class="sched-dir-sub">${escapeHtml(subText)}</div>` : ''}
           </div>
           <div class="sched-dir-right">
-            ${isLinked ? `
-              <button type="button" class="sched-fav-btn ${isFav ? 'active' : ''}" data-fav-type="${itemType}" data-fav-name="${escapeHtml(item.name)}" title="${isFav ? 'Убрать из избранного' : 'В избранное'}" aria-label="Избранное">
-                <i class="mdi ${isFav ? 'mdi-star' : 'mdi-star-outline'}"></i>
-              </button>
-            ` : ''}
+            <button type="button" class="sched-fav-btn ${isFav ? 'active' : ''}" data-fav-type="${itemType}" data-fav-name="${escapeHtml(item.name)}" title="${isFav ? 'Убрать из избранного' : 'В избранное'}" aria-label="Избранное">
+              <i class="mdi ${isFav ? 'mdi-star' : 'mdi-star-outline'}"></i>
+            </button>
             <i class="mdi mdi-chevron-right sched-dir-arrow"></i>
           </div>
         </div>
@@ -4084,6 +4372,158 @@ function updateScheduleSidebarListInPlace(view) {
   }
 }
 
+const DOWNLOAD_SVG_ICON = `<svg class="action-icon-download" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11.5"/><path d="m7.75 11.25 4.25 4.25 4.25-4.25"/><path d="M5 19.5h14"/></svg>`;
+
+const MDI_BADGE_PATHS = {
+  book: 'M19 2L14 6.5V17.5L19 13V2M6.5 5C4.55 5 2.45 5.4 1 6.5V21.16C1 21.41 1.25 21.66 1.5 21.66C1.6 21.66 1.65 21.59 1.75 21.59C3.1 20.94 5.05 20.5 6.5 20.5C8.45 20.5 10.55 20.9 12 22C13.35 21.15 15.8 20.5 17.5 20.5C19.15 20.5 20.85 20.81 22.25 21.56C22.35 21.61 22.4 21.59 22.5 21.59C22.75 21.59 23 21.34 23 21.09V6.5C22.4 6.05 21.75 5.75 21 5.5V19C19.9 18.65 18.7 18.5 17.5 18.5C15.8 18.5 13.35 19.15 12 20V6.5C10.55 5.4 8.45 5 6.5 5Z',
+  fx: 'M12.42 5.29C11.32 5.19 10.35 5.93 10.17 7.01L9.67 10H13V12H9.33L8.24 18.59C7.92 20.57 6.19 22 4.19 22C3.5 22 2.86 21.84 2.27 21.54L3.16 19.75C3.47 19.91 3.82 20 4.19 20C5.21 20 6.09 19.27 6.26 18.26L7.31 12H5V10H7.65L8.2 6.68C8.55 4.54 10.5 3.09 12.66 3.29C13.39 3.36 14.08 3.63 14.66 4.07L13.46 5.67C13.15 5.44 12.79 5.32 12.42 5.29M22 13.65L20.59 12.24L17.76 15.07L14.93 12.24L13.5 13.65L16.35 16.5L13.5 19.31L14.93 20.72L17.76 17.89L20.59 20.72L22 19.31L19.17 16.5L22 13.65Z',
+  microscope: 'M11.68 4.4L9.56 2.28L6.03 5.81L8.15 7.93L6.74 9.35L5.32 7.93L3.91 9.35L7.44 12.88L8.86 11.47L7.44 10.05L8.86 8.64L10.97 10.76L14.5 7.23L12.39 5.11L13.1 4.4C14.12 3.92 15.27 3.74 16.41 3.92C19.55 4.41 21.7 7.35 21.21 10.5C20.92 12.37 19.72 13.97 18 14.79V13.17C19.24 12.08 19.65 10.32 19 8.79C18.35 7.27 16.79 6.34 15.14 6.5C14.43 6.57 13.75 6.84 13.19 7.29L11.78 5.88L12.39 5.11L11.68 4.4M5 16V18H10.5C11.47 18 12.35 18.56 12.76 19.44L13 20H3V22H21V20H18C19.93 18.54 21 16.27 21 13.85V11H19V13.85C19 16.14 17.14 18 14.85 18H14.15C13.61 16.8 12.41 16 11.09 16H5Z'
+};
+
+function drawCanvasBadge(ctx, text, x, y) {
+  ctx.save();
+  const badgeMap = {
+    'Лек.': { bg: '#e4ffe8', text: '#1b952d', border: '#c6f5cd', icon: 'book' },
+    'Упр.': { bg: '#eff7fd', text: '#4386bb', border: '#d2e8fb', icon: 'fx' },
+    'Лаб.': { bg: '#fbf0fe', text: '#c05fdd', border: '#f3d9fd', icon: 'microscope' }
+  };
+  const cfg = badgeMap[text] || { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', icon: 'dot' };
+  const h = 20;
+
+  ctx.font = 'bold 11px Onest, sans-serif';
+  const textW = text ? ctx.measureText(text).width : 0;
+  const w = text ? Math.max(58, Math.ceil(22 + textW + 8)) : 32;
+  const r = 6;
+
+  ctx.fillStyle = cfg.bg;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+  ctx.strokeStyle = cfg.border;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  if (MDI_BADGE_PATHS[cfg.icon] && typeof Path2D !== 'undefined') {
+    ctx.save();
+    ctx.translate(x + 5, y + 4);
+    ctx.scale(12 / 24, 12 / 24);
+    ctx.fillStyle = cfg.text;
+    ctx.fill(new Path2D(MDI_BADGE_PATHS[cfg.icon]));
+    ctx.restore();
+  }
+
+  ctx.font = 'bold 11px Onest, sans-serif';
+  ctx.fillStyle = cfg.text;
+  ctx.textAlign = 'left';
+  ctx.fillText(text || '', x + 20, y + 14);
+
+  ctx.restore();
+  return w;
+}
+
+async function saveCanvasPng(canvas, filename, title = '') {
+  const dataUrl = canvas.toDataURL('image/png');
+  const isMobile = window.innerWidth <= 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+  if (isMobile && typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
+    try {
+      const parts = dataUrl.split(',');
+      const byteStr = atob(parts[1] || '');
+      const ab = new ArrayBuffer(byteStr.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
+      const file = new File([ab], filename, { type: 'image/png' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: title || filename
+        });
+        showToast('Изображение готово к сохранению');
+        return;
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+
+  if (isMobile) {
+    try {
+      const tgId = telegramUser?.id || userProfile?.telegramId || null;
+      const inTgWebApp = Boolean(tg && tg.initData);
+      const res = await fetch('/api/export-png', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dataUrl,
+          filename,
+          title,
+          sendToTelegram: Boolean(inTgWebApp && tgId),
+          telegramId: tgId
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && data.url) {
+          const fullUrl = new URL(data.url, location.origin).toString();
+          if (inTgWebApp && typeof tg.downloadFile === 'function') {
+            try {
+              tg.downloadFile({ url: fullUrl, file_name: filename });
+            } catch (e) {}
+          }
+          if (data.sentToTelegram) {
+            showToast('Отправлено в чат с ботом — сохраните в галерею в 1 касание');
+            return;
+          }
+          const a = document.createElement('a');
+          a.href = fullUrl;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          showToast('Изображение сохранено в PNG');
+          return;
+        }
+      }
+    } catch (e) {}
+  }
+
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = dataUrl;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  showToast('Изображение сохранено в PNG');
+}
+
+function wrapCanvasLines(ctx, text, maxWidth) {
+  if (!text) return [];
+  const words = String(text).split(' ');
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(test).width > maxWidth && cur) {
+      lines.push(cur);
+      cur = w;
+    } else {
+      cur = test;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+function formatSchedulePngSubtitle(triggerLabel) {
+  const raw = String(triggerLabel || '').trim();
+  const m = raw.match(/(\d{2}\.\d{2}\.\d{4})/);
+  const dateStr = m ? m[1] : raw;
+  const isZnam = raw.toLowerCase().includes('знам');
+  const isChisl = raw.toLowerCase().includes('числ');
+  const parity = isZnam ? 'Знаменатель' : (isChisl ? 'Числитель' : '');
+  return parity ? `Неделя ${dateStr} · ${parity}` : `Неделя ${dateStr}`;
+}
+
 function renderScheduleWorkspace() {
   const view = document.getElementById('schedule-view');
   if (!view) return;
@@ -4093,36 +4533,11 @@ function renderScheduleWorkspace() {
   const { sidebarListHtml } = buildScheduleSidebarData();
   const mainHtml = renderScheduleMainPane();
 
-  const weekTriggerLabel = getCurrentWeekTriggerLabel();
-  const weekOptionsHtml = (availableScheduleWeeks.length > 0 ? availableScheduleWeeks : [
-    { value: '', label: weekTriggerLabel, selected: true }
-  ]).map(w => {
-    const isSelected = selectedScheduleWeekDate
-      ? w.value === selectedScheduleWeekDate
-      : Boolean(w.selected);
-    const isCurrentWeek = String(w.label || '').toLowerCase().includes('текущ');
-    return `
-      <button type="button" class="schedule-week-option ${isSelected ? 'active' : ''}" data-week-val="${escapeHtml(w.value || '')}">
-        <span>${escapeHtml(w.label || w.value)}</span>
-        ${isCurrentWeek ? '<span class="schedule-week-option-tag">текущая</span>' : ''}
-      </button>
-    `;
-  }).join('');
-
   view.innerHTML = `
     <div class="schedule-workspace ${scheduleSidebarCollapsed ? 'sidebar-collapsed' : ''}">
       <div class="schedule-sidebar-wrap">
         <aside class="schedule-sidebar ${scheduleSidebarCollapsed ? 'collapsed' : ''}" id="schedule-sidebar">
           <div class="schedule-sidebar-top">
-            <div class="schedule-week-picker-row">
-              <button type="button" class="schedule-week-trigger ${scheduleWeekDropdownOpen ? 'open' : ''}" id="schedule-week-trigger" title="Выбрать учебную неделю">
-                <span>${escapeHtml(weekTriggerLabel)}</span>
-                <i class="mdi mdi-chevron-down"></i>
-              </button>
-              <div class="schedule-week-dropdown ${scheduleWeekDropdownOpen ? '' : 'hidden'}" id="schedule-week-dropdown">
-                ${weekOptionsHtml}
-              </div>
-            </div>
             <div class="schedule-sidebar-title-row">
               <h2 class="schedule-sidebar-heading">Расписание</h2>
             </div>
@@ -4193,51 +4608,72 @@ function renderScheduleMainPane() {
   const data = currentEntityData;
   const isGroup = data.entityType === 'group';
   const title = isGroup ? `Группа ${data.name}` : (data.fullName || data.shortName || data.name);
-  const kickerText = isGroup ? (data.facultyCode || data.faculty || '') : (data.regalia || '');
+  const kickerText = isGroup ? formatFacultyFullName(data.faculty || data.facultyCode || '') : (data.regalia || '');
+
+  const weekTriggerLabel = getCurrentWeekTriggerLabel();
+  const weekOptionsHtml = (availableScheduleWeeks.length > 0 ? availableScheduleWeeks : [
+    { value: '', label: weekTriggerLabel, selected: true }
+  ]).map(w => {
+    const isSelected = selectedScheduleWeekDate
+      ? w.value === selectedScheduleWeekDate
+      : Boolean(w.selected);
+    const isCurrentWeek = String(w.label || '').toLowerCase().includes('текущ');
+    return `
+      <button type="button" class="schedule-week-option ${isSelected ? 'active' : ''}" data-week-val="${escapeHtml(w.value || '')}">
+        <span>${escapeHtml(w.label || w.value)}</span>
+        ${isCurrentWeek ? '<span class="schedule-week-option-tag">текущая</span>' : ''}
+      </button>
+    `;
+  }).join('');
 
   const st = computeClientEntityNowStatus(data);
   const statusCardHtml = `
-    <div class="now-status ${st.type === 'busy' ? 'busy' : 'free'} schedule-hero-status" ${st.roomId ? `data-room-id="${escapeHtml(st.roomId)}" style="cursor:pointer" title="Открыть расписание аудитории на карте"` : ''}>
-      <div class="now-dot"></div>
+    <div class="now-status ${st.type === 'busy' ? 'busy' : 'free'} schedule-hero-status">
       <div class="now-body">
-        <div class="now-title">${escapeHtml(st.title)}</div>
-        ${st.details ? `<div class="now-details">${escapeHtml(st.details)}</div>` : ''}
+        <div class="now-top-row">
+          <div class="now-title">${escapeHtml(st.title)}</div>
+        </div>
+        <div class="now-bottom-row">
+          ${st.details ? `<div class="now-details">${escapeHtml(st.details)}</div>` : '<div class="now-details"></div>'}
+          ${st.roomId ? `
+            <button type="button" class="now-locate-btn" data-room-id="${escapeHtml(st.roomId)}" title="Показать аудиторию на карте" aria-label="Показать аудиторию на карте">
+              <i class="mdi mdi-map-marker-radius-outline"></i>
+            </button>
+          ` : ''}
+        </div>
       </div>
-      ${st.roomId ? `<span class="schedule-status-map-link" title="Открыть на карте"><i class="mdi mdi-map-marker-radius-outline"></i><span>На карте</span></span>` : ''}
-    </div>
-  `;
-
-  const toolbarHtml = `
-    <div class="schedule-toolbar-row">
-      ${isGroup ? `
-        <button type="button" class="schedule-action-chip" id="schedule-cheatsheet-btn" title="Шпаргалка: дисциплины и преподаватели группы">
-          <i class="mdi mdi-notebook-outline"></i>
-          <span>Шпаргалка</span>
-        </button>
-      ` : ''}
-      <button type="button" class="schedule-action-chip" id="schedule-export-png-btn" title="Скачать расписание картинкой PNG">
-        <i class="mdi mdi-image-outline"></i>
-        <span>Скачать PNG</span>
-      </button>
     </div>
   `;
 
   const days = data.days || [];
   const tableHtml = buildWeeklyScheduleTableHtml(days, { mode: isGroup ? 'group' : 'lecturer' });
 
+  const toolbarHtml = `
+    <div class="schedule-table-toolbar">
+      <div class="schedule-week-picker-row borderless-picker">
+        <button type="button" class="schedule-week-trigger borderless ${scheduleWeekDropdownOpen ? 'open' : ''}" id="schedule-week-trigger" title="Выбрать учебную неделю">
+          <span>${escapeHtml(weekTriggerLabel)}</span>
+          <i class="mdi mdi-chevron-down"></i>
+        </button>
+        <div class="schedule-week-dropdown ${scheduleWeekDropdownOpen ? '' : 'hidden'}" id="schedule-week-dropdown">
+          ${weekOptionsHtml}
+        </div>
+      </div>
+      <button type="button" class="schedule-icon-btn-borderless schedule-export-right" id="schedule-export-png-btn" title="Скачать расписание в PNG" aria-label="Скачать расписание в PNG">
+        ${DOWNLOAD_SVG_ICON}
+      </button>
+    </div>
+  `;
+
   return `
     <div class="schedule-main-header">
       <div class="schedule-hero-top">
+        <button type="button" class="schedule-detail-close-btn" id="sched-detail-close" title="Закрыть" aria-label="Закрыть">✕</button>
         <div class="schedule-hero-title-block">
           ${kickerText ? `<div class="schedule-entity-kicker">${escapeHtml(kickerText)}</div>` : ''}
           <h1 class="schedule-entity-title">
-            <span class="schedule-entity-title-text">${escapeHtml(title)}</span><button type="button" class="share-icon schedule-share-icon" id="schedule-share-btn" title="Скопировать прямую ссылку на расписание" aria-label="Скопировать прямую ссылку на расписание"><i class="mdi mdi-link-variant"></i></button>
+            <span class="schedule-entity-title-text">${escapeHtml(title)}</span><button type="button" class="share-icon schedule-share-icon" id="schedule-share-btn" title="Скопировать прямую ссылку на расписание" aria-label="Скопировать прямую ссылку на расписание"><i class="mdi mdi-share"></i></button>
           </h1>
-        </div>
-        <div class="schedule-header-actions">
-          <button type="button" class="schedule-back-arrow-btn" id="sched-mobile-back" title="К списку" aria-label="К списку">
-            <i class="mdi mdi-chevron-left"></i>
-          </button>
         </div>
       </div>
 
@@ -4320,13 +4756,12 @@ function openCheatSheetModal() {
       <div class="cheatsheet-modal-header">
         <div class="cheatsheet-modal-title">
           <i class="mdi mdi-notebook-outline"></i>
-          <span>Шпаргалка · Группа ${escapeHtml(currentEntityData.name)}</span>
+          <span>Группа ${escapeHtml(currentEntityData.name)}</span>
         </div>
         <div class="cheatsheet-modal-header-actions">
           ${list.length > 0 ? `
-            <button type="button" class="schedule-action-chip" id="cheatsheet-export-png-btn" title="Скачать шпаргалку картинкой PNG">
-              <i class="mdi mdi-image-outline"></i>
-              <span>PNG</span>
+            <button type="button" class="schedule-icon-btn-borderless" id="cheatsheet-export-png-btn" title="Скачать шпаргалку в PNG" aria-label="Скачать шпаргалку в PNG">
+              ${DOWNLOAD_SVG_ICON}
             </button>
           ` : ''}
           <button type="button" class="cheatsheet-modal-close" id="cheatsheet-modal-close" aria-label="Закрыть">✕</button>
@@ -4360,29 +4795,44 @@ function exportCheatSheetToPng() {
   const list = Array.isArray(currentEntityData.cheatSheet) ? currentEntityData.cheatSheet : [];
   if (!list.length) return;
 
-  const isDark = document.documentElement.dataset.theme === 'dark';
-  const bg = isDark ? '#1e222d' : '#ffffff';
-  const cardBg = isDark ? '#252a37' : '#f8fafc';
-  const textMain = isDark ? '#f1f5f9' : '#0f172a';
-  const textMuted = isDark ? '#94a3b8' : '#64748b';
-  const borderCol = isDark ? '#333b4d' : '#e2e8f0';
+  const bg = '#ffffff';
+  const cardBg = '#f8fafc';
+  const textMain = '#0f172a';
+  const textMuted = '#64748b';
+  const borderCol = '#e2e8f0';
 
-  const badgeColors = {
-    'Лек.': { bg: '#e4ffe8', text: '#1b952d' },
-    'Упр.': { bg: '#eff7fd', text: '#4386bb' },
-    'Лаб.': { bg: '#fbf0fe', text: '#c05fdd' }
-  };
-
-  const W = 920;
-  const subjColW = 310;
+  const W = 960;
+  const subjColW = 230;
+  const detColW = W - 48 - subjColW;
   const padX = 24;
-  const tableTop = 84;
+  const tableTop = 58;
   const headerH = 40;
 
+  // Pre-measure dynamic row heights using offscreen canvas context
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+  mctx.font = '600 13px Onest, sans-serif';
+
   const rowHeights = list.map(item => {
-    const rowsCount = Math.max(1, (item.rows || []).length);
-    return Math.max(54, rowsCount * 32 + 18);
+    const subj = String(item.subject || item.headerLabel || '').replace(/:+$/, '');
+    const subjLines = wrapCanvasLines(mctx, subj, subjColW - 28);
+    const subjH = Math.max(24, subjLines.length * 18);
+
+    mctx.font = '500 12.5px Onest, sans-serif';
+    const rows = Array.isArray(item.rows) ? item.rows : [];
+    let rowsTotalH = 0;
+    rows.forEach(row => {
+      const badgesCount = (row.types || []).length;
+      const badgesWidth = badgesCount * 58;
+      const textMaxW = Math.max(160, detColW - badgesWidth - 28);
+      const textLines = wrapCanvasLines(mctx, row.text || '', textMaxW);
+      const rowItemH = Math.max(24, textLines.length * 18 + 4);
+      rowsTotalH += rowItemH + 6;
+    });
+
+    return Math.max(54, Math.max(subjH, rowsTotalH) + 18);
   });
+
   const totalTableH = headerH + rowHeights.reduce((a, b) => a + b, 0);
   const H = tableTop + totalTableH + 28;
 
@@ -4395,14 +4845,12 @@ function exportCheatSheetToPng() {
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
+  // Clean title without subtitle
   ctx.fillStyle = textMain;
-  ctx.font = 'bold 20px Onest, sans-serif';
-  ctx.fillText(`Шпаргалка · Группа ${currentEntityData.name}`, padX, 38);
+  ctx.font = 'bold 22px Onest, sans-serif';
+  ctx.fillText(`Группа ${currentEntityData.name}`, padX, 36);
 
-  ctx.fillStyle = textMuted;
-  ctx.font = '500 13px Onest, sans-serif';
-  ctx.fillText(`${getCurrentWeekTriggerLabel()} · Карта РГРТУ`, padX, 60);
-
+  // Table header
   ctx.fillStyle = cardBg;
   ctx.fillRect(padX, tableTop, W - padX * 2, headerH);
 
@@ -4411,10 +4859,11 @@ function exportCheatSheetToPng() {
   ctx.strokeRect(padX, tableTop, W - padX * 2, totalTableH);
 
   ctx.fillStyle = textMuted;
-  ctx.font = 'bold 12px Onest, sans-serif';
+  ctx.font = 'bold 11.5px Onest, sans-serif';
   ctx.fillText('ДИСЦИПЛИНА', padX + 14, tableTop + 25);
   ctx.fillText('ВИД ЗАНЯТИЙ И ПРЕПОДАВАТЕЛИ', padX + subjColW + 14, tableTop + 25);
 
+  // Vertical column divider
   ctx.beginPath();
   ctx.moveTo(padX + subjColW, tableTop);
   ctx.lineTo(padX + subjColW, tableTop + totalTableH);
@@ -4423,6 +4872,8 @@ function exportCheatSheetToPng() {
   let curY = tableTop + headerH;
   list.forEach((item, idx) => {
     const rH = rowHeights[idx];
+    ctx.strokeStyle = borderCol;
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padX, curY);
     ctx.lineTo(W - padX, curY);
@@ -4431,74 +4882,104 @@ function exportCheatSheetToPng() {
     ctx.fillStyle = textMain;
     ctx.font = '600 13px Onest, sans-serif';
     const subj = String(item.subject || item.headerLabel || '').replace(/:+$/, '');
-    const subjLines = [];
-    const words = subj.split(' ');
-    let line = '';
-    for (const w of words) {
-      const test = line ? `${line} ${w}` : w;
-      if (test.length > 34 && line) {
-        subjLines.push(line);
-        line = w;
-      } else {
-        line = test;
-      }
-    }
-    if (line) subjLines.push(line);
-    subjLines.slice(0, 3).forEach((ln, lIdx) => {
-      ctx.fillText(ln, padX + 14, curY + 24 + lIdx * 17);
+    const subjLines = wrapCanvasLines(ctx, subj, subjColW - 28);
+    subjLines.forEach((ln, lIdx) => {
+      ctx.fillText(ln, padX + 14, curY + 24 + lIdx * 18);
     });
 
     const rows = Array.isArray(item.rows) ? item.rows : [];
-    rows.forEach((row, rIdx) => {
-      const ry = curY + 14 + rIdx * 30;
+    let rowItemY = curY + 14;
+    rows.forEach(row => {
       let bx = padX + subjColW + 14;
       (row.types || []).forEach(t => {
-        const pal = badgeColors[t] || badgeColors['Упр.'];
-        const bw = 44;
-        const bh = 20;
-        ctx.fillStyle = pal.bg;
-        ctx.beginPath();
-        ctx.roundRect(bx, ry, bw, bh, 6);
-        ctx.fill();
-        ctx.fillStyle = pal.text;
-        ctx.font = 'bold 11px Onest, sans-serif';
-        ctx.fillText(t, bx + 8, ry + 14);
+        const bw = drawCanvasBadge(ctx, t, bx, rowItemY);
         bx += bw + 6;
       });
 
       ctx.fillStyle = textMain;
       ctx.font = '500 12.5px Onest, sans-serif';
-      const lecStr = String(row.text || '').slice(0, 68);
-      ctx.fillText(lecStr, bx + 4, ry + 14);
+      const textMaxW = Math.max(160, detColW - (bx - (padX + subjColW)) - 14);
+      const lecLines = wrapCanvasLines(ctx, row.text || '', textMaxW);
+      lecLines.forEach((ln, lnIdx) => {
+        ctx.fillText(ln, bx + 4, rowItemY + 14 + lnIdx * 18);
+      });
+
+      const itemTotalH = Math.max(24, lecLines.length * 18 + 4);
+      rowItemY += itemTotalH + 6;
     });
 
     curY += rH;
   });
 
-  const link = document.createElement('a');
-  link.download = `cheatsheet-${currentEntityData.name}.png`;
-  link.href = canvas.toDataURL('image/png');
-  link.click();
-  showToast('Шпаргалка сохранена в PNG');
+  saveCanvasPng(canvas, `cheatsheet-${currentEntityData.name}.png`, `Шпаргалка группы ${currentEntityData.name}`);
 }
 
 function exportScheduleToPng() {
   if (!currentEntityData) return;
-  const isDark = document.documentElement.dataset.theme === 'dark';
-  const bg = isDark ? '#1e222d' : '#ffffff';
-  const cardBg = isDark ? '#252a37' : '#f8fafc';
-  const textMain = isDark ? '#f1f5f9' : '#0f172a';
-  const textMuted = isDark ? '#94a3b8' : '#64748b';
-  const borderCol = isDark ? '#333b4d' : '#e2e8f0';
-
   const days = currentEntityData.days || [];
   const slots = STANDARD_TIME_SLOTS;
-  const colW = 220;
-  const timeW = 96;
-  const rowH = 92;
-  const headH = 90;
-  const W = timeW + days.length * colW + 40;
-  const H = headH + 46 + slots.length * rowH + 30;
+
+  const bg = '#ffffff';
+  const cardBg = '#f8fafc';
+  const textMain = '#0f172a';
+  const textMuted = '#64748b';
+  const borderCol = '#e2e8f0';
+
+  const timeColW = 120;
+  const colW = 230;
+  const padX = 20;
+  const tableTop = 78;
+  const headerH = 48;
+  const W = timeColW + days.length * colW + padX * 2;
+
+  // Pre-measure dynamic row heights for each slot
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+
+  const slotHeights = slots.map(slot => {
+    let maxSlotH = 76;
+    days.forEach(d => {
+      const matching = (d.lessons || []).filter(l => (l.time || '').replace('-', '–') === slot);
+      if (matching.length === 0) return;
+
+      const grouped = [];
+      const map = new Map();
+      matching.forEach(l => {
+        const key = `${(l.subject || '').trim()}|${(l.type || '').trim()}`;
+        if (!map.has(key)) {
+          const entry = { subject: l.subject, type: l.type, items: [] };
+          map.set(key, entry);
+          grouped.push(entry);
+        }
+        map.get(key).items.push(l);
+      });
+
+      let cellH = 10;
+      grouped.forEach(g => {
+        mctx.font = '600 12px Onest, sans-serif';
+        const subjLines = wrapCanvasLines(mctx, g.subject, colW - 74);
+        cellH += Math.max(22, subjLines.length * 16) + 4;
+
+        mctx.font = '500 11px Onest, sans-serif';
+        g.items.forEach(it => {
+          const cleanRoom = it.roomShort === '🏀' ? 'Спортзал' : (it.roomShort || '');
+          const bld = it.building || 'С';
+          const roomDisp = cleanRoom ? (/^(спортзал|зал)/i.test(cleanRoom) ? cleanRoom : (String(cleanRoom).endsWith(` ${bld}`) ? `ауд. ${cleanRoom}` : `ауд. ${cleanRoom} ${bld}`)) : '';
+          const line = [formatSubgroupDisplay(it.subgroup), it.lecturer || it.group, roomDisp].filter(Boolean).join(', ');
+          const detLines = wrapCanvasLines(mctx, line, colW - 20);
+          cellH += Math.max(16, detLines.length * 15) + 3;
+        });
+        cellH += 4;
+      });
+
+      if (cellH > maxSlotH) maxSlotH = cellH;
+    });
+
+    return Math.max(92, maxSlotH + 16);
+  });
+
+  const totalTableH = headerH + slotHeights.reduce((a, b) => a + b, 0);
+  const H = tableTop + totalTableH + 28;
 
   const canvas = document.createElement('canvas');
   canvas.width = W * 2;
@@ -4509,76 +4990,319 @@ function exportScheduleToPng() {
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
+  // Main title
   const title = currentEntityData.entityType === 'group'
     ? `Группа ${currentEntityData.name}`
     : (currentEntityData.fullName || currentEntityData.name);
   ctx.fillStyle = textMain;
-  ctx.font = 'bold 20px Onest, sans-serif';
-  ctx.fillText(title, 20, 36);
+  ctx.font = 'bold 22px Onest, sans-serif';
+  ctx.fillText(title, padX, 36);
 
+  // Subtitle in format: "Неделя 02.11.2026 · Знаменатель"
   ctx.fillStyle = textMuted;
   ctx.font = '500 13px Onest, sans-serif';
-  ctx.fillText(`${getCurrentWeekTriggerLabel()} · Карта РГРТУ`, 20, 58);
+  ctx.fillText(formatSchedulePngSubtitle(getCurrentWeekTriggerLabel()), padX, 58);
 
-  const tableTop = 76;
+  // Table header background
   ctx.fillStyle = cardBg;
-  ctx.fillRect(20, tableTop, W - 40, 42);
+  ctx.fillRect(padX, tableTop, W - padX * 2, headerH);
+
+  // Table border
+  ctx.strokeStyle = borderCol;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(padX, tableTop, W - padX * 2, totalTableH);
+
+  // Centered Time header
+  ctx.fillStyle = textMuted;
+  ctx.font = 'bold 12px Onest, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Время', padX + timeColW / 2, tableTop + 29);
+
+  // Days headers (Weekday + Date, no "Сегодня"/"Завтра")
+  days.forEach((d, idx) => {
+    const x = padX + timeColW + idx * colW;
+    ctx.beginPath();
+    ctx.moveTo(x, tableTop);
+    ctx.lineTo(x, tableTop + totalTableH);
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = textMain;
+    ctx.font = 'bold 13.5px Onest, sans-serif';
+    ctx.fillText(d.dayName || '', x + 12, tableTop + 20);
+
+    let dateText = d.dateText || d.dateLabel || '';
+    if (!dateText && typeof d.date === 'string' && d.date.includes('-')) {
+      const [, mStr, dStr] = d.date.split('-');
+      if (dStr && mStr) dateText = `${parseInt(dStr, 10)} ${MONTH_NAMES[parseInt(mStr, 10) - 1] || ''}`;
+    }
+    ctx.fillStyle = textMuted;
+    ctx.font = '500 11.5px Onest, sans-serif';
+    ctx.fillText(dateText, x + 12, tableTop + 38);
+  });
+
+  let curY = tableTop + headerH;
+  slots.forEach((slot, sIdx) => {
+    const sH = slotHeights[sIdx];
+    ctx.strokeStyle = borderCol;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padX, curY);
+    ctx.lineTo(W - padX, curY);
+    ctx.stroke();
+
+    // Centered Time column contents
+    const mStart = slot.match(/^(\d{1,2}:\d{2})/);
+    const breakRange = mStart && BREAKS[mStart[1]] ? BREAKS[mStart[1]] : '';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = textMain;
+    ctx.font = 'bold 12px Onest, sans-serif';
+    ctx.fillText(`${sIdx + 1} пара`, padX + timeColW / 2, curY + 22);
+
+    ctx.fillStyle = '#334155';
+    ctx.font = '600 11.5px Onest, sans-serif';
+    ctx.fillText(slot, padX + timeColW / 2, curY + 39);
+
+    if (breakRange) {
+      ctx.fillStyle = textMuted;
+      ctx.font = '500 10px Onest, sans-serif';
+      ctx.fillText(`перерыв ${breakRange}`, padX + timeColW / 2, curY + 54);
+    }
+
+    // Days cells
+    days.forEach((d, dIdx) => {
+      const x = padX + timeColW + dIdx * colW;
+      const matching = (d.lessons || []).filter(l => (l.time || '').replace('-', '–') === slot);
+      if (matching.length === 0) return;
+
+      const grouped = [];
+      const map = new Map();
+      matching.forEach(l => {
+        const key = `${(l.subject || '').trim()}|${(l.type || '').trim()}`;
+        if (!map.has(key)) {
+          const entry = { subject: l.subject, type: l.type, items: [] };
+          map.set(key, entry);
+          grouped.push(entry);
+        }
+        map.get(key).items.push(l);
+      });
+
+      let itemY = curY + 12;
+      grouped.forEach(g => {
+        let badgeW = 0;
+        if (g.type) {
+          badgeW = drawCanvasBadge(ctx, g.type, x + 10, itemY);
+        }
+
+        ctx.textAlign = 'left';
+        ctx.fillStyle = textMain;
+        ctx.font = '600 12px Onest, sans-serif';
+        const subjX = x + 10 + (badgeW ? badgeW + 6 : 0);
+        const subjMaxW = colW - 20 - (badgeW ? badgeW + 6 : 0);
+        const subjLines = wrapCanvasLines(ctx, `${g.subject},`, subjMaxW);
+        subjLines.forEach((ln, lnIdx) => {
+          ctx.fillText(ln, subjX, itemY + 14 + lnIdx * 16);
+        });
+
+        itemY += Math.max(22, subjLines.length * 16) + 4;
+
+        ctx.fillStyle = textMuted;
+        ctx.font = '500 11px Onest, sans-serif';
+        g.items.forEach(it => {
+          const cleanRoom = it.roomShort === '🏀' ? 'Спортзал' : (it.roomShort || '');
+          const bld = it.building || 'С';
+          const roomDisp = cleanRoom ? (/^(спортзал|зал)/i.test(cleanRoom) ? cleanRoom : (String(cleanRoom).endsWith(` ${bld}`) ? `ауд. ${cleanRoom}` : `ауд. ${cleanRoom} ${bld}`)) : '';
+          const line = [formatSubgroupDisplay(it.subgroup), it.lecturer || it.group, roomDisp].filter(Boolean).join(', ');
+          const detLines = wrapCanvasLines(ctx, line, colW - 20);
+          detLines.forEach((ln, lnIdx) => {
+            ctx.fillText(ln, x + 10, itemY + 13 + lnIdx * 15);
+          });
+          itemY += Math.max(16, detLines.length * 15) + 3;
+        });
+
+        itemY += 4;
+      });
+    });
+
+    curY += sH;
+  });
+
+  saveCanvasPng(canvas, `schedule-${currentEntityData.name}.png`, title);
+}
+
+function exportRoomScheduleToPng(title, data) {
+  if (!data) return;
+  const days = data.days || [];
+  const slots = STANDARD_TIME_SLOTS;
+
+  const bg = '#ffffff';
+  const cardBg = '#f8fafc';
+  const textMain = '#0f172a';
+  const textMuted = '#64748b';
+  const borderCol = '#e2e8f0';
+
+  const timeColW = 120;
+  const colW = 230;
+  const padX = 20;
+  const tableTop = 78;
+  const headerH = 48;
+  const W = timeColW + days.length * colW + padX * 2;
+
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+
+  const slotHeights = slots.map(slot => {
+    let maxSlotH = 76;
+    days.forEach(d => {
+      const matching = (d.lessons || []).filter(l => (l.time || '').replace('-', '–') === slot);
+      if (matching.length === 0) return;
+
+      let cellH = 10;
+      matching.forEach(l => {
+        mctx.font = '600 12px Onest, sans-serif';
+        const subjLines = wrapCanvasLines(mctx, l.subject, colW - 74);
+        cellH += Math.max(22, subjLines.length * 16) + 4;
+
+        mctx.font = '500 11px Onest, sans-serif';
+        const line = [l.group ? `гр. ${l.group}` : '', l.lecturer].filter(Boolean).join(', ');
+        const detLines = wrapCanvasLines(mctx, line, colW - 20);
+        cellH += Math.max(16, detLines.length * 15) + 3;
+      });
+
+      if (cellH > maxSlotH) maxSlotH = cellH;
+    });
+
+    return Math.max(92, maxSlotH + 16);
+  });
+
+  const totalTableH = headerH + slotHeights.reduce((a, b) => a + b, 0);
+  const H = tableTop + totalTableH + 28;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W * 2;
+  canvas.height = H * 2;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(2, 2);
+
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Main title
+  ctx.fillStyle = textMain;
+  ctx.font = 'bold 22px Onest, sans-serif';
+  ctx.fillText(title, padX, 36);
+
+  // Subtitle
+  ctx.fillStyle = textMuted;
+  ctx.font = '500 13px Onest, sans-serif';
+  ctx.fillText(formatSchedulePngSubtitle(getRoomWeekTriggerLabel(data)), padX, 58);
+
+  // Table header
+  ctx.fillStyle = cardBg;
+  ctx.fillRect(padX, tableTop, W - padX * 2, headerH);
 
   ctx.strokeStyle = borderCol;
   ctx.lineWidth = 1;
-  ctx.strokeRect(20, tableTop, W - 40, 42 + slots.length * rowH);
+  ctx.strokeRect(padX, tableTop, W - padX * 2, totalTableH);
 
+  // Centered Time header
   ctx.fillStyle = textMuted;
   ctx.font = 'bold 12px Onest, sans-serif';
-  ctx.fillText('Время', 28, tableTop + 25);
+  ctx.textAlign = 'center';
+  ctx.fillText('Время', padX + timeColW / 2, tableTop + 29);
 
+  // Days headers
   days.forEach((d, idx) => {
-    const x = 20 + timeW + idx * colW;
+    const x = padX + timeColW + idx * colW;
     ctx.beginPath();
     ctx.moveTo(x, tableTop);
-    ctx.lineTo(x, tableTop + 42 + slots.length * rowH);
+    ctx.lineTo(x, tableTop + totalTableH);
     ctx.stroke();
+
+    ctx.textAlign = 'left';
     ctx.fillStyle = textMain;
-    ctx.font = 'bold 13px Onest, sans-serif';
-    ctx.fillText(d.dayName, x + 10, tableTop + 25);
+    ctx.font = 'bold 13.5px Onest, sans-serif';
+    ctx.fillText(d.dayName || '', x + 12, tableTop + 20);
+
+    let dateText = d.dateText || d.dateLabel || '';
+    if (!dateText && typeof d.date === 'string' && d.date.includes('-')) {
+      const [, mStr, dStr] = d.date.split('-');
+      if (dStr && mStr) dateText = `${parseInt(dStr, 10)} ${MONTH_NAMES[parseInt(mStr, 10) - 1] || ''}`;
+    }
+    ctx.fillStyle = textMuted;
+    ctx.font = '500 11.5px Onest, sans-serif';
+    ctx.fillText(dateText, x + 12, tableTop + 38);
   });
 
+  let curY = tableTop + headerH;
   slots.forEach((slot, sIdx) => {
-    const y = tableTop + 42 + sIdx * rowH;
+    const sH = slotHeights[sIdx];
+    ctx.strokeStyle = borderCol;
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(20, y);
-    ctx.lineTo(W - 20, y);
+    ctx.moveTo(padX, curY);
+    ctx.lineTo(W - padX, curY);
     ctx.stroke();
 
+    // Centered Time column contents
+    const mStart = slot.match(/^(\d{1,2}:\d{2})/);
+    const breakRange = mStart && BREAKS[mStart[1]] ? BREAKS[mStart[1]] : '';
+    ctx.textAlign = 'center';
     ctx.fillStyle = textMain;
     ctx.font = 'bold 12px Onest, sans-serif';
-    ctx.fillText(`${sIdx + 1} пара`, 28, y + 24);
-    ctx.fillStyle = textMuted;
-    ctx.font = '500 11px Onest, sans-serif';
-    ctx.fillText(slot, 28, y + 42);
+    ctx.fillText(`${sIdx + 1} пара`, padX + timeColW / 2, curY + 22);
 
+    ctx.fillStyle = '#334155';
+    ctx.font = '600 11.5px Onest, sans-serif';
+    ctx.fillText(slot, padX + timeColW / 2, curY + 39);
+
+    if (breakRange) {
+      ctx.fillStyle = textMuted;
+      ctx.font = '500 10px Onest, sans-serif';
+      ctx.fillText(`перерыв ${breakRange}`, padX + timeColW / 2, curY + 54);
+    }
+
+    // Days cells
     days.forEach((d, dIdx) => {
-      const x = 20 + timeW + dIdx * colW;
+      const x = padX + timeColW + dIdx * colW;
       const matching = (d.lessons || []).filter(l => (l.time || '').replace('-', '–') === slot);
-      matching.slice(0, 2).forEach((l, mIdx) => {
-        const ly = y + 18 + mIdx * 38;
+      if (matching.length === 0) return;
+
+      let itemY = curY + 12;
+      matching.forEach(l => {
+        let badgeW = 0;
+        if (l.type) {
+          badgeW = drawCanvasBadge(ctx, l.type, x + 10, itemY);
+        }
+
+        ctx.textAlign = 'left';
         ctx.fillStyle = textMain;
-        ctx.font = '600 11px Onest, sans-serif';
-        const subj = `${l.type ? l.type + ' ' : ''}${l.subject || ''}`.slice(0, 28);
-        ctx.fillText(subj, x + 8, ly);
+        ctx.font = '600 12px Onest, sans-serif';
+        const subjX = x + 10 + (badgeW ? badgeW + 6 : 0);
+        const subjMaxW = colW - 20 - (badgeW ? badgeW + 6 : 0);
+        const subjLines = wrapCanvasLines(ctx, `${l.subject},`, subjMaxW);
+        subjLines.forEach((ln, lnIdx) => {
+          ctx.fillText(ln, subjX, itemY + 14 + lnIdx * 16);
+        });
+
+        itemY += Math.max(22, subjLines.length * 16) + 4;
+
         ctx.fillStyle = textMuted;
-        ctx.font = '500 10px Onest, sans-serif';
-        const meta = [l.subgroup, l.lecturer || l.group, l.roomShort].filter(Boolean).join(', ').slice(0, 32);
-        ctx.fillText(meta, x + 8, ly + 14);
+        ctx.font = '500 11px Onest, sans-serif';
+        const line = [l.group ? `гр. ${l.group}` : '', l.lecturer].filter(Boolean).join(', ');
+        const detLines = wrapCanvasLines(ctx, line, colW - 20);
+        detLines.forEach((ln, lnIdx) => {
+          ctx.fillText(ln, x + 10, itemY + 13 + lnIdx * 15);
+        });
+        itemY += Math.max(16, detLines.length * 15) + 3;
+        itemY += 4;
       });
     });
+
+    curY += sH;
   });
 
-  const link = document.createElement('a');
-  link.download = `schedule-${currentEntityData.name}.png`;
-  link.href = canvas.toDataURL('image/png');
-  link.click();
-  showToast('Расписание сохранено в PNG');
+  saveCanvasPng(canvas, `schedule-${title.replace(/\s+/g, '-')}.png`, title);
 }
 
 function attachScheduleWorkspaceListeners(view) {
@@ -4635,6 +5359,23 @@ function attachScheduleWorkspaceListeners(view) {
       const icon = sidebarHandle.querySelector('i');
       if (icon) {
         icon.className = `mdi ${scheduleSidebarCollapsed ? 'mdi-chevron-right' : 'mdi-chevron-left'}`;
+      }
+    });
+  }
+
+  const detailCloseBtn = view.querySelector('#sched-detail-close');
+  if (detailCloseBtn) {
+    detailCloseBtn.addEventListener('click', () => {
+      scheduleWeekDropdownOpen = false;
+      if (window.innerWidth <= 768) {
+        scheduleMobileStep = 'list';
+        view.dataset.mobileStep = 'list';
+      } else {
+        currentEntitySchedule = null;
+        currentEntityData = null;
+        scheduleSidebarCollapsed = false;
+        updateScheduleURL({ push: false });
+        renderScheduleWorkspace();
       }
     });
   }
@@ -4725,15 +5466,38 @@ async function loadGraph() {
   }
 }
 
+function isOutdoorNode(node) {
+  if (!node) return false;
+  return Boolean(
+    node.type === 'outdoor' ||
+    node.isOutdoor === true ||
+    node.outdoor === true ||
+    node.building === 'outdoor' ||
+    node.floor === 'outdoor' ||
+    (typeof node.name === 'string' && /улиц|двор|outdoor/i.test(node.name)) ||
+    (typeof node.id === 'string' && /outdoor|street|yard|двор/i.test(node.id))
+  );
+}
+
+function isOutdoorEdge(edge) {
+  if (!edge) return false;
+  if (edge.type === 'outdoor' || edge.isOutdoor === true || edge.outdoor === true) return true;
+  const fromNode = graph.nodes[edge.from];
+  const toNode = graph.nodes[edge.to];
+  if (isOutdoorNode(fromNode) || isOutdoorNode(toNode)) return true;
+  return false;
+}
+
 function dijkstra(startId, endId) {
   if (!graph.nodes[startId] || !graph.nodes[endId]) return null;
   if (startId === endId) return [startId];
 
   const isAllowed = (id) => {
-    if (id === startId || id === endId) return true;
     const n = graph.nodes[id];
     if (!n) return false;
-    if (!routeIncludeOutdoor && n.type === 'outdoor') return false;
+    if (!routeIncludeOutdoor && isOutdoorNode(n)) {
+      if (id !== startId && id !== endId) return false;
+    }
     return true;
   };
 
@@ -4742,6 +5506,7 @@ function dijkstra(startId, endId) {
     if (isAllowed(id)) adj[id] = [];
   }
   for (const e of graph.edges) {
+    if (!routeIncludeOutdoor && isOutdoorEdge(e)) continue;
     if (adj[e.from] && adj[e.to]) {
       const weight = Number(e.weight) || 1;
       adj[e.from].push({ to: e.to, weight });
@@ -4879,6 +5644,7 @@ function findNearestNode(point, building, floor) {
   for (const [id, node] of Object.entries(graph.nodes)) {
     if (node.building !== building) continue;
     if (node.floor !== floor) continue;
+    if (!routeIncludeOutdoor && isOutdoorNode(node)) continue;
     const d = Math.hypot(node.x - point.x, node.y - point.y);
     if (d < bestDist) {
       bestDist = d;
@@ -5133,7 +5899,7 @@ function renderRoutePanel() {
   const fromValue = fromMeta ? formatRoomName(fromMeta.name) : '';
   const toValue = toMeta ? formatRoomName(toMeta.name) : '';
 
-  const shareIconHtml = `<i class="mdi mdi-link-variant share-icon" id="route-share-btn" title="Скопировать ссылку на маршрут"></i>`;
+  const shareIconHtml = `<i class="mdi mdi-share share-icon" id="route-share-btn" title="Скопировать ссылку на маршрут"></i>`;
   const header = `
     <div class="panel-header">
       <button class="close" onclick="closeRoutePanel()" title="Закрыть и сбросить маршрут">✕</button>
@@ -5145,7 +5911,7 @@ function renderRoutePanel() {
   const fixed = `
     ${header}
     <div class="route-field">
-      <label><span>Откуда</span> <span class="label-hint ${routePickSide === 'from' ? 'active' : ''}"><i class="mdi mdi-cursor-default-click-outline"></i> можно выбрать на карте</span></label>
+      <label for="route-from">Откуда</label>
       <div class="route-input-wrap">
         <input class="route-input has-clear ${fromValue ? 'filled' : ''}" id="route-from" placeholder="Аудитория, вход…" value="${escapeHtml(fromValue)}" autocomplete="off">
         <button type="button" class="input-clear-btn ${fromValue ? '' : 'hidden'}" id="route-from-clear" title="Очистить" aria-label="Очистить поле Откуда">
@@ -5155,7 +5921,7 @@ function renderRoutePanel() {
       </div>
     </div>
     <div class="route-field">
-      <label><span>Куда</span> <span class="label-hint ${routePickSide === 'to' ? 'active' : ''}"><i class="mdi mdi-cursor-default-click-outline"></i> можно выбрать на карте</span></label>
+      <label for="route-to">Куда</label>
       <div class="route-input-wrap">
         <input class="route-input has-clear ${toValue ? 'filled' : ''}" id="route-to" placeholder="Аудитория, вход…" value="${escapeHtml(toValue)}" autocomplete="off">
         <button type="button" class="input-clear-btn ${toValue ? '' : 'hidden'}" id="route-to-clear" title="Очистить" aria-label="Очистить поле Куда">
@@ -5285,7 +6051,7 @@ function setupRouteInput(side) {
       results.innerHTML = '';
       return;
     }
-    const found = searchRooms(q, 10);
+    const found = searchRooms(q, 40);
     results.innerHTML = '';
     if (!found.length) {
       const li = document.createElement('li');
@@ -5742,10 +6508,17 @@ async function updateSmartNextClassPill() {
   }
 
   document.addEventListener('click', (e) => {
-    if (scheduleWeekDropdownOpen && !e.target.closest('.schedule-week-picker-row')) {
+    if (scheduleWeekDropdownOpen && !e.target.closest('#schedule-week-trigger') && !e.target.closest('#schedule-week-dropdown')) {
       scheduleWeekDropdownOpen = false;
       const dd = document.getElementById('schedule-week-dropdown');
       const tr = document.getElementById('schedule-week-trigger');
+      if (dd) dd.classList.add('hidden');
+      if (tr) tr.classList.remove('open');
+    }
+    if (roomWeekDropdownOpen && !e.target.closest('#room-week-trigger') && !e.target.closest('#room-week-dropdown')) {
+      roomWeekDropdownOpen = false;
+      const dd = document.getElementById('room-week-dropdown');
+      const tr = document.getElementById('room-week-trigger');
       if (dd) dd.classList.add('hidden');
       if (tr) tr.classList.remove('open');
     }

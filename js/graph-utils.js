@@ -275,7 +275,7 @@ function tokenizeText(str) {
 /**
  * Smart room search that avoids substring false positives (like "кафе" matching "кафедра").
  */
-function searchRoomsInMeta(roomsMeta, query, limit = 20) {
+function searchRoomsInMeta(roomsMeta, query, limit = 30) {
   const raw = String(query || '').toLowerCase().replace(/ё/g, 'е').trim();
   if (!raw) return [];
 
@@ -286,10 +286,13 @@ function searchRoomsInMeta(roomsMeta, query, limit = 20) {
     rule.triggers.some(tr => tr === raw || queryTokens.includes(tr))
   );
 
+  const isStairsQuery = raw.includes('лестниц');
+  const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
   const scored = [];
 
   for (const [id, meta] of Object.entries(roomsMeta || {})) {
-    if (!meta || meta.type === 'stairs') continue;
+    if (!meta) continue;
+    if (meta.type === 'stairs' && !isStairsQuery) continue;
 
     const nameNorm = String(meta.name || '').toLowerCase().replace(/ё/g, 'е');
     const shortNorm = String(meta.shortName || '').toLowerCase().replace(/ё/g, 'е');
@@ -316,9 +319,24 @@ function searchRoomsInMeta(roomsMeta, query, limit = 20) {
       continue;
     }
 
-    if (shortNorm && (shortNorm === raw || tokenizeText(shortNorm).includes(raw))) {
-      score = 120;
-      scored.push({ id, meta, room: meta, score });
+    if (shortNorm === raw || nameNorm === raw) {
+      scored.push({ id, meta, room: meta, score: 200 });
+      continue;
+    }
+
+    if (shortNorm && shortNorm.startsWith(raw)) {
+      scored.push({ id, meta, room: meta, score: 150 });
+      continue;
+    }
+
+    const shortTokens = tokenizeText(shortNorm);
+    if (shortTokens.some(t => t === raw || t.startsWith(raw))) {
+      scored.push({ id, meta, room: meta, score: 125 });
+      continue;
+    }
+
+    if (shortNorm && shortNorm.includes(raw)) {
+      scored.push({ id, meta, room: meta, score: 105 });
       continue;
     }
 
@@ -333,12 +351,14 @@ function searchRoomsInMeta(roomsMeta, query, limit = 20) {
         if (isCafeQuery && w.startsWith('кафедр')) continue;
 
         if (w === qToken) {
-          bestTokenScore = Math.max(bestTokenScore, 80);
-        } else if (w.startsWith(qToken) && qToken.length >= 2) {
-          bestTokenScore = Math.max(bestTokenScore, 60);
+          bestTokenScore = Math.max(bestTokenScore, 85);
+        } else if (w.startsWith(qToken)) {
+          bestTokenScore = Math.max(bestTokenScore, 70);
+        } else if (qToken.length >= 2 && w.includes(qToken)) {
+          bestTokenScore = Math.max(bestTokenScore, 50);
         } else if (
-          qToken.length >= 5 &&
-          w.length >= 5 &&
+          qToken.length >= 4 &&
+          w.length >= 4 &&
           Math.abs(qToken.length - w.length) <= 1 &&
           levenshtein(qToken, w) <= 1
         ) {
@@ -361,7 +381,9 @@ function searchRoomsInMeta(roomsMeta, query, limit = 20) {
 
   scored.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
-    return String(a.meta.name || '').localeCompare(String(b.meta.name || ''), 'ru', { numeric: true });
+    const keyA = String(a.meta.shortName || a.meta.name || '');
+    const keyB = String(b.meta.shortName || b.meta.name || '');
+    return collator.compare(keyA, keyB);
   });
 
   return scored.slice(0, limit).map(({ id, meta }) => ({ id, meta, room: meta }));

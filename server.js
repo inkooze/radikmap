@@ -320,7 +320,8 @@ function resolveGroupFacultyCode(groupName) {
 }
 
 function resolveGroupFaculty(groupName) {
-  return resolveGroupFacultyCode(groupName);
+  const code = resolveGroupFacultyCode(groupName);
+  return FACULTY_FULL_NAMES[code] || code;
 }
 
 function resolveGroupRaspId(groupName) {
@@ -2612,16 +2613,28 @@ const server = http.createServer(async (req, res) => {
         sendJsonCompressed(req, res, 400, { ok: false, error: 'Missing userId' });
         return;
       }
-      const user = userStore.upsertUser(userId, {
-        role: body.role,
-        targetName: body.targetName,
-        theme: body.theme,
-        notificationsEnabled: body.notificationsEnabled,
-        firstName: body.firstName,
-        username: body.username,
-        favorites: body.favorites,
-        recentViews: body.recentViews
-      });
+      const patch = {};
+      if (body.role !== undefined) patch.role = body.role;
+      if (body.targetName !== undefined) {
+        patch.targetName = body.targetName;
+        patch.explicitClear = body.targetName === '';
+      }
+      if (body.theme !== undefined) patch.theme = body.theme;
+      if (body.notificationsEnabled !== undefined) patch.notificationsEnabled = body.notificationsEnabled;
+      if (body.firstName !== undefined) patch.firstName = body.firstName;
+      if (body.username !== undefined) patch.username = body.username;
+      if (body.favorites !== undefined) patch.favorites = body.favorites;
+      if (body.recentViews !== undefined) patch.recentViews = body.recentViews;
+
+      const user = userStore.upsertUser(userId, patch);
+      if (patch.notificationsEnabled === true || patch.targetName) {
+        try {
+          const { checkUpcomingLessonNotifications } = require('./bot.js');
+          if (typeof checkUpcomingLessonNotifications === 'function') {
+            setTimeout(checkUpcomingLessonNotifications, 300);
+          }
+        } catch (e) {}
+      }
       sendJsonCompressed(req, res, 200, { ok: true, user });
     } catch (e) {
       sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
@@ -2750,12 +2763,72 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // --- API: Проверка приближающихся пар для рассылки уведомлений в Telegram ---
-  if (url.pathname === '/api/internal/upcoming-notifications' && req.method === 'GET') {
-    if (!cacheStatus.ready) {
-      sendJsonCompressed(req, res, 200, { notifications: [] });
+  // --- API: Экспорт PNG (для скачивания и сохранения на мобильных устройствах и в Telegram Mini App) ---
+  if (url.pathname === '/api/export-png' && req.method === 'POST') {
+    try {
+      const rawBody = await readBody(req);
+      const body = JSON.parse(rawBody || '{}');
+      const dataUrl = String(body.dataUrl || '');
+      const filename = String(body.filename || 'schedule.png').replace(/[^a-zA-Z0-9а-яА-ЯёЁ._-]/g, '_');
+      const title = String(body.title || '');
+      const m = dataUrl.match(/^data:image\/png;base64,(.+)$/);
+      if (!m) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Invalid PNG dataUrl' });
+        return;
+      }
+      const buf = Buffer.from(m[1], 'base64');
+      if (!global.__exportedPngStore) global.__exportedPngStore = new Map();
+      const now = Date.now();
+      for (const [k, v] of global.__exportedPngStore.entries()) {
+        if (now - v.createdAt > 10 * 60 * 1000) global.__exportedPngStore.delete(k);
+      }
+      const id = Math.random().toString(36).slice(2, 12) + now.toString(36);
+      global.__exportedPngStore.set(id, { buf, filename, createdAt: now });
+
+      let sentToTelegram = false;
+      if (body.sendToTelegram && body.telegramId) {
+        try {
+          const { sendPngToTelegramUser } = require('./bot.js');
+          if (typeof sendPngToTelegramUser === 'function') {
+            sentToTelegram = await sendPngToTelegramUser(body.telegramId, buf, filename, title);
+          }
+        } catch (e) {}
+      }
+
+      sendJsonCompressed(req, res, 200, {
+        ok: true,
+        id,
+        url: `/api/export-png/${id}/${encodeURIComponent(filename)}`,
+        sentToTelegram
+      });
+    } catch (e) {
+      sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+    }
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/export-png/') && req.method === 'GET') {
+    const parts = url.pathname.split('/').filter(Boolean); // ['api', 'export-png', id, filename?]
+    const id = parts[2] || '';
+    const entry = global.__exportedPngStore && global.__exportedPngStore.get(id);
+    if (!entry) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Expired or not found');
       return;
     }
+    const safeAscii = entry.filename.replace(/[^\x20-\x7E]/g, '_') || 'schedule.png';
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': entry.buf.length,
+      'Content-Disposition': `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(entry.filename)}`,
+      'Cache-Control': 'no-store'
+    });
+    res.end(entry.buf);
+    return;
+  }
+
+  // --- API: Проверка приближающихся пар для рассылки уведомлений в Telegram ---
+  if (url.pathname === '/api/internal/upcoming-notifications' && req.method === 'GET') {
     const { todayISO, todayDayName, nowMin } = getMoscowClockNow();
 
     const candidates = userStore.getUsersForNotifications();
@@ -2763,11 +2836,43 @@ const server = http.createServer(async (req, res) => {
 
     for (const u of candidates) {
       const entityType = u.role === 'lecturer' ? 'lecturer' : 'group';
+      const targetName = String(u.targetName || '').trim();
+      if (!targetName) continue;
+
       let entityObj = null;
       if (entityType === 'lecturer') {
-        entityObj = scheduleIndex.lecturers.get(u.targetName) || (findMatchingLecturers(u.targetName)[0] || null);
+        entityObj = scheduleIndex.lecturers.get(targetName) || (findMatchingLecturers(targetName)[0] || null);
+        if (!entityObj) {
+          const metaInfo = resolveLecturerMeta(targetName);
+          if (metaInfo && metaInfo.raspId) {
+            entityObj = {
+              name: targetName,
+              shortName: targetName,
+              fullName: metaInfo.fullName || targetName,
+              regalia: metaInfo.regalia || '',
+              department: metaInfo.department || '',
+              rooms: new Set(),
+              lessons: []
+            };
+          }
+        }
       } else {
-        entityObj = scheduleIndex.groups.get(u.targetName.toUpperCase()) || scheduleIndex.groups.get(u.targetName) || null;
+        entityObj = scheduleIndex.groups.get(targetName.toUpperCase()) || scheduleIndex.groups.get(targetName) || null;
+        if (!entityObj) {
+          for (const [k, v] of scheduleIndex.groups.entries()) {
+            if (k.toLowerCase() === targetName.toLowerCase()) { entityObj = v; break; }
+          }
+        }
+        if (!entityObj && resolveGroupRaspId(targetName)) {
+          const norm = targetName.toUpperCase().replace(/Ё/g, 'Е');
+          entityObj = {
+            name: norm,
+            facultyCode: resolveGroupFacultyCode(norm),
+            faculty: resolveGroupFaculty(norm),
+            rooms: new Set(),
+            lessons: []
+          };
+        }
       }
       if (!entityObj) continue;
 
@@ -2816,7 +2921,7 @@ const server = http.createServer(async (req, res) => {
     const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
     const cacheControl = (ext === '.svg' || ext === '.png' || ext === '.jpg')
       ? 'public, max-age=3600'
-      : 'public, max-age=0, must-revalidate';
+      : 'no-cache, no-store, must-revalidate';
 
     if (req.headers['if-none-match'] === etag) {
       res.writeHead(304, { ETag: etag, 'Cache-Control': cacheControl });

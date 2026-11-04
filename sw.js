@@ -1,9 +1,9 @@
-const CACHE_NAME = 'rgrtu-map-v1.2.2';
+const CACHE_NAME = 'rgrtu-map-v1.2.9';
 const PRECACHE_URLS = [
   '/',
   '/index.html',
-  '/css/style.css',
-  '/js/app.js',
+  '/css/style.css?v=1.2.9',
+  '/js/app.js?v=1.2.9',
   '/data/rooms.json',
   '/data/graph.json',
   '/data/floor0.svg',
@@ -41,12 +41,13 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Network-first with offline cache fallback for HTML, JS, CSS, and schedule APIs
+  // Network-first with offline cache fallback for HTML, JS, CSS, JSON data, and schedule APIs
   const isAppCodeOrApi =
     url.pathname === '/' ||
     url.pathname.endsWith('.html') ||
     url.pathname.endsWith('.js') ||
     url.pathname.endsWith('.css') ||
+    url.pathname.endsWith('.json') ||
     url.pathname.startsWith('/api/schedule') ||
     url.pathname.startsWith('/api/entity-schedule') ||
     url.pathname.startsWith('/api/free-rooms');
