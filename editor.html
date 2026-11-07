@@ -25,6 +25,10 @@
     <div class="topbar-divider"></div>
     <nav id="buildings" class="topbar-nav"></nav>
     <div class="topbar-actions">
+      <a class="action-btn" id="admin-link" href="admin.html" title="Админ-панель базы данных" aria-label="Админ-панель базы данных" style="text-decoration:none;width:auto;padding:0 12px;gap:6px;font-size:13px;font-weight:600;display:inline-flex;align-items:center">
+        <i class="mdi mdi-database-cog-outline"></i>
+        <span>База данных</span>
+      </a>
       <a class="action-btn" id="map-link" href="index.html" title="Вернуться на карту" aria-label="Вернуться на карту" style="text-decoration:none">
         <i class="mdi mdi-map-outline"></i>
       </a>
@@ -49,6 +53,12 @@
         <button class="tool-btn" data-tool="delete">
           <i class="mdi mdi-delete"></i> Удаление
         </button>
+        <button class="tool-btn" data-tool="poi" title="Поставить метку (розетка, кофе, Wi-Fi)">
+          <i class="mdi mdi-map-marker-plus-outline"></i> Метка POI
+        </button>
+        <button class="tool-btn" data-tool="gps" title="Добавить калибровочную точку GPS / Wi-Fi">
+          <i class="mdi mdi-crosshairs-gps"></i> Калибровка GPS
+        </button>
       </div>
 
     </div>
@@ -65,6 +75,8 @@
         <ul class="hotkeys">
           <li><kbd>1</kbd> — режим «Добавление»</li>
           <li><kbd>2</kbd> — режим «Удаление»</li>
+          <li><kbd>3</kbd> — режим «Метка POI»</li>
+          <li><kbd>4</kbd> — режим «Калибровка GPS»</li>
           <li><kbd>Esc</kbd> — сбросить режим</li>
         </ul>
       </div>

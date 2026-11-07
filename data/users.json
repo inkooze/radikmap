@@ -10,8 +10,12 @@
       "notificationsEnabled": true,
       "theme": "light",
       "createdAt": 1793630657730,
-      "updatedAt": 1793630657730,
-      "lastNotifiedSlot": null
+      "updatedAt": 1794084388099,
+      "lastNotifiedSlot": null,
+      "favorites": [],
+      "recentViews": {},
+      "notifiedSlots": [],
+      "lessonNotes": {}
     },
     "tg_1252333122": {
       "id": "tg_1252333122",
@@ -19,20 +23,199 @@
       "firstName": "Роман",
       "username": "",
       "role": "student",
-      "targetName": "546М",
+      "targetName": "546",
       "notificationsEnabled": true,
       "theme": "light",
       "createdAt": 1793634767503,
-      "updatedAt": 1793634778499,
-      "lastNotifiedSlot": null
+      "updatedAt": 1794086575504,
+      "lastNotifiedSlot": null,
+      "favorites": [
+        "group:546"
+      ],
+      "recentViews": {
+        "group:546": {
+          "count": 12,
+          "lastViewedAt": 1794086575400
+        },
+        "group:546М": {
+          "count": 7,
+          "lastViewedAt": 1794083938255
+        },
+        "classroom:350": {
+          "count": 1,
+          "lastViewedAt": 1794082684616
+        },
+        "lecturer:доц. Гостин А.М.": {
+          "count": 4,
+          "lastViewedAt": 1794082817348
+        },
+        "lecturer:проф. Перепелкин Д.А.": {
+          "count": 2,
+          "lastViewedAt": 1794082840495
+        }
+      },
+      "notifiedSlots": [],
+      "lessonNotes": {
+        "Понедельник|09:55–11:30|Высшая математика": "может быть проверка ргр-2",
+        "Понедельник|13:35–15:10|Интеллектуальные методы оптимизации": "сделать домашку, которую он дал по обиде"
+      }
     }
   },
   "authCodes": {},
-  "authSessions": {
-    "17c0761c1be58ce203943297a8fff1cb": {
-      "status": "pending",
-      "userId": null,
-      "expiresAt": 1793725216767
+  "authSessions": {},
+  "botTemplates": {},
+  "mapMarkers": [
+    {
+      "id": "poi_1794083920273_57d421",
+      "building": "C",
+      "floor": 1,
+      "x": 599,
+      "y": 496,
+      "category": "socket",
+      "title": "Розетки",
+      "description": "4 штуки, возле стола",
+      "status": "approved",
+      "authorId": "tg_1252333122",
+      "authorName": "Роман",
+      "createdAt": 1794083920273,
+      "updatedAt": 1794085204070
+    },
+    {
+      "id": "poi_seed_socket_2",
+      "building": "C",
+      "floor": 2,
+      "x": 510,
+      "y": 485,
+      "category": "socket",
+      "title": "Розетки у лавочек в холле",
+      "description": "Удобные рабочие места с розетками 220В для зарядки ноутбуков и телефонов.",
+      "status": "rejected",
+      "authorId": "admin",
+      "authorName": "Администрация",
+      "createdAt": 1756713600000,
+      "updatedAt": 1794085171385
+    },
+    {
+      "id": "poi_seed_wifi_3",
+      "building": "C",
+      "floor": 3,
+      "x": 480,
+      "y": 510,
+      "category": "wifi",
+      "title": "Точка доступа Wi-Fi РГРТУ",
+      "description": "Стабильный сигнал студенческой сети Wi-Fi в центральном коридоре 3 этажа.",
+      "status": "rejected",
+      "authorId": "admin",
+      "authorName": "Администрация",
+      "createdAt": 1756713600000,
+      "updatedAt": 1794085177070
     }
+  ],
+  "roomReviews": [
+    {
+      "id": "rev_1794083867113_077b97",
+      "roomId": "C_buffet_f1_l",
+      "roomName": "Левая столовая",
+      "rating": 4,
+      "text": "Дороже, чем хотелось бы, средний чек ~250 рублей",
+      "status": "approved",
+      "authorId": "tg_1252333122",
+      "authorName": "Роман",
+      "createdAt": 1794083867113,
+      "updatedAt": 1794085191939
+    }
+  ],
+  "descriptionSuggestions": [
+    {
+      "id": "desc_1794085294286_947614",
+      "roomId": "C_buffet_f1_l",
+      "roomName": "Левая столовая",
+      "currentDescription": "",
+      "suggestedDescription": "Предложенное описание!",
+      "description": "Предложенное описание!",
+      "status": "approved",
+      "authorId": "tg_1252333122",
+      "authorName": "Роман",
+      "createdAt": 1794085294286,
+      "updatedAt": 1794085317709
+    }
+  ],
+  "gpsConfig": {
+    "building": "C",
+    "buildingName": "Главный корпус РГРТУ (ул. Гагарина, 59/1)",
+    "centerLat": 54.61432,
+    "centerLng": 39.71925,
+    "rotationDeg": -18,
+    "metersPerSvgUnit": 0.098,
+    "corridorSnapRadiusSvg": 65,
+    "smoothingFactor": 0.38,
+    "enableStepDeadReckoning": true,
+    "enableWifiBleHint": true,
+    "anchors": [
+      {
+        "id": "nw",
+        "label": "Северо-западное крыло (ул. Гагарина)",
+        "lat": 54.61482,
+        "lng": 39.71805,
+        "svgX": 120,
+        "svgY": 160
+      },
+      {
+        "id": "ne",
+        "label": "Северо-восточное крыло",
+        "lat": 54.61458,
+        "lng": 39.72045,
+        "svgX": 880,
+        "svgY": 160
+      },
+      {
+        "id": "sw",
+        "label": "Юго-западный угол (Главный вход)",
+        "lat": 54.61382,
+        "lng": 39.71815,
+        "svgX": 120,
+        "svgY": 840
+      },
+      {
+        "id": "se",
+        "label": "Юго-восточное крыло (во двор)",
+        "lat": 54.6136,
+        "lng": 39.72035,
+        "svgX": 880,
+        "svgY": 840
+      }
+    ],
+    "wifiAnchors": [
+      {
+        "id": "wifi_main_1",
+        "ssid": "RSREU-Free",
+        "bssid": "",
+        "building": "C",
+        "floor": 1,
+        "svgX": 500,
+        "svgY": 720,
+        "label": "Холл 1 этажа (Главный вход)"
+      },
+      {
+        "id": "wifi_main_2",
+        "ssid": "RSREU-Staff",
+        "bssid": "",
+        "building": "C",
+        "floor": 2,
+        "svgX": 500,
+        "svgY": 500,
+        "label": "Центральный коридор 2 этажа"
+      },
+      {
+        "id": "wifi_main_3",
+        "ssid": "RSREU-Student",
+        "bssid": "",
+        "building": "C",
+        "floor": 3,
+        "svgX": 500,
+        "svgY": 500,
+        "label": "Центральный коридор 3 этажа"
+      }
+    ]
   }
 }

@@ -15,6 +15,8 @@ let currentOverlay = null;
 let currentFloorGroup = null;
 
 let graph = { nodes: {}, edges: [] };
+let editorMarkers = [];
+let editorGpsConfig = { buildings: { C: { centerLat: 54.61435, centerLon: 39.70825, rotationDeg: -18, scaleMetersPerSvgUnit: 0.10, anchors: [] } } };
 
 let currentTool = null; // По умолчанию режим не выбран
 let selectedNodeId = null;
@@ -58,6 +60,16 @@ async function loadGraph() {
   } catch (e) {
     graph = { nodes: {}, edges: [] };
   }
+  try {
+    const cRes = await fetch('/api/community/state');
+    if (cRes.ok) {
+      const cData = await cRes.json();
+      if (cData.ok) {
+        editorMarkers = Array.isArray(cData.markers) ? cData.markers : [];
+        if (cData.gpsConfig) editorGpsConfig = cData.gpsConfig;
+      }
+    }
+  } catch (e) {}
 }
 
 // ================ ТЕМА ================
@@ -334,6 +346,51 @@ function drawGraphForCurrentFloor() {
     currentFloorGroup.addLayer(hitbox);
     nodeCirclePts[id] = { visual: visualPt, hitbox: hitbox };
   }
+
+  // Метки POI на текущем этаже
+  const catEmojis = { socket: '🔌', coffee: '☕', wifi: '📶', blocked: '🚧', info: 'ℹ️' };
+  editorMarkers
+    .filter(m => m && m.building === currentBuilding && Number(m.floor) === Number(currentFloor))
+    .forEach(m => {
+      const emoji = catEmojis[m.category] || 'ℹ️';
+      const icon = L.divIcon({
+        className: 'poi-marker-wrap',
+        html: `<div class="poi-marker-badge" data-cat="${m.category || 'info'}">${emoji}<span>${m.title || ''}</span></div>`,
+        iconSize: [0, 0],
+        iconAnchor: [0, 0]
+      });
+      const marker = L.marker([H - Number(m.y || 0), Number(m.x || 0)], { pane: 'graphPane', icon });
+      marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        if (currentTool === 'delete') {
+          deleteEditorPoiMarker(m.id);
+        } else {
+          showPoiMarkerInfo(m);
+        }
+      });
+      currentFloorGroup.addLayer(marker);
+    });
+
+  // Калибровочные точки GPS на текущем этаже
+  const bCfg = editorGpsConfig?.buildings?.[currentBuilding] || {};
+  const anchors = Array.isArray(bCfg.anchors) ? bCfg.anchors : [];
+  anchors
+    .filter(a => Number(a.floor) === Number(currentFloor))
+    .forEach((a, idx) => {
+      const marker = L.circleMarker([H - Number(a.y || 0), Number(a.x || 0)], {
+        pane: 'graphPane',
+        radius: 6,
+        color: '#ffffff',
+        weight: 2,
+        fillColor: '#ef4444',
+        fillOpacity: 0.95
+      });
+      marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        showGpsAnchorInfo(a, idx);
+      });
+      currentFloorGroup.addLayer(marker);
+    });
 }
 
 // ================ МОДАЛЬНОЕ ОКНО ================
@@ -401,11 +458,229 @@ function handleMapClick(e) {
       selectedNodeId = null;
       drawGraphForCurrentFloor();
     }
+  } else if (currentTool === 'poi') {
+    showAddPoiModalEditor(x, y);
+  } else if (currentTool === 'gps') {
+    showAddGpsAnchorModalEditor(x, y);
   } else {
     selectedNodeId = null;
     drawGraphForCurrentFloor();
     clearNodeInfo();
   }
+}
+
+function showAddPoiModalEditor(x, y) {
+  const html = `
+    <div class="form-group">
+      <label for="modal-poi-cat">Категория метки</label>
+      <select id="modal-poi-cat" class="node-type-select" style="width:100%;padding:8px">
+        <option value="socket">🔌 Розетка / зарядка</option>
+        <option value="coffee">☕ Кофемашина / автомат</option>
+        <option value="wifi">📶 Точка Wi-Fi</option>
+        <option value="blocked">🚧 Перекрытый проход</option>
+        <option value="info">ℹ️ Полезное место / ориентир</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="modal-poi-title">Короткое название на карте</label>
+      <input type="text" id="modal-poi-title" value="Розетка">
+    </div>
+    <div class="form-group">
+      <label for="modal-poi-desc">Описание (необязательно)</label>
+      <input type="text" id="modal-poi-desc" placeholder="Подробности для студентов…">
+    </div>
+  `;
+  openModal({
+    title: `Поставить метку POI (${x}, ${y})`,
+    bodyHtml: html,
+    onConfirm: async (body) => {
+      const category = body.querySelector('#modal-poi-cat').value;
+      const title = body.querySelector('#modal-poi-title').value.trim();
+      const description = body.querySelector('#modal-poi-desc').value.trim();
+      if (!title) {
+        showToast('Введите название метки');
+        return false;
+      }
+      const token = getStoredEditorToken();
+      try {
+        const res = await fetch('/api/community/marker', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Editor-Token': token
+          },
+          body: JSON.stringify({
+            building: currentBuilding,
+            floor: currentFloor,
+            x,
+            y,
+            category,
+            title,
+            description
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          showToast(data.error || 'Не удалось сохранить метку');
+          return false;
+        }
+        editorMarkers.push(data.marker);
+        drawGraphForCurrentFloor();
+        showToast('Метка POI опубликована на карте');
+      } catch (err) {
+        showToast('Ошибка сохранения метки');
+      }
+    }
+  });
+}
+
+async function deleteEditorPoiMarker(markerId) {
+  const token = getStoredEditorToken();
+  try {
+    const res = await fetch('/api/admin/moderation/action', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Editor-Token': token
+      },
+      body: JSON.stringify({ itemType: 'marker', action: 'delete', id: markerId })
+    });
+    if (res.ok) {
+      editorMarkers = editorMarkers.filter(m => m.id !== markerId);
+      drawGraphForCurrentFloor();
+      clearNodeInfo();
+      showToast('Метка POI удалена');
+    }
+  } catch (e) {
+    showToast('Ошибка удаления метки');
+  }
+}
+
+function showPoiMarkerInfo(m) {
+  const el = document.getElementById('node-info');
+  el.innerHTML = `
+    <p><strong>Метка POI: ${m.title || ''}</strong></p>
+    <p>Категория: <code>${m.category}</code></p>
+    <p>Этаж: <code>${m.floor}</code>, коорд.: <code>${m.x}, ${m.y}</code></p>
+    ${m.description ? `<p>Описание: ${m.description}</p>` : ''}
+    <button type="button" class="btn-secondary" id="btn-del-poi-side" style="margin-top:8px;width:100%">Удалить метку</button>
+  `;
+  el.querySelector('#btn-del-poi-side')?.addEventListener('click', () => deleteEditorPoiMarker(m.id));
+}
+
+function showAddGpsAnchorModalEditor(x, y) {
+  const bCfg = editorGpsConfig?.buildings?.[currentBuilding] || { centerLat: 54.61435, centerLon: 39.70825 };
+  const html = `
+    <div class="form-group">
+      <label for="modal-gps-label">Название ориентира (репера)</label>
+      <input type="text" id="modal-gps-label" value="Ориентир ${currentFloor} эт. (${x}, ${y})">
+    </div>
+    <div class="form-group">
+      <label for="modal-gps-lat">Широта (Latitude WGS84)</label>
+      <input type="text" id="modal-gps-lat" value="${bCfg.centerLat || 54.61435}">
+    </div>
+    <div class="form-group">
+      <label for="modal-gps-lon">Долгота (Longitude WGS84)</label>
+      <input type="text" id="modal-gps-lon" value="${bCfg.centerLon || 39.70825}">
+    </div>
+    <button type="button" class="btn-secondary" id="modal-gps-take-current" style="margin-top:4px">📍 Взять мои текущие GPS-координаты</button>
+  `;
+  openModal({
+    title: `Калибровочная точка GPS (${x}, ${y})`,
+    bodyHtml: html,
+    onConfirm: async (body) => {
+      const label = body.querySelector('#modal-gps-label').value.trim() || `Точка (${x}, ${y})`;
+      const lat = parseFloat(body.querySelector('#modal-gps-lat').value);
+      const lon = parseFloat(body.querySelector('#modal-gps-lon').value);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        showToast('Укажите корректные широту и долготу');
+        return false;
+      }
+      if (!editorGpsConfig.buildings) editorGpsConfig.buildings = {};
+      if (!editorGpsConfig.buildings[currentBuilding]) {
+        editorGpsConfig.buildings[currentBuilding] = {
+          centerLat: lat,
+          centerLon: lon,
+          rotationDeg: -18,
+          scaleMetersPerSvgUnit: 0.10,
+          anchors: []
+        };
+      }
+      const bObj = editorGpsConfig.buildings[currentBuilding];
+      if (!Array.isArray(bObj.anchors)) bObj.anchors = [];
+      bObj.anchors.push({
+        id: `anc_${Date.now()}`,
+        label,
+        floor: currentFloor,
+        x,
+        y,
+        lat,
+        lon
+      });
+      await saveEditorGpsConfig();
+      drawGraphForCurrentFloor();
+    }
+  });
+
+  setTimeout(() => {
+    document.getElementById('modal-gps-take-current')?.addEventListener('click', () => {
+      if (!('geolocation' in navigator)) {
+        showToast('Геолокация недоступна в браузере');
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const latIn = document.getElementById('modal-gps-lat');
+          const lonIn = document.getElementById('modal-gps-lon');
+          if (latIn) latIn.value = pos.coords.latitude.toFixed(6);
+          if (lonIn) lonIn.value = pos.coords.longitude.toFixed(6);
+          showToast(`Координаты получены (±${Math.round(pos.coords.accuracy || 10)} м)`);
+        },
+        () => showToast('Не удалось получить текущие GPS-координаты'),
+        { enableHighAccuracy: true, timeout: 6000 }
+      );
+    });
+  }, 50);
+}
+
+async function saveEditorGpsConfig() {
+  const token = getStoredEditorToken();
+  try {
+    const res = await fetch('/api/admin/gps/save', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Editor-Token': token
+      },
+      body: JSON.stringify({ gpsConfig: editorGpsConfig })
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      editorGpsConfig = data.gpsConfig;
+      showToast('Калибровка GPS сохранена');
+    }
+  } catch (e) {
+    showToast('Ошибка сохранения калибровки GPS');
+  }
+}
+
+function showGpsAnchorInfo(anchor, idx) {
+  const el = document.getElementById('node-info');
+  el.innerHTML = `
+    <p><strong>🛰 Репер GPS: ${anchor.label || ''}</strong></p>
+    <p>Этаж: <code>${anchor.floor}</code> · SVG: <code>${anchor.x}, ${anchor.y}</code></p>
+    <p>WGS84: <code>${anchor.lat}, ${anchor.lon}</code></p>
+    <button type="button" class="btn-secondary" id="btn-del-gps-anchor" style="margin-top:8px;width:100%">Удалить точку калибровки</button>
+  `;
+  el.querySelector('#btn-del-gps-anchor')?.addEventListener('click', async () => {
+    const bObj = editorGpsConfig?.buildings?.[currentBuilding];
+    if (bObj && Array.isArray(bObj.anchors)) {
+      bObj.anchors = bObj.anchors.filter(a => a.id !== anchor.id);
+      await saveEditorGpsConfig();
+      drawGraphForCurrentFloor();
+      clearNodeInfo();
+    }
+  });
 }
 
 function showAddNodeModal(x, y) {
@@ -726,8 +1001,10 @@ document.addEventListener('keydown', (e) => {
   if (document.getElementById('modal-backdrop')?.classList.contains('open')) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-  if (e.key === '1') document.querySelector('[data-tool="add"]').click();
-  if (e.key === '2') document.querySelector('[data-tool="delete"]').click();
+  if (e.key === '1') document.querySelector('[data-tool="add"]')?.click();
+  if (e.key === '2') document.querySelector('[data-tool="delete"]')?.click();
+  if (e.key === '3') document.querySelector('[data-tool="poi"]')?.click();
+  if (e.key === '4') document.querySelector('[data-tool="gps"]')?.click();
 
   if (e.key === 'Escape') {
     currentTool = null;

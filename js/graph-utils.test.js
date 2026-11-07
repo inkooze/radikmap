@@ -180,10 +180,92 @@ describe('RadikMap Graph, Editor & Smart Search Logic', () => {
 
       const guest = store.upsertUser('guest-123', {});
       assert.equal(guest.theme, 'system');
+
+      // Проверка конструктора шаблонов сообщений бота и Markdown-рендерера
+      const catalog = store.getBotTemplatesCatalog();
+      assert.ok(catalog.length >= 16);
+      store.saveBotTemplate('login_command', 'Привет, *{{name}}* (@{{username}})!\nКод: `{{code}}`\n||секрет||');
+      const rendered = store.renderBotMessage('login_command', {
+        name: 'Иван <1>',
+        username: 'ivan_rgrtu_test',
+        code: '123456'
+      });
+      assert.ok(rendered.html.includes('<b>Иван &lt;1&gt;</b>'));
+      assert.ok(rendered.html.includes('@ivan_rgrtu_test'));
+      assert.ok(rendered.html.includes('<code>123456</code>'));
+      assert.ok(rendered.html.includes('<tg-spoiler>секрет</tg-spoiler>'));
+
+      store.resetBotTemplate('login_command');
+      const afterReset = store.getBotTemplatesCatalog().find(t => t.id === 'login_command');
+      assert.equal(afterReset.isModified, false);
+
+      // Проверка чистых переменных в шаблонах напоминания о паре (без скобок, без \n и без зашитых префиксов)
+      const reminderTpl = store.getBotTemplatesCatalog().find(t => t.id === 'lesson_reminder');
+      assert.ok(reminderTpl);
+      const varKeys = reminderTpl.variables.map(v => v.key);
+      for (const reqKey of ['minutesLeft', 'typeTagEmoji', 'typeTag', 'breakTime', 'room', 'building', 'floor', 'lecturer', 'group', 'subgroup', 'extraInfo', 'locationLine']) {
+        assert.ok(varKeys.includes(reqKey), `Missing variable ${reqKey} in lesson_reminder`);
+      }
+      for (const v of reminderTpl.variables) {
+        assert.ok(!String(v.sample || '').startsWith('\n'), `Variable ${v.key} should not start with newline`);
+        assert.ok(!String(v.sample || '').includes('👤 Преподаватель'), `Variable ${v.key} should not contain static label "👤 Преподаватель"`);
+      }
+      const typeTagVar = reminderTpl.variables.find(v => v.key === 'typeTag');
+      assert.equal(typeTagVar.sample, 'Лек.');
+
+      // Проверка личных заметок к парам и очередей премодерации
+      const notes = store.saveUserLessonNote(authed.id, 'Понедельник|08:10–09:45|Физика', 'Принести лабу №2');
+      assert.equal(notes['Понедельник|08:10–09:45|Физика'], 'Принести лабу №2');
+
+      const marker = store.addCommunityMarker({
+        building: 'C',
+        floor: 1,
+        x: 320,
+        y: 450,
+        category: 'socket',
+        title: 'Розетка у деканата',
+        authorId: authed.id
+      });
+      assert.equal(marker.status, 'pending');
+      store.moderateCommunityMarker(marker.id, 'approve');
+      assert.equal(store.getApprovedMapMarkers().some(m => m.id === marker.id), true);
+
+      const review = store.addRoomReview({
+        roomId: 'C_buffet_1',
+        rating: 5,
+        text: 'Отличная выпечка!',
+        authorId: authed.id
+      });
+      assert.equal(review.status, 'pending');
+      store.moderateRoomReview(review.id, 'approve');
+      assert.equal(store.getApprovedRoomReviews('C_buffet_1').length, 1);
+      assert.ok(store.getModerationData().markers.length >= 1);
     } finally {
       if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
     }
   });
+
+  it('normalizeLessonType and snapPointToGraphCorridor handle exam/credit/consultation types and corridor map-matching', () => {
+    const { normalizeLessonType, snapPointToGraphCorridor } = require('./graph-utils.js');
+    assert.equal(normalizeLessonType('Консультация'), 'Конс.');
+    assert.equal(normalizeLessonType('Зачёт'), 'Зач.');
+    assert.equal(normalizeLessonType('Дифференцированный зачет'), 'Зач.');
+    assert.equal(normalizeLessonType('Экзамен'), 'Экз.');
+    assert.equal(normalizeLessonType('Лекция'), 'Лек.');
+
+    const sampleGraph = {
+      nodes: {
+        a: { x: 100, y: 100, building: 'C', floor: 1 },
+        b: { x: 300, y: 100, building: 'C', floor: 1 }
+      },
+      edges: [{ from: 'a', to: 'b', weight: 200 }]
+    };
+    const snapped = snapPointToGraphCorridor(sampleGraph, 'C', 1, 185, 142);
+    assert.equal(snapped.x, 185);
+    assert.equal(snapped.y, 100);
+    assert.equal(snapped.nearestNodeId, 'a');
+  });
 });
+
 
 

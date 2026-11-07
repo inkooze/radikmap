@@ -1,7 +1,11 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 const { Telegraf, Markup } = require('telegraf');
-const { defaultUserStore } = require('./js/user-store.js');
+const {
+  defaultUserStore,
+  renderTelegramMarkdownToHtml,
+  renderTelegramPlainText
+} = require('./js/user-store.js');
 
 const BOT_TOKEN = (process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '').trim();
 const rawWebAppUrl = (process.env.WEBAPP_URL || '').trim();
@@ -36,6 +40,198 @@ if (!BOT_TOKEN && require.main === module) {
 
 const bot = BOT_TOKEN ? new Telegraf(BOT_TOKEN, { handlerTimeout: 15000 }) : null;
 
+/**
+ * Безопасная отправка ответа в контексте Telegraf с поддержкой HTML-разметки (сконвертированной из Markdown)
+ * и автоматическим откатом на plain-text.
+ */
+async function replyWithRenderedTemplate(ctx, templateId, variables = {}, extraMarkup = {}) {
+  const rendered = userStore.renderBotMessage(templateId, {
+    webappUrl: WEBAPP_URL,
+    scheduleUrl: SCHEDULE_WEBAPP_URL,
+    ...variables
+  });
+  const extra = { ...(extraMarkup || {}), parse_mode: 'HTML', disable_web_page_preview: true };
+  try {
+    return await ctx.reply(rendered.html, extra);
+  } catch (e) {
+    const fallbackExtra = { ...(extraMarkup || {}) };
+    delete fallbackExtra.parse_mode;
+    return await ctx.reply(rendered.text, fallbackExtra);
+  }
+}
+
+async function editMessageWithRenderedTemplate(ctx, chatId, messageId, templateId, variables = {}) {
+  const rendered = userStore.renderBotMessage(templateId, {
+    webappUrl: WEBAPP_URL,
+    scheduleUrl: SCHEDULE_WEBAPP_URL,
+    ...variables
+  });
+  try {
+    return await ctx.telegram.editMessageText(chatId, messageId, null, rendered.html, {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    });
+  } catch (e) {
+    return await ctx.telegram.editMessageText(chatId, messageId, null, rendered.text);
+  }
+}
+
+const LESSON_BREAKS = {
+  '08:10': '08:55–09:00',
+  '09:55': '10:40–10:45',
+  '11:40': '12:25–12:30',
+  '13:35': '14:20–14:25',
+  '15:20': '16:05–16:10',
+  '17:05': '17:50–17:55',
+  '18:45': '19:30–19:35',
+  '18:50': '19:35–19:40',
+  '20:25': '21:10–21:15'
+};
+
+function getTypeTagEmoji(typeRaw) {
+  const t = String(typeRaw || '').replace(/^\[|\]$/g, '').trim().toLowerCase();
+  if (!t) return '📚';
+  if (t.startsWith('лек')) return '📖';
+  if (t.startsWith('упр') || t.startsWith('пр')) return '✒️';
+  if (t.startsWith('лаб')) return '🔬';
+  if (t.startsWith('конс')) return '💬';
+  if (t.startsWith('зач')) return '✅';
+  if (t.startsWith('экз')) return '🎓';
+  return '📚';
+}
+
+function getExactMoscowMinutesNow() {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Moscow',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(now);
+  const map = {};
+  parts.forEach(p => { map[p.type] = p.value; });
+  const h = parseInt(map.hour || '0', 10);
+  const m = parseInt(map.minute || '0', 10);
+  const s = parseInt(map.second || '0', 10);
+  return h * 60 + m + s / 60;
+}
+
+function computeDynamicMinutesLeft(lessonTimeStr, fallbackMinutesLeft = 15, isLiveNotification = false) {
+  const m = String(lessonTimeStr || '').match(/^(\d{1,2}):(\d{2})/);
+  if (m) {
+    const startMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    const nowMin = getExactMoscowMinutesNow();
+    const diff = Math.round(startMin - nowMin);
+    if (isLiveNotification || (diff >= 1 && diff <= 30)) {
+      return Math.max(1, diff);
+    }
+  }
+  const fb = Number(fallbackMinutesLeft);
+  return Number.isFinite(fb) && fb > 0 ? Math.round(fb) : 15;
+}
+
+function buildLessonReminderVariables(item = {}, { recalculateLive = false } = {}) {
+  const l = item.lesson || {};
+  const cleanType = String(l.type || '').replace(/^\[|\]$/g, '').trim();
+  const typeEmoji = getTypeTagEmoji(cleanType);
+
+  const timeStr = String(l.time || '').trim();
+  const startMatch = timeStr.match(/^(\d{1,2}:\d{2})/);
+  const startKey = startMatch ? startMatch[1].padStart(5, '0') : '';
+  const breakTime = l.breakTime || (startKey && LESSON_BREAKS[startKey]) || '';
+
+  const roomClean = String(l.roomShort || l.room || '')
+    .replace(/^Ауд\.?\s*/i, '')
+    .trim();
+  const buildingClean = l.buildingName ||
+    ((!l.building || l.building === 'C' || l.building === 'С') ? 'Главный корпус' : String(l.building).trim());
+  const floorClean = (l.floor !== undefined && l.floor !== null && l.floor !== '')
+    ? String(l.floor).trim()
+    : '';
+
+  const locationLine = [
+    roomClean,
+    buildingClean,
+    floorClean ? `${floorClean} этаж` : ''
+  ].filter(Boolean).join(', ');
+
+  const lecturerClean = String(
+    l.lecturer ||
+    (Array.isArray(l.lecturers) ? l.lecturers.join(', ') : '') ||
+    (item.role === 'lecturer' ? (item.targetName || '') : '')
+  ).trim();
+
+  const groupClean = String(
+    l.group ||
+    (item.role !== 'lecturer' ? (item.targetName || '') : '')
+  ).trim();
+
+  const subgroupClean = String(l.subgroup || '').trim();
+
+  // Составная переменная без ведущего \n и без жёстко зашитых слов «Преподаватель:» / «Группа:»
+  const extraParts = [];
+  if (item.role === 'lecturer') {
+    if (groupClean) extraParts.push(groupClean);
+    if (subgroupClean) extraParts.push(subgroupClean);
+    if (lecturerClean && lecturerClean !== item.targetName) extraParts.push(lecturerClean);
+  } else {
+    if (lecturerClean) extraParts.push(lecturerClean);
+    if (groupClean) extraParts.push(groupClean);
+    if (subgroupClean) extraParts.push(subgroupClean);
+  }
+  const extraInfo = extraParts.join(', ');
+
+  const cleanDayNote = String(item.dayName || item.dayNote || '')
+    .replace(/^\s*\(|\)\s*$/g, '')
+    .trim();
+
+  const dynamicMinutesLeft = computeDynamicMinutesLeft(
+    timeStr,
+    item.minutesLeft != null ? item.minutesLeft : 15,
+    recalculateLive
+  );
+
+  return {
+    minutesLeft: String(dynamicMinutesLeft),
+    dayName: cleanDayNote,
+    dayNote: cleanDayNote,
+    type: cleanType,
+    typeTag: cleanType,
+    typeTagEmoji: typeEmoji,
+    subject: String(l.subject || 'Учебное занятие').trim(),
+    time: timeStr,
+    breakTime,
+    room: roomClean,
+    building: buildingClean,
+    floor: floorClean,
+    locationLine,
+    group: groupClean,
+    subgroup: subgroupClean,
+    lecturer: lecturerClean,
+    extraInfo,
+    name: String(item.firstName || 'друг').trim(),
+    target: String(item.targetName || '').trim()
+  };
+}
+
+// Очередь с защитой от рейтлимитов Telegram (~26 сообщений/сек + обработка 429 retry_after)
+let lastTelegramSendAt = 0;
+const MIN_TELEGRAM_SEND_INTERVAL_MS = 38;
+
+function sleepMs(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function paceTelegramSend() {
+  const now = Date.now();
+  const elapsed = now - lastTelegramSendAt;
+  if (elapsed < MIN_TELEGRAM_SEND_INTERVAL_MS) {
+    await sleepMs(MIN_TELEGRAM_SEND_INTERVAL_MS - elapsed);
+  }
+  lastTelegramSendAt = Date.now();
+}
+
 if (bot) {
   bot.use((ctx, next) => {
     if (ctx.from && ctx.from.id) {
@@ -52,6 +248,7 @@ if (bot) {
 
   bot.start(async (ctx) => {
     const name = ctx.from.first_name || 'друг';
+    const username = ctx.from.username || '';
     const payload = String(ctx.startPayload || '').trim();
     console.log('[bot] /start от', ctx.from.id, name, payload);
 
@@ -63,13 +260,16 @@ if (bot) {
         username: ctx.from.username || ''
       });
       if (ok) {
-        await ctx.reply(
-          `✅ Привет, ${name}! Вход на сайте Карты РГРТУ подтверждён.\n\n` +
-          `Можешь вернуться в браузер — твой профиль и настройки расписания уже подключены автоматически.`,
+        await replyWithRenderedTemplate(
+          ctx,
+          'start_webauth_success',
+          { name, username },
           mainReplyKeyboard
         );
-        return ctx.reply(
-          'Управление профилем:',
+        return replyWithRenderedTemplate(
+          ctx,
+          'start_webauth_manage_prompt',
+          { name, username },
           Markup.inlineKeyboard([
             [Markup.button.callback('👤 Мой профиль и уведомления', 'my_profile')]
           ])
@@ -83,20 +283,17 @@ if (bot) {
       username: ctx.from.username || ''
     });
 
-    await ctx.reply(
-      `Привет, ${name}! 👋\n\n` +
-      `Это бот интерактивной карты и расписания РГРТУ:\n` +
-      `• 🗺 интерактивная карта Главного корпуса\n` +
-      `• 📅 расписание всех групп и преподавателей\n` +
-      `• 🟢 свободные аудитории прямо сейчас\n` +
-      `• 🔔 уведомления за 15 минут до начала твоих пар\n` +
-      `• 🔑 код для быстрого входа на сайте: ${code}\n\n` +
-      `Кнопки «🗺 Карта» и «📅 Расписание» закреплены внизу чата.`,
+    await replyWithRenderedTemplate(
+      ctx,
+      'start_welcome',
+      { name, username, code },
       mainReplyKeyboard
     );
 
-    return ctx.reply(
-      'Выбери действие ниже или напиши любой вопрос ИИ\'шке прямо в чат:',
+    return replyWithRenderedTemplate(
+      ctx,
+      'start_menu_prompt',
+      { name, username },
       Markup.inlineKeyboard([
         [Markup.button.callback('🔑 Получить код входа для сайта', 'login_code')],
         [Markup.button.callback('👤 Моё расписание и уведомления', 'my_profile')],
@@ -106,45 +303,45 @@ if (bot) {
   });
 
   bot.command('login', (ctx) => {
+    const name = ctx.from.first_name || 'друг';
     const code = userStore.createAuthCodeForTelegramUser({
       telegramId: ctx.from.id,
       firstName: ctx.from.first_name || '',
       username: ctx.from.username || ''
     });
-    return ctx.reply(
-      `🔑 Твой одноразовый код для входа на сайте:\n\n` +
-      `${code}\n\n` +
-      `Открой меню профиля (👤) в правом верхнем углу на сайте и введи этот код (действует 10 минут).`,
-      mainReplyKeyboard
-    );
+    return replyWithRenderedTemplate(ctx, 'login_command', { name, code }, mainReplyKeyboard);
   });
 
   bot.action('login_code', async (ctx) => {
     await ctx.answerCbQuery();
+    const name = ctx.from.first_name || 'друг';
     const code = userStore.createAuthCodeForTelegramUser({
       telegramId: ctx.from.id,
       firstName: ctx.from.first_name || '',
       username: ctx.from.username || ''
     });
-    return ctx.reply(
-      `🔑 Одноразовый код для входа на сайте: ${code}\n` +
-      `Введи его в меню профиля (👤) на сайте Карты РГРТУ.`
-    );
+    return replyWithRenderedTemplate(ctx, 'login_callback', { name, code });
   });
 
   async function replyWithProfile(ctx) {
     const u = userStore.getUserByTelegramId(ctx.from.id);
+    const name = (u && u.firstName) || ctx.from.first_name || 'друг';
+    const username = (u && u.username) || ctx.from.username || '';
     const roleLabel = u && u.role === 'lecturer' ? 'Преподаватель' : 'Студент';
     const targetLabel = u && u.targetName ? u.targetName : 'не выбрано (укажи на сайте в меню 👤)';
     const notifLabel = u && u.notificationsEnabled ? 'Включены ✅' : 'Выключены 🔕';
     const toggleText = u && u.notificationsEnabled ? '🔕 Выключить уведомления' : '🔔 Включить уведомления о парах';
 
-    return ctx.reply(
-      `👤 Твой профиль Карты РГРТУ:\n\n` +
-      `• Статус: ${roleLabel}\n` +
-      `• Целевое расписание: ${targetLabel}\n` +
-      `• Уведомления за 15 мин до пары: ${notifLabel}\n\n` +
-      `Ты можешь выбрать свою группу или ФИО преподавателя на сайте в меню профиля (👤).`,
+    return replyWithRenderedTemplate(
+      ctx,
+      'profile_card',
+      {
+        name,
+        username,
+        role: roleLabel,
+        target: targetLabel,
+        notifStatus: notifLabel
+      },
       Markup.inlineKeyboard([
         [Markup.button.callback(toggleText, 'toggle_notif')]
       ])
@@ -172,35 +369,28 @@ if (bot) {
     return replyWithProfile(ctx);
   });
 
-  bot.help((ctx) => ctx.reply(
-    'Доступные команды:\n' +
-    '/start — главное меню\n' +
-    '/login — получить 6-значный код для входа на сайте\n' +
-    '/my — профиль и настройки уведомлений о парах\n' +
-    '/map — открыть карту\n' +
-    '/schedule — открыть расписание\n' +
-    '/free — свободные аудитории сейчас\n' +
-    '/help — список команд',
-    mainReplyKeyboard
-  ));
+  bot.help((ctx) => {
+    const name = ctx.from?.first_name || 'друг';
+    return replyWithRenderedTemplate(ctx, 'help_command', { name }, mainReplyKeyboard);
+  });
 
   bot.command('map', (ctx) => {
-    return ctx.reply('Открой карту по кнопке «🗺 Карта» внизу экрана:', mainReplyKeyboard);
+    const name = ctx.from?.first_name || 'друг';
+    return replyWithRenderedTemplate(ctx, 'map_command', { name }, mainReplyKeyboard);
   });
 
   bot.command('schedule', (ctx) => {
-    return ctx.reply('Открой расписание по кнопке «📅 Расписание» внизу экрана:', mainReplyKeyboard);
+    const name = ctx.from?.first_name || 'друг';
+    return replyWithRenderedTemplate(ctx, 'schedule_command', { name }, mainReplyKeyboard);
   });
 
   bot.command('free', async (ctx) => {
-    const loading = await ctx.reply('⏳ Загружаю список…');
+    const name = ctx.from?.first_name || 'друг';
+    const loading = await replyWithRenderedTemplate(ctx, 'free_loading', { name });
     try {
       const res = await fetch(`${API_BASE}/api/free-now`);
       if (res.status === 503) {
-        await ctx.telegram.editMessageText(
-          ctx.chat.id, loading.message_id, null,
-          '⏳ Кэш ещё прогревается. Попробуй через 1–2 минуты.'
-        );
+        await editMessageWithRenderedTemplate(ctx, ctx.chat.id, loading.message_id, 'free_warming', { name });
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -217,21 +407,19 @@ if (bot) {
       const totalC = data.free.filter(r => r.building === 'C').length;
 
       if (mainRooms.length === 0) {
-        await ctx.telegram.editMessageText(
-          ctx.chat.id, loading.message_id, null,
-          '😔 Свободных аудиторий сейчас нет.\nОткрой карту по кнопке «🗺 Карта» внизу экрана, чтобы увидеть занятые.'
-        );
+        await editMessageWithRenderedTemplate(ctx, ctx.chat.id, loading.message_id, 'free_empty', { name });
         return;
       }
 
       const lines = mainRooms.map(r => `• ${r.name} — ${r.untilText}`);
-      const header = `🟢 Свободно в Главном корпусе: ${totalC}\n\n`;
-      const footer = totalC > 20 ? '\n\n…и другие. Открой карту по кнопке «🗺 Карта» внизу экрана, чтобы увидеть все.' : '';
+      const footer = totalC > 20 ? '…и другие. Открой карту по кнопке «🗺 Карта» внизу экрана, чтобы увидеть все.' : '';
 
-      await ctx.telegram.editMessageText(
-        ctx.chat.id, loading.message_id, null,
-        header + lines.join('\n') + footer
-      );
+      await editMessageWithRenderedTemplate(ctx, ctx.chat.id, loading.message_id, 'free_list', {
+        name,
+        totalCount: String(totalC),
+        roomsList: lines.join('\n'),
+        moreFooter: footer
+      });
     } catch (e) {
       console.error('[bot/free]', e);
       await ctx.telegram.editMessageText(
@@ -243,7 +431,8 @@ if (bot) {
 
   bot.action('free_now', async (ctx) => {
     await ctx.answerCbQuery();
-    return ctx.reply('Используй /free', mainReplyKeyboard);
+    const name = ctx.from?.first_name || 'друг';
+    return replyWithRenderedTemplate(ctx, 'free_callback_hint', { name }, mainReplyKeyboard);
   });
 
   bot.on('text', async (ctx) => {
@@ -269,21 +458,22 @@ if (bot) {
   });
 }
 
-async function sendPngToTelegramUser(telegramId, pngBuffer, filename = 'schedule.png', caption = '') {
+async function sendPngToTelegramUser(telegramId, pngBuffer, filename = 'schedule.png') {
   if (!bot || !telegramId || !pngBuffer) return false;
   try {
-    await bot.telegram.sendDocument(
+    await paceTelegramSend();
+    // Отправляем только сам файл изображения без лишнего текстового сообщения (без caption)
+    await bot.telegram.sendPhoto(
       telegramId,
-      { source: pngBuffer, filename },
-      caption ? { caption } : undefined
+      { source: pngBuffer, filename }
     );
     return true;
   } catch (e) {
     try {
-      await bot.telegram.sendPhoto(
+      await paceTelegramSend();
+      await bot.telegram.sendDocument(
         telegramId,
-        { source: pngBuffer, filename },
-        caption ? { caption } : undefined
+        { source: pngBuffer, filename }
       );
       return true;
     } catch (e2) {
@@ -293,34 +483,120 @@ async function sendPngToTelegramUser(telegramId, pngBuffer, filename = 'schedule
   }
 }
 
-async function checkUpcomingLessonNotifications() {
-  if (!bot) return;
+async function sendAdminTelegramMessage(telegramId, markdownText, variables = {}) {
+  if (!bot) return { ok: false, error: 'BOT_TOKEN не настроен на сервере' };
+  const raw = String(markdownText || '').trim();
+  if (!telegramId || !raw) {
+    return { ok: false, error: 'Не указан Telegram ID или текст сообщения' };
+  }
+  const html = renderTelegramMarkdownToHtml(raw, {
+    webappUrl: WEBAPP_URL,
+    scheduleUrl: SCHEDULE_WEBAPP_URL,
+    ...variables
+  });
+  const plain = renderTelegramPlainText(raw, {
+    webappUrl: WEBAPP_URL,
+    scheduleUrl: SCHEDULE_WEBAPP_URL,
+    ...variables
+  });
   try {
-    const res = await fetch(`${API_BASE}/api/internal/upcoming-notifications`);
+    await paceTelegramSend();
+    await bot.telegram.sendMessage(telegramId, html, {
+      ...mainReplyKeyboard,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    });
+    return { ok: true, renderedHtml: html, renderedText: plain };
+  } catch (e) {
+    const retryAfter = e?.response?.parameters?.retry_after || e?.parameters?.retry_after;
+    if (retryAfter) {
+      await sleepMs((Number(retryAfter) + 1) * 1000);
+    }
+    try {
+      await paceTelegramSend();
+      await bot.telegram.sendMessage(telegramId, plain, mainReplyKeyboard);
+      return { ok: true, renderedHtml: html, renderedText: plain, fallbackPlain: true };
+    } catch (e2) {
+      return { ok: false, error: e2.message || 'Ошибка отправки в Telegram' };
+    }
+  }
+}
+
+let isSendingNotificationBatch = false;
+
+async function checkUpcomingLessonNotifications() {
+  if (!bot || isSendingNotificationBatch) return;
+  isSendingNotificationBatch = true;
+  try {
+    await userStore.init().catch(() => {});
+    const res = await fetch(`${API_BASE}/api/internal/upcoming-notifications?markSent=0`);
     if (!res.ok) return;
     const data = await res.json();
     if (!Array.isArray(data.notifications) || !data.notifications.length) return;
 
     for (const item of data.notifications) {
       if (!item.telegramId || !item.lesson) continue;
-      const l = item.lesson;
-      const extraInfo = item.role === 'lecturer'
-        ? (l.group ? `\n👥 Группа: ${l.group}` : '')
-        : (l.lecturer ? `\n👤 Преподаватель: ${l.lecturer}` : '');
-      const floorText = l.floor != null ? `${l.floor} этаж, ` : '';
-      const text =
-        `🔔 Через ${item.minutesLeft} мин начнётся пара!\n\n` +
-        `📚 ${l.type ? `[${l.type}] ` : ''}${l.subject}\n` +
-        `📍 ${l.roomShort ? `Ауд. ${l.roomShort} (${floorText}Главный корпус)` : 'Главный корпус'}\n` +
-        `🕒 Время: ${l.time}` +
-        extraInfo;
+      const u = item.userId ? userStore.getUser(item.userId) : userStore.getUserByTelegramId(item.telegramId);
+      if (u && item.slotKey && Array.isArray(u.notifiedSlots) && u.notifiedSlots.includes(item.slotKey)) {
+        continue;
+      }
+
+      await paceTelegramSend();
+
+      // Пересчитываем {{minutesLeft}} непосредственно перед отправкой конкретному пользователю,
+      // чтобы при большой очереди и рейтлимитах Telegram каждый получал актуальное время до пары.
+      let vars = buildLessonReminderVariables(
+        {
+          ...item,
+          firstName: (u && u.firstName) || '',
+          targetName: (u && u.targetName) || item.targetName || ''
+        },
+        { recalculateLive: true }
+      );
+      let rendered = userStore.renderBotMessage('lesson_reminder', vars);
+
       try {
-        await bot.telegram.sendMessage(item.telegramId, text, mainReplyKeyboard);
+        try {
+          await bot.telegram.sendMessage(item.telegramId, rendered.html, {
+            ...mainReplyKeyboard,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true
+          });
+        } catch (err) {
+          const retryAfter = err?.response?.parameters?.retry_after || err?.parameters?.retry_after;
+          if (retryAfter) {
+            await sleepMs((Number(retryAfter) + 1) * 1000);
+            await paceTelegramSend();
+            // После ожидания кд Telegram повторно пересчитываем актуальные минуты до начала пары
+            vars = buildLessonReminderVariables(
+              {
+                ...item,
+                firstName: (u && u.firstName) || '',
+                targetName: (u && u.targetName) || item.targetName || ''
+              },
+              { recalculateLive: true }
+            );
+            rendered = userStore.renderBotMessage('lesson_reminder', vars);
+            await bot.telegram.sendMessage(item.telegramId, rendered.html, {
+              ...mainReplyKeyboard,
+              parse_mode: 'HTML',
+              disable_web_page_preview: true
+            });
+          } else {
+            await bot.telegram.sendMessage(item.telegramId, rendered.text, mainReplyKeyboard);
+          }
+        }
+        if (item.userId && item.slotKey) {
+          userStore.upsertUser(item.userId, { lastNotifiedSlot: item.slotKey });
+        }
       } catch (sendErr) {
         console.warn(`[bot/notify] Не удалось отправить уведомление ${item.telegramId}:`, sendErr.message);
       }
     }
-  } catch (e) {}
+  } catch (e) {
+  } finally {
+    isSendingNotificationBatch = false;
+  }
 }
 
 let botLaunched = false;
@@ -329,6 +605,8 @@ let notifyTimer = null;
 function startBot(retryCount = 0) {
   if (!bot || botLaunched) return;
   botLaunched = true;
+
+  userStore.init().catch(() => {});
 
   bot.telegram.getMe()
     .then((me) => {
@@ -356,7 +634,7 @@ function startBot(retryCount = 0) {
   }).catch(() => {});
 
   if (!notifyTimer) {
-    setTimeout(checkUpcomingLessonNotifications, 5000);
+    setTimeout(checkUpcomingLessonNotifications, 4000);
     notifyTimer = setInterval(checkUpcomingLessonNotifications, 30 * 1000);
   }
 
@@ -381,4 +659,12 @@ if (require.main === module) {
   startBot();
 }
 
-module.exports = { bot, startBot, getBotUsername, checkUpcomingLessonNotifications, sendPngToTelegramUser };
+module.exports = {
+  bot,
+  startBot,
+  getBotUsername,
+  buildLessonReminderVariables,
+  checkUpcomingLessonNotifications,
+  sendPngToTelegramUser,
+  sendAdminTelegramMessage
+};

@@ -4,7 +4,8 @@
   "description": "Интерактивная карта РГРТУ с Telegram-ботом",
   "scripts": {
     "dev": "node server.js",
-    "build": "node --check server.js && node --check bot.js && node --check js/app.js && node --check js/editor.js",
+    "build": "node --check server.js && node --check bot.js && node --check js/user-store.js && node --check js/graph-utils.js && node --check js/app.js && node --check js/editor.js && node --check js/admin.js",
+    "lint": "node --check server.js && node --check bot.js && node --check js/user-store.js && node --check js/graph-utils.js && node --check js/app.js && node --check js/editor.js && node --check js/admin.js",
     "start": "node server.js",
     "bot": "node bot.js"
   },

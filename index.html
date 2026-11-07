@@ -15,7 +15,7 @@
       document.documentElement.dataset.themePref = 'system';
     }
   </script>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Карта РГРТУ — Интерактивная навигация и расписание</title>
   <meta name="description" content="Интерактивная карта Главного корпуса РГРТУ: расписание аудиторий, свободные кабинеты, маршруты по этажам и умный ИИ-помощник.">
   <meta property="og:title" content="Карта РГРТУ — Интерактивная навигация и расписание">
@@ -27,7 +27,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=1.2.9">
+  <link rel="stylesheet" href="css/style.css?v=1.3.1">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -98,24 +98,25 @@
             <div class="user-dropdown-name" id="user-dropdown-name">Гость</div>
             <div class="user-dropdown-sub" id="user-dropdown-sub">Войдите через Telegram для наиболее удобного взаимодействия!</div>
           </div>
-          <button type="button" class="user-dropdown-close" id="user-dropdown-close" aria-label="Закрыть профиль" title="Закрыть">✕</button>
+          <div class="user-dropdown-header-actions">
+            <button type="button" class="user-dropdown-icon-btn user-logout-icon-btn hidden" id="user-logout-btn" aria-label="Выйти из аккаунта" title="Выйти из аккаунта">
+              <i class="user-logout-modern-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                  <polyline points="16 17 21 12 16 7"/>
+                  <line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+              </i>
+            </button>
+            <button type="button" class="user-dropdown-close" id="user-dropdown-close" aria-label="Закрыть профиль" title="Закрыть">✕</button>
+          </div>
         </div>
 
         <div class="user-dropdown-section hidden" id="user-academic-section">
-          <div class="user-dropdown-label">Ваш статус</div>
-          <div class="user-segmented" role="group" aria-label="Статус пользователя">
-            <button type="button" class="user-seg-btn active" id="user-role-student" data-role="student">
-              <i class="mdi mdi-school-outline"></i> Студент
-            </button>
-            <button type="button" class="user-seg-btn" id="user-role-lecturer" data-role="lecturer">
-              <i class="mdi mdi-account-tie-outline"></i> Преподаватель
-            </button>
-          </div>
-
           <div class="user-target-picker">
-            <label class="user-dropdown-label" id="user-target-label" for="user-target-input">Номер группы</label>
+            <label class="user-dropdown-label" id="user-target-label" for="user-target-input">Ваша группа или ФИО преподавателя</label>
             <div class="user-target-input-wrap">
-              <input type="text" id="user-target-input" class="user-target-input" placeholder="Например: 445 или 546М" autocomplete="off">
+              <input type="text" id="user-target-input" class="user-target-input" placeholder="Например: 546М или Скворцов С.В." autocomplete="off">
               <button type="button" class="input-clear-x hidden" id="user-target-clear" aria-label="Очистить">
                 <i class="mdi mdi-close"></i>
               </button>
@@ -123,15 +124,39 @@
             <div class="user-target-suggestions hidden" id="user-target-suggestions"></div>
           </div>
 
-          <button type="button" class="user-my-schedule-btn hidden" id="user-open-schedule-btn">
-            <i class="mdi mdi-calendar-check-outline"></i>
-            <span id="user-open-schedule-text">Моё расписание</span>
-          </button>
+          <div class="user-quick-actions-row" id="user-quick-actions-row">
+            <button type="button" class="user-my-schedule-btn hidden" id="user-open-schedule-btn">
+              <i class="mdi mdi-calendar-check-outline"></i>
+              <span id="user-open-schedule-text">Моё расписание</span>
+            </button>
 
-          <button type="button" class="user-my-schedule-btn user-cheatsheet-btn hidden" id="user-open-cheatsheet-btn">
-            <i class="mdi mdi-notebook-outline"></i>
-            <span id="user-open-cheatsheet-text">Шпаргалка</span>
-          </button>
+            <button type="button" class="user-my-schedule-btn user-cheatsheet-btn hidden" id="user-open-cheatsheet-btn">
+              <i class="mdi mdi-notebook-outline"></i>
+              <span id="user-open-cheatsheet-text">Шпаргалка</span>
+            </button>
+          </div>
+
+          <div id="user-tg-linked" class="user-tg-box hidden">
+            <label class="user-notif-toggle" for="user-notif-checkbox">
+              <input type="checkbox" id="user-notif-checkbox" class="user-notif-checkbox">
+              <span class="user-notif-check-ui" aria-hidden="true"><i class="mdi mdi-check"></i></span>
+              <span class="user-notif-text">
+                <i class="mdi mdi-bell-ring-outline"></i>
+                Уведомлять о парах в Telegram
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div class="user-dropdown-section" id="user-tg-section">
+          <div class="user-dropdown-label">Авторизация в Telegram</div>
+          <div id="user-tg-unlinked" class="user-tg-box">
+            <p class="user-tg-hint">Привяжите Telegram в один клик, чтобы выбрать свою группу или ФИО, вести личные заметки к парам, добавлять метки на карту и получать уведомления за 15 мин до пары:</p>
+            <a href="https://t.me/rgrtu_map_bot" target="_blank" rel="noopener" class="user-tg-bot-link" id="user-tg-deeplink">
+              <i class="mdi mdi-send"></i> Войти через Telegram
+            </a>
+            <div class="user-tg-feedback hidden" id="user-tg-feedback"></div>
+          </div>
         </div>
 
         <div class="user-dropdown-section">
@@ -148,32 +173,6 @@
             </button>
           </div>
         </div>
-
-        <div class="user-dropdown-section" id="user-tg-section">
-          <div class="user-dropdown-label">Telegram и уведомления</div>
-
-          <div id="user-tg-unlinked" class="user-tg-box">
-            <p class="user-tg-hint">Привяжите Telegram в один клик, чтобы выбрать свою группу или ФИО, добавлять расписания в избранное и получать уведомления за 15 мин до пары:</p>
-            <a href="https://t.me/rgrtu_map_bot" target="_blank" rel="noopener" class="user-tg-bot-link" id="user-tg-deeplink">
-              <i class="mdi mdi-send"></i> Войти через Telegram
-            </a>
-            <div class="user-tg-feedback hidden" id="user-tg-feedback"></div>
-          </div>
-
-          <div id="user-tg-linked" class="user-tg-box hidden">
-            <label class="user-notif-toggle" for="user-notif-checkbox">
-              <input type="checkbox" id="user-notif-checkbox" class="user-notif-checkbox">
-              <span class="user-notif-check-ui" aria-hidden="true"><i class="mdi mdi-check"></i></span>
-              <span class="user-notif-text">
-                <i class="mdi mdi-bell-ring-outline"></i>
-                Уведомлять о парах в Telegram
-              </span>
-            </label>
-            <button type="button" class="user-logout-btn" id="user-logout-btn">
-              <i class="mdi mdi-logout"></i> Выйти из аккаунта
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -181,13 +180,37 @@
   <div id="app">
     <div id="map-wrap">
       <div id="map"></div>
-      <button type="button" id="smart-next-class-pill" class="smart-next-class-pill hidden" aria-label="Куда мне сейчас?"></button>
       <button type="button" id="map-compass-btn" class="map-compass-btn hidden" title="Сбросить поворот карты" aria-label="Сбросить поворот карты">
         <i class="mdi mdi-compass-outline" id="map-compass-icon"></i>
       </button>
+      <div class="map-floating-tools" id="map-floating-tools">
+        <button type="button" id="map-toggle-poi-btn" class="map-tool-fab active" title="Включить / скрыть полезные метки (розетки, кофе, Wi-Fi)" aria-label="Скрыть/показать полезные метки">
+          <svg class="map-tool-fab-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+            <polyline points="2 17 12 22 22 17"/>
+            <polyline points="2 12 12 17 22 12"/>
+          </svg>
+        </button>
+        <button type="button" id="map-add-poi-btn" class="map-tool-fab" title="Предложить полезную метку на карте (розетка, кофе, Wi-Fi)" aria-label="Предложить метку на карте">
+          <svg class="map-tool-fab-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+            <line x1="12" y1="7" x2="12" y2="13"/>
+            <line x1="9" y1="10" x2="15" y2="10"/>
+          </svg>
+        </button>
+        <button type="button" id="map-gps-btn" class="map-tool-fab" title="Моё местоположение в корпусе (GPS + Wi-Fi)" aria-label="Моё местоположение">
+          <i class="mdi mdi-crosshairs-gps" id="map-gps-icon"></i>
+        </button>
+      </div>
+      <div id="map-gps-banner" class="map-gps-banner hidden" role="status" aria-live="polite">
+        <i class="mdi mdi-crosshairs-gps" style="color:#2563eb;font-size:16px;flex-shrink:0"></i>
+        <span id="map-gps-banner-text" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">Определение позиции…</span>
+        <button type="button" id="map-gps-refine-btn" class="map-gps-banner-btn" title="Указать точку на коридоре вручную">Уточнить</button>
+        <button type="button" id="map-gps-close-btn" class="map-gps-banner-btn" title="Отключить GPS" aria-label="Закрыть">✕</button>
+      </div>
     </div>
     <aside id="panel"></aside>
-    <section id="schedule-view" class="schedule-view" aria-label="Расписание групп и преподавателей" aria-hidden="true"></section>
+    <section id="schedule-view" class="schedule-view" aria-label="Расписание групп, преподавателей и аудиторий" aria-hidden="true"></section>
   </div>
 
   <button id="panel-handle" class="panel-handle hidden" title="Свернуть / развернуть">
@@ -196,7 +219,47 @@
 
   <div id="cheatsheet-modal-backdrop" class="cheatsheet-modal-backdrop hidden" role="dialog" aria-modal="true" aria-label="Шпаргалка группы"></div>
 
+  <div id="community-modal-backdrop" class="cheatsheet-modal-backdrop community-modal-backdrop hidden" role="dialog" aria-modal="true" aria-label="Модальное окно">
+    <div class="cheatsheet-modal-card community-modal-card">
+      <div class="cheatsheet-modal-header">
+        <div class="cheatsheet-modal-title" id="community-modal-title"></div>
+        <div class="cheatsheet-modal-header-actions">
+          <button type="button" class="cheatsheet-modal-close" id="community-modal-close" aria-label="Закрыть">✕</button>
+        </div>
+      </div>
+      <div class="cheatsheet-modal-body community-modal-body" id="community-modal-body"></div>
+    </div>
+  </div>
+
+  <div id="share-sheet-backdrop" class="share-sheet-backdrop hidden" role="dialog" aria-modal="true" aria-label="Поделиться">
+    <div class="share-sheet-card">
+      <div class="share-sheet-title">
+        <span>Поделиться ссылкой</span>
+        <button type="button" class="cheatsheet-modal-close" id="share-sheet-close" aria-label="Закрыть">✕</button>
+      </div>
+      <div id="share-sheet-url-preview" style="font-size:11.5px;color:var(--text-muted);word-break:break-all;padding:6px 8px;border-radius:8px;background:var(--lesson-bg);border:1px solid var(--border)"></div>
+      <div class="share-sheet-grid">
+        <button type="button" class="share-sheet-btn" id="share-sheet-tg">
+          <i class="mdi mdi-send"></i>
+          <span>Telegram</span>
+        </button>
+        <button type="button" class="share-sheet-btn" id="share-sheet-vk">
+          <i class="mdi mdi-share-variant"></i>
+          <span>ВКонтакте</span>
+        </button>
+        <button type="button" class="share-sheet-btn" id="share-sheet-copy">
+          <i class="mdi mdi-content-copy"></i>
+          <span>Скопировать</span>
+        </button>
+      </div>
+      <button type="button" class="community-btn" id="share-sheet-native" style="width:100%;justify-content:center">
+        <i class="mdi mdi-export-variant"></i>
+        <span>Другие приложения…</span>
+      </button>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="js/app.js?v=1.2.9"></script>
+  <script src="js/app.js?v=1.4.1"></script>
 </body>
 </html>

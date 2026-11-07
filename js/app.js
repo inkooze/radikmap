@@ -26,10 +26,25 @@ const BREAKS = {
 };
 
 const LESSON_TYPES = {
-  'Лек.': { cls: 'lec', icon: 'mdi-book-open-page-variant' },
-  'Лаб.': { cls: 'lab', icon: 'mdi-microscope' },
-  'Упр.': { cls: 'pr',  icon: 'mdi-function-variant' }
+  'Лек.':  { cls: 'lec',  icon: 'mdi-book-open-page-variant' },
+  'Лаб.':  { cls: 'lab',  icon: 'mdi-microscope' },
+  'Упр.':  { cls: 'pr',   icon: 'mdi-function-variant' },
+  'Конс.': { cls: 'cons', icon: 'mdi-comment-question-outline' },
+  'Зач.':  { cls: 'zach', icon: 'mdi-check-decagram-outline' },
+  'Экз.':  { cls: 'exam', icon: 'mdi-school-outline' }
 };
+
+function normalizeClientLessonType(rawType) {
+  const s = String(rawType || '').trim();
+  if (!s) return '';
+  if (/^конс/i.test(s)) return 'Конс.';
+  if (/^зач/i.test(s)) return 'Зач.';
+  if (/^экз/i.test(s)) return 'Экз.';
+  if (/^лек/i.test(s)) return 'Лек.';
+  if (/^(?:упр|прак|сем)/i.test(s)) return 'Упр.';
+  if (/^лаб/i.test(s)) return 'Лаб.';
+  return s;
+}
 
 const MONTH_NAMES = ['января','февраля','марта','апреля','мая','июня',
                      'июля','августа','сентября','октября','ноября','декабря'];
@@ -150,7 +165,8 @@ function initTelegram() {
 }
 
 function haptic(type = 'light') {
-  if (tg?.HapticFeedback) {
+  if (!tg || !tg.initData || typeof tg.isVersionAtLeast !== 'function' || !tg.isVersionAtLeast('6.1')) return;
+  if (tg.HapticFeedback) {
     try {
       if (type === 'light') tg.HapticFeedback.impactOccurred('light');
       else if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
@@ -233,11 +249,11 @@ let aiMessages = [];
 let aiLoading = false;
 let aiFreeFloorFilter = 'all'; // 'all' | 0 | 1 | 2 | 3 | 4
 
-// Справочник расписания (Группы и Преподаватели)
-let scheduleDirectory = { ready: false, groups: [], lecturers: [] };
-let directoryActiveTab = 'groups'; // 'groups' | 'lecturers'
+// Справочник расписания (Группы, Преподаватели и Аудитории)
+let scheduleDirectory = { ready: false, groups: [], lecturers: [], classrooms: [] };
+let directoryActiveTab = 'groups'; // 'groups' | 'lecturers' | 'classrooms'
 let directoryFilterQuery = '';
-let currentEntitySchedule = null; // { type: 'group'|'lecturer', name: string }
+let currentEntitySchedule = null; // { type: 'group'|'lecturer'|'classroom', name: string }
 let scheduleViewOpen = false;
 let scheduleSidebarCollapsed = false;
 let scheduleMobileStep = 'list'; // 'list' | 'detail'
@@ -260,12 +276,46 @@ let userProfile = {
   username: localStorage.getItem('rsreu_user_username') || '',
   favorites: (() => { try { return JSON.parse(localStorage.getItem('rsreu_user_favorites') || '[]'); } catch (e) { return []; } })(),
   recentViews: (() => { try { return JSON.parse(localStorage.getItem('rsreu_user_recent') || '{}'); } catch (e) { return {}; } })(),
+  lessonNotes: (() => { try { return JSON.parse(localStorage.getItem('rsreu_user_notes') || '{}'); } catch (e) { return {}; } })(),
   theme: localStorage.getItem('theme') || 'system'
 };
 let botUsername = 'rsreu_map_bot';
 let authPollTimer = null;
 let activeAuthSessionToken = '';
 const currentWeekStatusByEntityKey = new Map();
+
+// Сообщество (POI метки, отзывы о буфетах) и гибридный GPS
+let poiLayerVisible = (() => {
+  try {
+    const saved = localStorage.getItem('radikmap_poi_layer');
+    return saved === null ? true : saved !== 'false';
+  } catch (e) {
+    return true;
+  }
+})();
+let communityState = {
+  markers: [],
+  reviews: [],
+  userReviews: [],
+  gpsConfig: null
+};
+let poiLayer = null;
+let gpsLayer = null;
+let addingPoiMode = false;
+let gpsState = {
+  active: false,
+  watchId: null,
+  pickMode: false,
+  pickingPoiMode: false,
+  x: null,
+  y: null,
+  floor: 1,
+  building: 'C',
+  nearestNodeId: null,
+  accuracyMeters: null,
+  headingDeg: 0,
+  lastStepAt: 0
+};
 
 // Стек истории действий для Ctrl+Z / Ctrl+Y и кнопок мыши Назад/Вперёд
 const navHistoryStack = [];
@@ -279,6 +329,7 @@ const svgCache = {};
 
 const map = L.map('map', {
   crs: L.CRS.Simple,
+  renderer: L.svg({ padding: 2.0 }),
   minZoom: -3,
   maxZoom: 3,
   zoomSnap: 0.25,
@@ -292,9 +343,15 @@ const map = L.map('map', {
 
 map.createPane('routePane');
 map.getPane('routePane').style.zIndex = 450;
+map.createPane('poiPane');
+map.getPane('poiPane').style.zIndex = 460;
+map.createPane('gpsPane');
+map.getPane('gpsPane').style.zIndex = 470;
 
 routeLayer = L.layerGroup().addTo(map);
 routePickLayer = L.layerGroup().addTo(map);
+poiLayer = L.layerGroup().addTo(map);
+gpsLayer = L.layerGroup().addTo(map);
 
 function syncMapRotationTransform() {
   if (!map) return;
@@ -302,7 +359,7 @@ function syncMapRotationTransform() {
   const centerLayerPt = map.latLngToLayerPoint(L.latLng((H || 1000) / 2, (W || 1000) / 2));
   const originStr = `${Math.round(centerLayerPt.x)}px ${Math.round(centerLayerPt.y)}px`;
   const rotStr = mapBearingDeg ? `rotate(${mapBearingDeg}deg)` : '';
-  ['overlayPane', 'routePane', 'markerPane', 'shadowPane', 'tooltipPane', 'popupPane'].forEach(paneName => {
+  ['overlayPane', 'routePane', 'poiPane', 'gpsPane', 'markerPane', 'shadowPane', 'tooltipPane', 'popupPane'].forEach(paneName => {
     const p = map.getPane(paneName);
     if (p) {
       p.style.transformOrigin = originStr;
@@ -432,13 +489,11 @@ function syncMobileMapViewportWithSheet() {
   );
   if (!isSheetActive) {
     document.documentElement.style.setProperty('--mobile-sheet-offset', '0px');
-    map.invalidateSize({ animate: false });
     return;
   }
   const rect = panel.getBoundingClientRect();
   const visibleH = Math.max(0, Math.min(window.innerHeight - 68, window.innerHeight - rect.top));
   document.documentElement.style.setProperty('--mobile-sheet-offset', `${Math.round(visibleH)}px`);
-  map.invalidateSize({ animate: false });
 }
 
 function applyMobileSheetSnapMeasurement(panel, { preserveHeight = false } = {}) {
@@ -673,8 +728,9 @@ function setupMobilePanelSheet() {
       panel.classList.add('mobile-minimized');
     } else if (panel.classList.contains('mobile-expanded')) {
       panel.classList.remove('mobile-expanded');
+      panel.classList.add('mobile-minimized');
     } else {
-      panel.classList.add('mobile-expanded');
+      panel.classList.add('mobile-minimized');
     }
     smoothInvalidateSize(260);
   };
@@ -720,8 +776,8 @@ function setupMobilePanelSheet() {
     const noExpand = panel.classList.contains('mobile-no-expand');
     const baseSnap = Number(panel.dataset.baseSnapPx) || Math.round(vh * 0.4);
 
-    if (currentDeltaY > 42) {
-      if (panel.classList.contains('mobile-expanded') && finalHeight > baseSnap * 0.9) {
+    if (currentDeltaY > 36) {
+      if (panel.classList.contains('mobile-expanded') && finalHeight > baseSnap * 0.85) {
         panel.classList.remove('mobile-expanded');
       } else if (panelMode === 'ai') {
         closeAiPanel();
@@ -729,7 +785,7 @@ function setupMobilePanelSheet() {
         panel.classList.remove('mobile-expanded');
         panel.classList.add('mobile-minimized');
       }
-    } else if (currentDeltaY < -42) {
+    } else if (currentDeltaY < -36) {
       if (panel.classList.contains('mobile-minimized')) {
         panel.classList.remove('mobile-minimized');
       } else if (!noExpand) {
@@ -739,7 +795,7 @@ function setupMobilePanelSheet() {
       panel.classList.remove('mobile-expanded', 'mobile-minimized');
       if (!noExpand && finalHeight >= vh * 0.72) {
         panel.classList.add('mobile-expanded');
-      } else if (finalHeight <= Math.min(120, baseSnap * 0.6)) {
+      } else if (finalHeight <= Math.min(130, baseSnap * 0.65)) {
         if (panelMode === 'ai') closeAiPanel();
         else panel.classList.add('mobile-minimized');
       }
@@ -752,7 +808,7 @@ function setupMobilePanelSheet() {
   panel.addEventListener('pointerdown', (e) => {
     if (window.innerWidth > 768) return;
     const dragHeader = e.target.closest('[data-panel-drag], .panel-header, .ai-panel-header');
-    if (!dragHeader || e.target.closest('button, input, a')) return;
+    if (!dragHeader || e.target.closest('button, input, a, .share-icon')) return;
     activePointerId = e.pointerId;
     try { dragHeader.setPointerCapture(e.pointerId); } catch (err) {}
     beginDrag(e.clientY);
@@ -769,7 +825,7 @@ function setupMobilePanelSheet() {
   panel.addEventListener('touchstart', (e) => {
     if (window.innerWidth > 768 || dragging) return;
     const dragHeader = e.target.closest('[data-panel-drag], .panel-header, .ai-panel-header');
-    if (!dragHeader || e.target.closest('button, input, a')) return;
+    if (!dragHeader || e.target.closest('button, input, a, .share-icon')) return;
     beginDrag(e.touches[0].clientY);
   }, { passive: true });
 
@@ -781,31 +837,59 @@ function setupMobilePanelSheet() {
   panel.addEventListener('touchend', finishDrag);
   panel.addEventListener('touchcancel', finishDrag);
 
-  // Свайп вниз для закрытия окна профиля на мобильных
+  // Свайп/перетаскивание вниз для закрытия окна профиля на мобильных (Touch + Pointer)
   const userDropdown = document.getElementById('user-dropdown');
   if (userDropdown) {
     let udStartY = 0;
     let udDeltaY = 0;
     let udDragging = false;
-    userDropdown.addEventListener('touchstart', (e) => {
-      if (window.innerWidth > 768) return;
-      if (!e.target.closest('.user-dropdown-drag-pill, .user-dropdown-header')) return;
+    let udPointerId = null;
+
+    const startUdDrag = (clientY) => {
       udDragging = true;
-      udStartY = e.touches[0].clientY;
+      udStartY = clientY;
       udDeltaY = 0;
-    }, { passive: true });
-    userDropdown.addEventListener('touchmove', (e) => {
+      userDropdown.style.transition = 'none';
+    };
+    const moveUdDrag = (clientY) => {
       if (!udDragging) return;
-      udDeltaY = Math.max(0, e.touches[0].clientY - udStartY);
+      udDeltaY = Math.max(0, clientY - udStartY);
       userDropdown.style.transform = `translateY(${udDeltaY}px)`;
-    }, { passive: true });
+    };
     const endUdDrag = () => {
       if (!udDragging) return;
       udDragging = false;
+      udPointerId = null;
+      userDropdown.style.transition = '';
       userDropdown.style.transform = '';
-      if (udDeltaY > 60) closeUserDropdown();
+      if (udDeltaY > 52) closeUserDropdown();
       udDeltaY = 0;
     };
+
+    userDropdown.addEventListener('pointerdown', (e) => {
+      if (window.innerWidth > 768) return;
+      const handle = e.target.closest('.user-dropdown-drag-pill, .user-dropdown-header');
+      if (!handle || e.target.closest('button, input, a')) return;
+      udPointerId = e.pointerId;
+      try { handle.setPointerCapture(e.pointerId); } catch (err) {}
+      startUdDrag(e.clientY);
+    });
+    userDropdown.addEventListener('pointermove', (e) => {
+      if (!udDragging || (udPointerId !== null && e.pointerId !== udPointerId)) return;
+      moveUdDrag(e.clientY);
+    });
+    userDropdown.addEventListener('pointerup', endUdDrag);
+    userDropdown.addEventListener('pointercancel', endUdDrag);
+
+    userDropdown.addEventListener('touchstart', (e) => {
+      if (window.innerWidth > 768 || udDragging) return;
+      if (!e.target.closest('.user-dropdown-drag-pill, .user-dropdown-header') || e.target.closest('button, input, a')) return;
+      startUdDrag(e.touches[0].clientY);
+    }, { passive: true });
+    userDropdown.addEventListener('touchmove', (e) => {
+      if (!udDragging) return;
+      moveUdDrag(e.touches[0].clientY);
+    }, { passive: true });
     userDropdown.addEventListener('touchend', endUdDrag);
     userDropdown.addEventListener('touchcancel', endUdDrag);
   }
@@ -1504,7 +1588,129 @@ function setupSearch() {
   renderHistory();
   updateClearAndInlineAi();
 
+  // Синхронизация подъёма #omni-bar, панели поиска и чата ИИ с экранной клавиатурой на мобильных без задержки
+  const isIOSDevice = /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+  let baseMobileViewportH = Math.max(
+    document.documentElement.clientHeight || 0,
+    window.innerHeight || 0,
+    window.visualViewport ? Math.round(window.visualViewport.height) : 0
+  );
+  let savedKbH = 0;
+  try {
+    const parsedKb = parseInt(localStorage.getItem('rsreu_kb_h') || '0', 10);
+    if (parsedKb >= 180 && parsedKb <= 450) savedKbH = parsedKb;
+  } catch (e) {}
+  let estimatedKbH = savedKbH || Math.round(
+    Math.min(isIOSDevice ? 336 : 300, Math.max(240, (window.screen?.height || 800) * (isIOSDevice ? 0.39 : 0.35)))
+  );
+  let isSearchBarFocused = false;
+  let focusStartTime = 0;
+  let kbPollRafId = null;
+  let kbBlurCleanupTimer = null;
+
+  const syncMobileKeyboardOffset = () => {
+    if (window.innerWidth > 768) {
+      document.documentElement.style.setProperty('--kb-offset', '0px');
+      document.documentElement.style.removeProperty('--vvh');
+      document.body.classList.remove('kb-lifting', 'kb-synced');
+      return;
+    }
+
+    const layoutH = document.documentElement.clientHeight || window.innerHeight;
+    const vv = window.visualViewport;
+    const vvH = vv ? vv.height : (tg?.viewportHeight || layoutH);
+    const vvTop = vv ? vv.offsetTop : 0;
+    const vvBottom = vvH + vvTop;
+
+    if (!isSearchBarFocused) {
+      const currentMaxH = Math.round(Math.max(layoutH, vvH));
+      if (currentMaxH > 360 && Math.abs(currentMaxH - baseMobileViewportH) > 20) {
+        baseMobileViewportH = currentMaxH;
+      }
+      document.documentElement.style.setProperty('--kb-offset', '0px');
+      document.documentElement.style.setProperty('--vvh', `${Math.round(vvH)}px`);
+      return;
+    }
+
+    if (window.scrollY !== 0 || document.documentElement.scrollTop !== 0) {
+      window.scrollTo(0, 0);
+    }
+
+    const browserTotalShrink = Math.max(0, Math.round(baseMobileViewportH - vvBottom));
+    const layoutShrink = Math.max(0, Math.round(baseMobileViewportH - layoutH));
+    const vvOffsetFromLayout = Math.max(0, Math.round(layoutH - vvBottom));
+    const elapsed = performance.now() - focusStartTime;
+
+    if (browserTotalShrink >= 80) {
+      if (browserTotalShrink >= 170 && browserTotalShrink <= 450 && browserTotalShrink !== estimatedKbH) {
+        estimatedKbH = browserTotalShrink;
+        try { localStorage.setItem('rsreu_kb_h', String(estimatedKbH)); } catch (e) {}
+      }
+      document.body.classList.remove('kb-lifting');
+      document.body.classList.add('kb-synced');
+      document.documentElement.style.setProperty('--kb-offset', `${vvOffsetFromLayout}px`);
+      document.documentElement.style.setProperty('--vvh', `${Math.round(vvH)}px`);
+    } else if (elapsed < 580) {
+      // Упреждающий подъём в момент нажатия, пока WebView ещё не обновил размер вьюпорта под клавиатуру
+      const predictedOffset = Math.max(0, estimatedKbH - layoutShrink);
+      const predictedVvh = Math.max(240, baseMobileViewportH - estimatedKbH);
+      document.body.classList.add('kb-lifting');
+      document.body.classList.remove('kb-synced');
+      document.documentElement.style.setProperty('--kb-offset', `${predictedOffset}px`);
+      document.documentElement.style.setProperty('--vvh', `${predictedVvh}px`);
+    } else {
+      document.body.classList.remove('kb-lifting');
+      document.body.classList.add('kb-synced');
+      document.documentElement.style.setProperty('--kb-offset', `${vvOffsetFromLayout}px`);
+      document.documentElement.style.setProperty('--vvh', `${Math.round(vvH)}px`);
+    }
+
+    if (panelMode === 'ai') {
+      const scrollContainer = document.getElementById('ai-chat-scroll');
+      if (scrollContainer) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    }
+  };
+
+  const startKbRafTracking = (durationMs = 600) => {
+    if (kbPollRafId) cancelAnimationFrame(kbPollRafId);
+    const start = performance.now();
+    const step = () => {
+      syncMobileKeyboardOffset();
+      if (performance.now() - start < durationMs) {
+        kbPollRafId = requestAnimationFrame(step);
+      } else {
+        kbPollRafId = null;
+        syncMobileKeyboardOffset();
+      }
+    };
+    kbPollRafId = requestAnimationFrame(step);
+  };
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncMobileKeyboardOffset);
+    window.visualViewport.addEventListener('scroll', syncMobileKeyboardOffset);
+  }
+  window.addEventListener('resize', syncMobileKeyboardOffset);
+  tg?.onEvent?.('viewportChanged', syncMobileKeyboardOffset);
+
   input.addEventListener('focus', () => {
+    if (kbBlurCleanupTimer) {
+      clearTimeout(kbBlurCleanupTimer);
+      kbBlurCleanupTimer = null;
+    }
+    if (window.innerWidth <= 768) {
+      const layoutH = document.documentElement.clientHeight || window.innerHeight;
+      const vvH = window.visualViewport ? window.visualViewport.height : layoutH;
+      if (!isSearchBarFocused && Math.max(layoutH, vvH) > 360) {
+        baseMobileViewportH = Math.round(Math.max(layoutH, vvH));
+      }
+      isSearchBarFocused = true;
+      focusStartTime = performance.now();
+      syncMobileKeyboardOffset();
+      startKbRafTracking(620);
+    }
     if (isMobileAiBarMode()) {
       setSearchOpen(false);
       return;
@@ -1512,6 +1718,21 @@ function setupSearch() {
     setSearchOpen(true);
     if (input.value.trim()) renderResults();
     else renderHistory();
+  });
+
+  input.addEventListener('blur', () => {
+    if (window.innerWidth <= 768) {
+      isSearchBarFocused = false;
+      document.body.classList.remove('kb-synced');
+      document.body.classList.add('kb-lifting');
+      document.documentElement.style.setProperty('--kb-offset', '0px');
+      document.documentElement.style.setProperty('--vvh', `${baseMobileViewportH}px`);
+      startKbRafTracking(320);
+      kbBlurCleanupTimer = setTimeout(() => {
+        document.body.classList.remove('kb-lifting');
+        kbBlurCleanupTimer = null;
+      }, 240);
+    }
   });
 
   input.addEventListener('click', (e) => {
@@ -2150,6 +2371,9 @@ function saveUserProfileLocalCache() {
     if (userProfile.recentViews && typeof userProfile.recentViews === 'object') {
       localStorage.setItem('rsreu_user_recent', JSON.stringify(userProfile.recentViews));
     }
+    if (userProfile.lessonNotes && typeof userProfile.lessonNotes === 'object') {
+      localStorage.setItem('rsreu_user_notes', JSON.stringify(userProfile.lessonNotes));
+    }
   } catch (e) {}
 }
 
@@ -2157,18 +2381,38 @@ function mergeServerUserIntoProfile(srvUser) {
   if (!srvUser) return;
   const localFavs = Array.isArray(userProfile.favorites) ? [...userProfile.favorites] : [];
   const localRecent = (userProfile.recentViews && typeof userProfile.recentViews === 'object') ? { ...userProfile.recentViews } : {};
+  const localNotes = (userProfile.lessonNotes && typeof userProfile.lessonNotes === 'object') ? { ...userProfile.lessonNotes } : {};
+  const localTarget = userProfile.targetName || '';
+  const localRole = userProfile.role || 'student';
+  let localTargetTs = 0;
+  try { localTargetTs = Number(localStorage.getItem('rsreu_user_target_ts')) || 0; } catch (e) {}
+  const srvUpdatedAt = Number(srvUser.updatedAt) || 0;
+  const keepLocalTarget = (localTargetTs > srvUpdatedAt) || (!srvUser.targetName && Boolean(localTarget));
+
   Object.assign(userProfile, srvUser);
   userProfile.telegramLinked = Boolean(srvUser.isTelegramLinked || srvUser.telegramLinked || srvUser.telegramId || srvUser.username);
+  if (keepLocalTarget) {
+    userProfile.targetName = localTarget;
+    userProfile.role = localRole;
+  }
   if ((!Array.isArray(userProfile.favorites) || userProfile.favorites.length === 0) && localFavs.length > 0) {
     userProfile.favorites = localFavs;
   }
   if ((!userProfile.recentViews || Object.keys(userProfile.recentViews).length === 0) && Object.keys(localRecent).length > 0) {
     userProfile.recentViews = localRecent;
   }
+  if (!userProfile.lessonNotes || typeof userProfile.lessonNotes !== 'object') {
+    userProfile.lessonNotes = localNotes;
+  } else {
+    userProfile.lessonNotes = { ...localNotes, ...userProfile.lessonNotes };
+  }
   saveUserProfileLocalCache();
 }
 
 async function syncUserProfileToServer(patch = {}) {
+  if (patch.targetName !== undefined || patch.role !== undefined) {
+    try { localStorage.setItem('rsreu_user_target_ts', String(Date.now())); } catch (e) {}
+  }
   Object.assign(userProfile, patch);
   saveUserProfileLocalCache();
 
@@ -2178,6 +2422,7 @@ async function syncUserProfileToServer(patch = {}) {
     const res = await fetch('/api/user/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
       body: JSON.stringify(payload)
     });
     if (!res.ok) return;
@@ -2201,14 +2446,17 @@ function updateUserMenuUI() {
   const nameEl = document.getElementById('user-dropdown-name');
   const subEl = document.getElementById('user-dropdown-sub');
   const academicSec = document.getElementById('user-academic-section');
-  const targetLabel = document.getElementById('user-target-label');
+  const tgSec = document.getElementById('user-tg-section');
   const targetInput = document.getElementById('user-target-input');
   const targetClear = document.getElementById('user-target-clear');
+  const quickRow = document.getElementById('user-quick-actions-row');
   const openSchedBtn = document.getElementById('user-open-schedule-btn');
   const openSchedText = document.getElementById('user-open-schedule-text');
+  const openCheatsheetBtn = document.getElementById('user-open-cheatsheet-btn');
   const tgUnauth = document.getElementById('user-tg-unlinked');
   const tgAuth = document.getElementById('user-tg-linked');
   const notifyCheck = document.getElementById('user-notif-checkbox');
+  const logoutBtn = document.getElementById('user-logout-btn');
 
   const isLinked = Boolean(userProfile.telegramLinked || userProfile.isTelegramLinked || userProfile.telegramId);
   userProfile.telegramLinked = isLinked;
@@ -2216,10 +2464,13 @@ function updateUserMenuUI() {
   const hasProfile = Boolean(isLinked);
   if (menuBtn) menuBtn.classList.toggle('active', hasProfile);
   if (statusDot) statusDot.classList.toggle('hidden', !hasProfile);
+  if (logoutBtn) logoutBtn.classList.toggle('hidden', !isLinked);
 
-  // До авторизации через Telegram скрываем выбор статуса и группы/преподавателя
   if (academicSec) {
     academicSec.classList.toggle('hidden', !isLinked);
+  }
+  if (tgSec) {
+    tgSec.classList.toggle('hidden', isLinked);
   }
 
   if (nameEl) {
@@ -2236,21 +2487,12 @@ function updateUserMenuUI() {
         ? `Преподаватель · ${displayLec ? (displayLec.fullName || displayLec.name) : userProfile.targetName}`
         : `Студент · Группа ${userProfile.targetName}`;
     } else if (isLinked) {
-      subEl.textContent = 'Выберите статус и укажите свою группу или ФИО';
+      subEl.textContent = 'Укажите свою учебную группу или ФИО преподавателя';
     } else {
       subEl.textContent = 'Войдите через Telegram для наиболее удобного взаимодействия!';
     }
   }
-  document.querySelectorAll('.user-seg-btn[data-role]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.role === userProfile.role);
-  });
-  if (targetLabel) {
-    targetLabel.textContent = userProfile.role === 'lecturer' ? 'Преподаватель' : 'Номер группы';
-  }
   if (targetInput) {
-    targetInput.placeholder = userProfile.role === 'lecturer'
-      ? 'Например: Скворцов Сергей Владимирович'
-      : 'Например: 445 или 546М';
     if (document.activeElement !== targetInput) {
       if (userProfile.role === 'lecturer' && userProfile.targetName) {
         const displayLec = scheduleDirectory.lecturers.find(l => l.name === userProfile.targetName);
@@ -2263,24 +2505,23 @@ function updateUserMenuUI() {
   if (targetClear) {
     targetClear.classList.toggle('hidden', !(targetInput && targetInput.value));
   }
+  const canShowSched = Boolean(isLinked && userProfile.targetName);
+  const canShowCheatsheet = Boolean(isLinked && userProfile.role === 'student' && userProfile.targetName);
   if (openSchedBtn) {
-    openSchedBtn.classList.toggle('hidden', !(isLinked && userProfile.targetName));
+    openSchedBtn.classList.toggle('hidden', !canShowSched);
   }
-  const openCheatsheetBtn = document.getElementById('user-open-cheatsheet-btn');
+  if (openSchedText) {
+    openSchedText.textContent = 'Моё расписание';
+  }
   if (openCheatsheetBtn) {
-    const canShowCheatsheet = Boolean(isLinked && userProfile.role === 'student' && userProfile.targetName);
     openCheatsheetBtn.classList.toggle('hidden', !canShowCheatsheet);
   }
-  if (openSchedText && userProfile.targetName) {
-    const displayLec = scheduleDirectory.lecturers.find(l => l.name === userProfile.targetName);
-    openSchedText.textContent = userProfile.role === 'lecturer'
-      ? `Расписание: ${displayLec ? (displayLec.fullName || displayLec.name) : userProfile.targetName}`
-      : `Моё расписание (гр. ${userProfile.targetName})`;
+  if (quickRow) {
+    quickRow.classList.toggle('hidden', !canShowSched);
+    quickRow.classList.toggle('single-col', canShowSched && !canShowCheatsheet);
   }
-  if (tgUnauth && tgAuth) {
-    tgUnauth.classList.toggle('hidden', isLinked);
-    tgAuth.classList.toggle('hidden', !isLinked);
-  }
+  if (tgUnauth) tgUnauth.classList.toggle('hidden', isLinked);
+  if (tgAuth) tgAuth.classList.toggle('hidden', !isLinked);
   if (notifyCheck) {
     notifyCheck.checked = userProfile.notificationsEnabled !== false;
   }
@@ -2467,35 +2708,40 @@ function setupUserProfileAndTheme() {
     }
   });
 
-  document.querySelectorAll('.user-seg-btn[data-role]').forEach(roleBtn => {
-    roleBtn.addEventListener('click', () => {
-      const nextRole = roleBtn.dataset.role;
-      if (nextRole === userProfile.role) return;
-      userProfile.role = nextRole;
-      userProfile.targetName = '';
-      if (targetInput) targetInput.value = '';
-      if (suggestions) suggestions.classList.add('hidden');
-      updateUserMenuUI();
-      syncUserProfileToServer({ role: nextRole, targetName: '' });
-    });
-  });
-
   const renderTargetSuggestions = () => {
     if (!suggestions || !targetInput) return;
     const q = targetInput.value.trim().toLowerCase().replace(/ё/g, 'е');
     if (targetClear) targetClear.classList.toggle('hidden', !targetInput.value);
 
-    const pool = userProfile.role === 'lecturer'
-      ? scheduleDirectory.lecturers
-      : scheduleDirectory.groups;
-
-    const matches = pool
+    const groupMatches = (scheduleDirectory.groups || [])
       .filter(item => {
         if (!q) return true;
-        const hay = `${item.name} ${item.fullName || ''} ${item.regalia || ''} ${item.faculty || ''}`.toLowerCase().replace(/ё/g, 'е');
+        const hay = `${item.name} группа ${item.faculty || ''} ${item.facultyCode || ''}`.toLowerCase().replace(/ё/g, 'е');
         return hay.includes(q);
       })
-      .slice(0, 12);
+      .map(item => ({
+        role: 'student',
+        name: item.name,
+        display: item.name,
+        label: `Группа ${item.name}`,
+        meta: formatFacultyFullName(item.faculty || item.facultyCode || '')
+      }));
+
+    const lecMatches = (scheduleDirectory.lecturers || [])
+      .filter(item => {
+        if (!q) return true;
+        const hay = `${item.name} ${item.fullName || ''} ${item.regalia || ''}`.toLowerCase().replace(/ё/g, 'е');
+        return hay.includes(q);
+      })
+      .map(item => ({
+        role: 'lecturer',
+        name: item.name,
+        display: item.fullName || item.name,
+        label: item.fullName || item.name,
+        meta: item.regalia || 'Преподаватель'
+      }));
+
+    const matches = [...groupMatches.slice(0, 8), ...lecMatches.slice(0, 8)].slice(0, 14);
 
     if (matches.length === 0) {
       suggestions.innerHTML = `<div class="user-target-option" style="color:var(--text-muted);cursor:default">Ничего не найдено</div>`;
@@ -2503,35 +2749,99 @@ function setupUserProfileAndTheme() {
       return;
     }
 
-    suggestions.innerHTML = matches.map(item => {
-      const label = userProfile.role === 'student' ? `Группа ${item.name}` : (item.fullName || item.name);
-      const meta = userProfile.role === 'student' ? formatFacultyFullName(item.faculty || item.facultyCode || '') : (item.regalia || '');
-      return `
-        <button type="button" class="user-target-option ${userProfile.targetName === item.name ? 'active' : ''}" data-target-val="${escapeHtml(item.name)}" data-target-display="${escapeHtml(userProfile.role === 'student' ? item.name : (item.fullName || item.name))}">
-          <span>${escapeHtml(label)}</span>
-          <span style="color:var(--text-dim);font-size:11px">${escapeHtml(meta)}</span>
-        </button>
-      `;
-    }).join('');
+    suggestions.innerHTML = matches.map(item => `
+      <button type="button" class="user-target-option ${userProfile.targetName === item.name ? 'active' : ''}" data-target-role="${escapeHtml(item.role)}" data-target-val="${escapeHtml(item.name)}" data-target-display="${escapeHtml(item.display)}">
+        <span>${escapeHtml(item.label)}</span>
+        <span style="color:var(--text-dim);font-size:11px">${escapeHtml(item.meta)}</span>
+      </button>
+    `).join('');
     suggestions.classList.remove('hidden');
 
     suggestions.querySelectorAll('[data-target-val]').forEach(optBtn => {
       optBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        const nextRole = optBtn.dataset.targetRole === 'lecturer' ? 'lecturer' : 'student';
         const val = optBtn.dataset.targetVal;
         const display = optBtn.dataset.targetDisplay || val;
+        userProfile.role = nextRole;
         targetInput.value = display;
         suggestions.classList.add('hidden');
-        syncUserProfileToServer({ targetName: val });
+        syncUserProfileToServer({ role: nextRole, targetName: val });
         updateUserMenuUI();
-        showToast(userProfile.role === 'lecturer' ? `Выбран преподаватель: ${display}` : `Выбрана группа ${val}`);
+        showToast(nextRole === 'lecturer' ? `Выбран преподаватель: ${display}` : `Выбрана группа ${val}`);
       });
     });
+  };
+
+  const commitTypedTargetInput = (showFeedback = false) => {
+    if (!targetInput) return;
+    const rawVal = targetInput.value.trim();
+    if (!rawVal) {
+      if (userProfile.targetName) {
+        syncUserProfileToServer({ targetName: '' });
+        updateUserMenuUI();
+      }
+      return;
+    }
+    const norm = rawVal.toLowerCase().replace(/ё/g, 'е').replace(/^группа\s+/i, '').trim();
+    const exactGroup = (scheduleDirectory.groups || []).find(
+      g => String(g.name || '').toLowerCase().replace(/ё/g, 'е') === norm
+    );
+    if (exactGroup) {
+      if (userProfile.targetName !== exactGroup.name || userProfile.role !== 'student') {
+        userProfile.role = 'student';
+        targetInput.value = exactGroup.name;
+        syncUserProfileToServer({ role: 'student', targetName: exactGroup.name });
+        updateUserMenuUI();
+        if (showFeedback) showToast(`Выбрана группа ${exactGroup.name}`);
+      }
+      return;
+    }
+    const exactLec = (scheduleDirectory.lecturers || []).find(
+      l => String(l.name || '').toLowerCase().replace(/ё/g, 'е') === norm ||
+           String(l.fullName || '').toLowerCase().replace(/ё/g, 'е') === norm
+    );
+    if (exactLec) {
+      const disp = exactLec.fullName || exactLec.name;
+      if (userProfile.targetName !== exactLec.name || userProfile.role !== 'lecturer') {
+        userProfile.role = 'lecturer';
+        targetInput.value = disp;
+        syncUserProfileToServer({ role: 'lecturer', targetName: exactLec.name });
+        updateUserMenuUI();
+        if (showFeedback) showToast(`Выбран преподаватель: ${disp}`);
+      }
+      return;
+    }
+    // Если пользователь ввёл номер группы вручную (даже если справочник ещё грузится)
+    const cleanedGroup = rawVal.replace(/^группа\s+/i, '').trim();
+    if (cleanedGroup && cleanedGroup !== userProfile.targetName) {
+      const nextRole = /\s/.test(cleanedGroup) && !/\d/.test(cleanedGroup) ? 'lecturer' : 'student';
+      userProfile.role = nextRole;
+      syncUserProfileToServer({ role: nextRole, targetName: cleanedGroup });
+      updateUserMenuUI();
+      if (showFeedback) {
+        showToast(nextRole === 'lecturer' ? `Выбран преподаватель: ${cleanedGroup}` : `Выбрана группа ${cleanedGroup}`);
+      }
+    }
   };
 
   if (targetInput) {
     targetInput.addEventListener('focus', renderTargetSuggestions);
     targetInput.addEventListener('input', renderTargetSuggestions);
+    targetInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (suggestions) suggestions.classList.add('hidden');
+        commitTypedTargetInput(true);
+        targetInput.blur();
+      }
+    });
+    targetInput.addEventListener('change', () => {
+      setTimeout(() => commitTypedTargetInput(false), 120);
+    });
+    targetInput.addEventListener('blur', () => {
+      setTimeout(() => commitTypedTargetInput(false), 180);
+    });
   }
 
   if (targetClear && targetInput) {
@@ -2634,6 +2944,7 @@ function setupUserProfileAndTheme() {
         username: '',
         favorites: [],
         recentViews: {},
+        lessonNotes: {},
         theme: userProfile.theme || 'system'
       };
       try {
@@ -2646,6 +2957,7 @@ function setupUserProfileAndTheme() {
         localStorage.removeItem('rsreu_user_username');
         localStorage.removeItem('rsreu_user_favorites');
         localStorage.removeItem('rsreu_user_recent');
+        localStorage.removeItem('rsreu_user_notes');
       } catch (e) {}
       updateUserMenuUI();
       if (scheduleViewOpen) {
@@ -2659,6 +2971,8 @@ function setupUserProfileAndTheme() {
   (async () => {
     try {
       if (tg && tg.initData && telegramUser) {
+        let localTargetTs = 0;
+        try { localTargetTs = Number(localStorage.getItem('rsreu_user_target_ts')) || 0; } catch (e) {}
         const res = await fetch('/api/user/auth-telegram', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2668,7 +2982,8 @@ function setupUserProfileAndTheme() {
             unsafeUser: telegramUser,
             role: userProfile.role,
             targetName: userProfile.targetName,
-            theme: userProfile.theme
+            theme: userProfile.theme,
+            targetUpdatedAt: localTargetTs
           })
         });
         if (res.ok) {
@@ -2678,11 +2993,22 @@ function setupUserProfileAndTheme() {
             currentUserId = srvUser.id;
             try { localStorage.setItem('rsreu_user_id', currentUserId); } catch (e) {}
             const prevLocalFavs = Array.isArray(userProfile.favorites) ? [...userProfile.favorites] : [];
+            const prevLocalTarget = userProfile.targetName || '';
+            const prevLocalRole = userProfile.role || 'student';
+            const srvUpdatedAt = Number(srvUser.updatedAt) || 0;
             mergeServerUserIntoProfile(srvUser);
             userProfile.telegramLinked = true;
             saveUserProfileLocalCache();
+            const restorePatch = {};
             if ((!Array.isArray(srvUser.favorites) || srvUser.favorites.length === 0) && prevLocalFavs.length > 0) {
-              syncUserProfileToServer({ favorites: prevLocalFavs });
+              restorePatch.favorites = prevLocalFavs;
+            }
+            if ((!srvUser.targetName || localTargetTs > srvUpdatedAt) && prevLocalTarget && srvUser.targetName !== prevLocalTarget) {
+              restorePatch.targetName = prevLocalTarget;
+              restorePatch.role = prevLocalRole;
+            }
+            if (Object.keys(restorePatch).length > 0) {
+              syncUserProfileToServer(restorePatch);
             }
             updateUserMenuUI();
             updateSmartNextClassPill();
@@ -2696,6 +3022,8 @@ function setupUserProfileAndTheme() {
       }
 
       if (currentUserId) {
+        let localTargetTs = 0;
+        try { localTargetTs = Number(localStorage.getItem('rsreu_user_target_ts')) || 0; } catch (e) {}
         const res = await fetch(`/api/user/profile?userId=${encodeURIComponent(currentUserId)}`);
         if (res.ok) {
           const data = await res.json();
@@ -2704,19 +3032,41 @@ function setupUserProfileAndTheme() {
           if (srvUser) {
             const localTheme = localStorage.getItem('theme');
             const prevLocalFavs = Array.isArray(userProfile.favorites) ? [...userProfile.favorites] : [];
+            const prevLocalTarget = userProfile.targetName || '';
+            const prevLocalRole = userProfile.role || 'student';
+            const srvUpdatedAt = Number(srvUser.updatedAt) || 0;
             mergeServerUserIntoProfile(srvUser);
             if (!localTheme) {
               userProfile.theme = 'system';
             }
             applyTheme(userProfile.theme);
+            const restorePatch = {};
             if ((!Array.isArray(srvUser.favorites) || srvUser.favorites.length === 0) && prevLocalFavs.length > 0) {
-              syncUserProfileToServer({ favorites: prevLocalFavs });
+              restorePatch.favorites = prevLocalFavs;
+            }
+            if ((!srvUser.targetName || localTargetTs > srvUpdatedAt) && prevLocalTarget && srvUser.targetName !== prevLocalTarget) {
+              restorePatch.targetName = prevLocalTarget;
+              restorePatch.role = prevLocalRole;
+            }
+            if (Object.keys(restorePatch).length > 0) {
+              syncUserProfileToServer(restorePatch);
             }
             updateSmartNextClassPill();
             if (scheduleViewOpen) {
               const view = document.getElementById('schedule-view');
               if (view) updateScheduleSidebarListInPlace(view);
             }
+          } else if (userProfile.telegramLinked || userProfile.targetName || userProfile.firstName || userProfile.username) {
+            await syncUserProfileToServer({
+              role: userProfile.role || 'student',
+              targetName: userProfile.targetName || '',
+              notificationsEnabled: userProfile.notificationsEnabled !== false,
+              firstName: userProfile.firstName || '',
+              username: userProfile.username || '',
+              favorites: Array.isArray(userProfile.favorites) ? userProfile.favorites : [],
+              recentViews: userProfile.recentViews && typeof userProfile.recentViews === 'object' ? userProfile.recentViews : {},
+              theme: userProfile.theme || 'system'
+            });
           }
         }
       }
@@ -2843,9 +3193,18 @@ async function showFloor(buildingCode, floorNum) {
   const bounds = [[0, 0], [H, W]];
   svgEl.setAttribute('preserveAspectRatio', 'none');
   currentOverlay = L.svgOverlay(svgEl, bounds).addTo(map);
+  try { map.invalidateSize({ pan: false, animate: false }); } catch (e) {}
   fitMapToBuildingBounds(bounds);
   syncMapRotationTransform();
   syncMapLabelScale();
+
+  setTimeout(() => {
+    if (currentBuilding === buildingCode && currentFloor === floorNum && currentOverlay) {
+      try { map.invalidateSize({ pan: false, animate: false }); } catch (e) {}
+      syncMapRotationTransform();
+      syncMapLabelScale();
+    }
+  }, 120);
 
   svgEl.style.pointerEvents = 'none';
 
@@ -2916,6 +3275,7 @@ async function showFloor(buildingCode, floorNum) {
   });
 
   svgEl.addEventListener('click', (e) => {
+    if (addingPoiMode || (gpsState.active && gpsState.calibratingClick)) return;
     const id = findRoomIdForShape(e.target);
     if (!id) return;
     e.stopPropagation();
@@ -2933,6 +3293,8 @@ async function showFloor(buildingCode, floorNum) {
   applyFreeHighlight();
   refreshRoutePickHighlight();
   placeLabels();
+  try { renderCommunityPoiMarkers(); } catch (e) {}
+  try { renderGpsPositionOnMap(); } catch (e) {}
 
   if (selectedRoomId && roomShapes[selectedRoomId]) selectRoom(selectedRoomId);
   if (pendingHighlight && roomShapes[pendingHighlight]) {
@@ -3297,6 +3659,92 @@ function buildRoomActionBar(roomId) {
   `;
 }
 
+function buildRoomCommunityBlockHtml(roomId, meta) {
+  const isBuffet = meta && meta.type === 'buffet';
+  const reviews = (communityState.reviews || []).filter(r => r.roomId === roomId);
+
+  const descSuggestHtml = `
+    <div class="room-community-actions">
+      <button type="button" class="room-community-btn" data-open-desc-suggest="${escapeHtml(roomId)}">
+        <svg class="room-community-btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20h9"/>
+          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+        </svg>
+        <span>${meta?.description ? 'Дополнить описание' : 'Предложить описание'}</span>
+      </button>
+    </div>
+  `;
+
+  let buffetHtml = '';
+  if (isBuffet) {
+    const avg = reviews.length > 0
+      ? (reviews.reduce((s, r) => s + (Number(r.rating) || 5), 0) / reviews.length).toFixed(1)
+      : '—';
+
+    const existingUserReview = currentUserId
+      ? ((communityState.userReviews || []).find(r => r && r.roomId === roomId) ||
+         reviews.find(r => r && r.authorId === currentUserId))
+      : null;
+
+    const listHtml = reviews.length > 0
+      ? `<div class="buffet-reviews-list">${reviews.slice(0, 12).map(r => `
+          <div class="buffet-review-item">
+            <div class="buffet-review-top">
+              <span class="buffet-review-author">${escapeHtml(r.authorName || 'Студент')}</span>
+              <span class="buffet-review-stars">${'★'.repeat(Number(r.rating) || 5)}</span>
+            </div>
+            ${r.text ? `<div class="buffet-review-text">${escapeHtml(r.text)}</div>` : ''}
+          </div>
+        `).join('')}</div>`
+      : `<div style="font-size:12px;color:var(--text-muted);padding:4px 0">Пока нет опубликованных отзывов. Будьте первым!</div>`;
+
+    const addReviewSvg = `
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+    `;
+
+    const editReviewSvg = `
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+      </svg>
+    `;
+
+    const commentSvg = `
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+    `;
+
+    buffetHtml = `
+      <div class="buffet-reviews-box">
+        <div class="buffet-reviews-header">
+          <div class="buffet-rating-summary">
+            <span class="buffet-rating-score">${avg}</span>
+            <i class="mdi mdi-star buffet-star-icon" aria-hidden="true"></i>
+            <span class="buffet-summary-sep">·</span>
+            <span class="buffet-comments-count">
+              <span>${reviews.length}</span>
+              <span class="buffet-comment-icon">${commentSvg}</span>
+            </span>
+          </div>
+          <button type="button" class="buffet-review-action-btn" data-open-review="${escapeHtml(roomId)}" title="${existingUserReview ? 'Редактировать отзыв' : 'Оставить отзыв'}" aria-label="${existingUserReview ? 'Редактировать отзыв' : 'Оставить отзыв'}">
+            ${existingUserReview ? editReviewSvg : addReviewSvg}
+          </button>
+        </div>
+        ${listHtml}
+      </div>
+    `;
+  }
+
+  return `
+    ${descSuggestHtml}
+    ${buffetHtml}
+  `;
+}
+
 function attachRoomActionListeners(panel, id) {
   attachShareListener(panel, id);
   const toBtn = panel.querySelector('[data-route-to]');
@@ -3307,6 +3755,15 @@ function attachRoomActionListeners(panel, id) {
   if (fromBtn) {
     fromBtn.addEventListener('click', () => startRouteFromRoom(id));
   }
+  const revBtn = panel.querySelector('[data-open-review]');
+  if (revBtn) {
+    revBtn.addEventListener('click', () => openBuffetReviewModal(id));
+  }
+  const descBtn = panel.querySelector('[data-open-desc-suggest]');
+  if (descBtn) {
+    descBtn.addEventListener('click', () => openRoomDescriptionSuggestModal(id));
+  }
+  attachLessonNoteListeners(panel);
 }
 
 // ================ КЛИК ПО АУДИТОРИИ ================
@@ -3340,7 +3797,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
   const b = meta ? BUILDINGS[meta.building] : null;
 
   const crumbs = b ? `${b.name}${meta.floor != null ? ' · ' + meta.floor + ' этаж' : ''}` : '';
-  const shareIcon = `<i class="mdi mdi-share share-icon" title="Скопировать ссылку"></i>`;
+  const shareIcon = `<i class="mdi mdi-share share-icon" title="Поделиться ссылкой"></i>`;
   const closeBtn = `<button class="close" onclick="closeRoomPanel()">✕</button>`;
 
   const header = `
@@ -3354,11 +3811,12 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
   const descriptionBlock = meta?.description
     ? `<div class="room-notes">${renderMultiline(meta.description)}</div>`
     : '';
+  const communityBlock = buildRoomCommunityBlockHtml(id, meta);
 
   if (isCompactRoom) {
     const block = descriptionBlock ||
       `<div class="room-notes empty">Служебное или общественное помещение корпуса.</div>`;
-    panel.innerHTML = buildPanelLayout(`${header}${block}`, '');
+    panel.innerHTML = buildPanelLayout(`${header}${block}${communityBlock}`, '');
     attachRoomActionListeners(panel, id);
     applyMobileSheetSnapMeasurement(panel);
     recordNavState();
@@ -3366,7 +3824,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
   }
 
   panel.innerHTML = buildPanelLayout(
-    `${header}${descriptionBlock}`,
+    `${header}${descriptionBlock}${communityBlock}`,
     `<p class="muted-text">Загрузка расписания…</p>`
   );
   attachRoomActionListeners(panel, id);
@@ -3404,7 +3862,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
     if (data.empty) {
       panel.classList.add('mobile-compact');
       panel.innerHTML = buildPanelLayout(
-        `${header}${descriptionBlock}`,
+        `${header}${descriptionBlock}${communityBlock}`,
         `<div class="no-schedule-msg">У этой аудитории нет расписания занятий</div>`
       );
       attachRoomActionListeners(panel, id);
@@ -3412,7 +3870,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
       return;
     }
     panel.classList.remove('mobile-compact');
-    renderSchedule(panel, title, data, header, descriptionBlock);
+    renderSchedule(panel, title, data, header, `${descriptionBlock}${communityBlock}`, id);
     attachRoomActionListeners(panel, id);
     applyMobileSheetSnapMeasurement(panel);
     haptic('success');
@@ -3421,7 +3879,7 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
     if (currentRoomPanelId !== id || panelMode !== 'room') return;
 
     panel.innerHTML = buildPanelLayout(
-      `${header}${descriptionBlock}`,
+      `${header}${descriptionBlock}${communityBlock}`,
       `<p style="color:#f87171">Ошибка загрузки: ${escapeHtml(err.message)}</p>`
     );
     attachRoomActionListeners(panel, id);
@@ -3430,31 +3888,138 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
   }
 }
 
-// ================ ПОДЕЛИТЬСЯ ================
+// ================ ПОДЕЛИТЬСЯ (ЧИСТЫЕ ССЫЛКИ + ШТОРКА НА МОБИЛЬНЫХ) ================
+
+function buildCleanShareUrl(paramsObj = {}) {
+  const cleanUrl = new URL(location.origin + location.pathname);
+  for (const [k, v] of Object.entries(paramsObj)) {
+    if (v !== undefined && v !== null && v !== '') {
+      cleanUrl.searchParams.set(k, String(v));
+    }
+  }
+  cleanUrl.hash = '';
+  return cleanUrl.toString();
+}
+
+async function copyTextToClipboard(text, successMsg = 'Ссылка скопирована') {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(successMsg);
+    haptic('success');
+    return true;
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      showToast(successMsg);
+      haptic('success');
+      document.body.removeChild(ta);
+      return true;
+    } catch (err) {
+      document.body.removeChild(ta);
+      showToast('Не удалось скопировать ссылку');
+      return false;
+    }
+  }
+}
+
+function openMobileShareSheet(cleanUrl, shareTitle = 'Карта и расписание РГРТУ') {
+  const backdrop = document.getElementById('share-sheet-backdrop');
+  if (!backdrop) {
+    copyTextToClipboard(cleanUrl);
+    return;
+  }
+  const urlPreview = document.getElementById('share-sheet-url-preview');
+  if (urlPreview) urlPreview.textContent = cleanUrl;
+  backdrop.classList.remove('hidden');
+
+  const closeSheet = () => backdrop.classList.add('hidden');
+  document.getElementById('share-sheet-close')?.addEventListener('click', closeSheet, { once: true });
+  backdrop.onclick = (e) => {
+    if (e.target === backdrop) closeSheet();
+  };
+
+  const tgBtn = document.getElementById('share-sheet-tg');
+  if (tgBtn) {
+    tgBtn.onclick = () => {
+      closeSheet();
+      const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(cleanUrl)}&text=${encodeURIComponent(shareTitle)}`;
+      if (tg && typeof tg.openTelegramLink === 'function') {
+        tg.openTelegramLink(tgShareUrl);
+      } else {
+        window.open(tgShareUrl, '_blank', 'noopener');
+      }
+    };
+  }
+
+  const vkBtn = document.getElementById('share-sheet-vk');
+  if (vkBtn) {
+    vkBtn.onclick = () => {
+      closeSheet();
+      const vkShareUrl = `https://vk.com/share.php?url=${encodeURIComponent(cleanUrl)}&title=${encodeURIComponent(shareTitle)}`;
+      window.open(vkShareUrl, '_blank', 'noopener');
+    };
+  }
+
+  const nativeBtn = document.getElementById('share-sheet-native');
+  if (nativeBtn) {
+    nativeBtn.onclick = async () => {
+      closeSheet();
+      if (typeof navigator.share === 'function') {
+        try {
+          await navigator.share({ title: shareTitle, url: cleanUrl });
+          return;
+        } catch (e) {
+          if (e && e.name === 'AbortError') return;
+        }
+      }
+      await copyTextToClipboard(cleanUrl);
+    };
+  }
+
+  const copyBtn = document.getElementById('share-sheet-copy');
+  if (copyBtn) {
+    copyBtn.onclick = async () => {
+      closeSheet();
+      await copyTextToClipboard(cleanUrl);
+    };
+  }
+}
+
+async function triggerSmartShare(cleanUrl, shareTitle = 'Карта и расписание РГРТУ') {
+  const isMobile = window.innerWidth <= 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (!isMobile) {
+    await copyTextToClipboard(cleanUrl);
+    return;
+  }
+  if (typeof navigator.share === 'function' && !(tg && tg.initData)) {
+    try {
+      await navigator.share({ title: shareTitle, url: cleanUrl });
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+    }
+  }
+  openMobileShareSheet(cleanUrl, shareTitle);
+}
 
 function attachShareListener(panel, id) {
   const icon = panel.querySelector('.share-icon');
   if (!icon) return;
-  icon.addEventListener('click', async () => {
+  icon.addEventListener('click', async (e) => {
+    e.stopPropagation();
     const meta = roomsMeta[id];
     if (!meta) return;
-    const url = new URL(location);
-    url.searchParams.set('building', meta.building);
-    if (meta.floor != null) url.searchParams.set('floor', meta.floor);
-    url.searchParams.set('room', id);
-    try {
-      await navigator.clipboard.writeText(url.toString());
-      showToast('Ссылка скопирована');
-      haptic('success');
-    } catch (e) {
-      const ta = document.createElement('textarea');
-      ta.value = url.toString();
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand('copy'); showToast('Ссылка скопирована'); }
-      catch (err) { showToast('Не удалось скопировать ссылку'); }
-      document.body.removeChild(ta);
-    }
+    const cleanUrl = buildCleanShareUrl({
+      building: meta.building,
+      floor: meta.floor != null ? meta.floor : undefined,
+      room: id
+    });
+    const title = `${formatRoomName(meta.name || id)} · РГРТУ`;
+    await triggerSmartShare(cleanUrl, title);
   });
 }
 
@@ -3563,7 +4128,7 @@ function parseSchedule(html) {
       const items = cell.querySelectorAll(':scope > div');
       items.forEach(item => {
         const badge = item.querySelector('.schedule-lesson-type-badge');
-        const type  = badge ? badge.textContent.trim() : '';
+        const type  = badge ? normalizeClientLessonType(badge.textContent.trim()) : '';
         const clone = item.cloneNode(true);
         const badgeClone = clone.querySelector('.schedule-lesson-type-badge');
         if (badgeClone) badgeClone.remove();
@@ -3795,6 +4360,17 @@ function buildWeeklyScheduleTableHtml(days = [], { mode = 'group' } = {}) {
           return detailsParts.join(', ');
         };
 
+        const noteKey = `${day.dayName || ''}|${slot}|${(entry.subject || '').trim()}`;
+        const rawNoteVal = (userProfile.lessonNotes && userProfile.lessonNotes[noteKey]);
+        const savedNote = rawNoteVal
+          ? (typeof rawNoteVal === 'object' ? String(rawNoteVal.text || '') : String(rawNoteVal))
+          : '';
+        const noteLabelStr = `${day.dayName || ''} · ${slot} · ${entry.subject || ''}`;
+        const noteBtnHtml = `<button type="button" class="wt-note-btn ${savedNote ? 'has-note' : ''}" data-note-key="${escapeHtml(noteKey)}" data-note-label="${escapeHtml(noteLabelStr)}" title="${savedNote ? 'Редактировать личную заметку к паре' : 'Добавить личную заметку к паре'}" aria-label="Личная заметка к паре"><i class="mdi ${savedNote ? 'mdi-note-text-outline' : 'mdi-note-plus-outline'}"></i></button>`;
+        const noteBoxHtml = savedNote
+          ? `<div class="wt-user-note-box" data-note-key="${escapeHtml(noteKey)}" data-note-label="${escapeHtml(noteLabelStr)}"><i class="mdi mdi-text-short"></i><span>${escapeHtml(savedNote)}</span></div>`
+          : '';
+
         if (entry.items.length === 1) {
           const l = entry.items[0];
           const detailsLine = buildSubDetails(l);
@@ -3802,6 +4378,8 @@ function buildWeeklyScheduleTableHtml(days = [], { mode = 'group' } = {}) {
             <div class="wt-cell-item">
               <div class="wt-cell-main">${badgeHtml}<span class="wt-cell-subject">${escapeHtml(entry.subject)}${detailsLine ? ',' : ''}</span></div>
               ${detailsLine ? `<div class="wt-cell-details">${detailsLine}</div>` : ''}
+              ${noteBoxHtml}
+              ${noteBtnHtml}
             </div>
           `;
         }
@@ -3819,6 +4397,8 @@ function buildWeeklyScheduleTableHtml(days = [], { mode = 'group' } = {}) {
             <div class="wt-cell-subgroups">
               ${linesHtml}
             </div>
+            ${noteBoxHtml}
+            ${noteBtnHtml}
           </div>
         `;
       }).join('');
@@ -3906,7 +4486,8 @@ function getRoomWeekTriggerLabel(data) {
   return getDefaultAcademicWeekDisplay();
 }
 
-function renderSchedule(panel, title, data, header, descriptionBlock = '') {
+function renderSchedule(panel, title, data, header, descriptionBlock = '', roomId = null) {
+  const targetId = roomId || currentRoomPanelId;
   const nowStatus = computeNowStatus(data);
 
   const fixedHtml = `
@@ -3953,6 +4534,9 @@ function renderSchedule(panel, title, data, header, descriptionBlock = '') {
   const tableHtml = buildWeeklyScheduleTableHtml(data.days || [], { mode: 'room' });
 
   panel.innerHTML = buildPanelLayout(fixedHtml, `${roomToolbarHtml}${tableHtml}`);
+  if (targetId) {
+    attachRoomActionListeners(panel, targetId);
+  }
   attachEntityInlineLinks(panel);
   scrollScheduleTableToToday(panel);
   applyMobileSheetSnapMeasurement(panel);
@@ -3999,7 +4583,8 @@ async function loadScheduleDirectory() {
     scheduleDirectory = {
       ready: Boolean(data.ready),
       groups: data.groups || [],
-      lecturers: data.lecturers || []
+      lecturers: data.lecturers || [],
+      classrooms: data.classrooms || []
     };
     if (Array.isArray(data.availableWeeks) && data.availableWeeks.length > 0 && availableScheduleWeeks.length === 0) {
       availableScheduleWeeks = data.availableWeeks;
@@ -4272,7 +4857,18 @@ function buildScheduleSidebarData() {
     .filter(l => !q || `${l.name} ${l.shortName || ''} ${l.fullName || ''} ${l.regalia || ''}`.toLowerCase().replace(/ё/g, 'е').includes(q))
     .map(l => ({ ...l, itemType: 'lecturer' }));
 
-  const unifiedItems = [...matchedGroups, ...matchedLecturers].sort((a, b) => {
+  const matchedClassrooms = (scheduleDirectory.classrooms || [])
+    .filter(c => !q || `${c.name} ауд аудитория ${c.fullName || ''} ${c.buildingName || ''} ${c.floor != null ? c.floor + ' этаж' : ''}`.toLowerCase().replace(/ё/g, 'е').includes(q))
+    .map(c => ({ ...c, itemType: 'classroom' }));
+
+  const typeOrder = { group: 0, lecturer: 1, classroom: 2 };
+  const getItemLabel = (it) => {
+    if (it.itemType === 'group') return it.name;
+    if (it.itemType === 'classroom') return it.fullName || `Аудитория ${it.name}`;
+    return it.fullName || it.name;
+  };
+
+  const unifiedItems = [...matchedGroups, ...matchedLecturers, ...matchedClassrooms].sort((a, b) => {
     const kA = `${a.itemType}:${a.name}`;
     const kB = `${b.itemType}:${b.name}`;
 
@@ -4286,20 +4882,18 @@ function buildScheduleSidebarData() {
     if (rA.lastViewedAt !== rB.lastViewedAt) return rB.lastViewedAt - rA.lastViewedAt;
 
     if (q) {
-      const aLabel = (a.itemType === 'group' ? a.name : (a.fullName || a.name)).toLowerCase().replace(/ё/g, 'е');
-      const bLabel = (b.itemType === 'group' ? b.name : (b.fullName || b.name)).toLowerCase().replace(/ё/g, 'е');
-      const aStarts = aLabel.startsWith(q) ? 1 : 0;
-      const bStarts = bLabel.startsWith(q) ? 1 : 0;
+      const aLabel = getItemLabel(a).toLowerCase().replace(/ё/g, 'е');
+      const bLabel = getItemLabel(b).toLowerCase().replace(/ё/g, 'е');
+      const aStarts = (aLabel.startsWith(q) || String(a.name || '').toLowerCase().startsWith(q)) ? 1 : 0;
+      const bStarts = (bLabel.startsWith(q) || String(b.name || '').toLowerCase().startsWith(q)) ? 1 : 0;
       if (aStarts !== bStarts) return bStarts - aStarts;
     }
 
     if (a.itemType !== b.itemType) {
-      return a.itemType === 'group' ? -1 : 1;
+      return (typeOrder[a.itemType] ?? 9) - (typeOrder[b.itemType] ?? 9);
     }
 
-    const labelA = a.itemType === 'group' ? a.name : (a.fullName || a.name);
-    const labelB = b.itemType === 'group' ? b.name : (b.fullName || b.name);
-    return collator.compare(labelA, labelB);
+    return collator.compare(getItemLabel(a), getItemLabel(b));
   });
 
   let sidebarListHtml = '';
@@ -4316,12 +4910,18 @@ function buildScheduleSidebarData() {
       const isActive = currentEntitySchedule &&
         currentEntitySchedule.type === itemType &&
         currentEntitySchedule.name === item.name;
-      const titleText = itemType === 'group'
-        ? `Группа ${item.name}`
-        : (item.fullName || item.shortName || item.name);
-      const subText = itemType === 'group'
-        ? formatFacultyFullName(item.faculty || item.facultyCode || '')
-        : (item.regalia || '');
+      let titleText = '';
+      let subText = '';
+      if (itemType === 'group') {
+        titleText = `Группа ${item.name}`;
+        subText = formatFacultyFullName(item.faculty || item.facultyCode || '');
+      } else if (itemType === 'classroom') {
+        titleText = item.fullName || `Аудитория ${item.name}`;
+        subText = `${item.buildingName || 'Главный корпус'}${item.floor != null ? ' · ' + item.floor + ' этаж' : ''}`;
+      } else {
+        titleText = item.fullName || item.shortName || item.name;
+        subText = item.regalia || '';
+      }
       return `
         <div class="sched-dir-item ${isActive ? 'active' : ''}" role="button" tabindex="0" data-entity-type="${itemType}" data-entity-name="${escapeHtml(item.name)}">
           <div class="sched-dir-main">
@@ -4339,7 +4939,7 @@ function buildScheduleSidebarData() {
     }).join('');
   }
 
-  return { filteredGroups: matchedGroups, filteredLecturers: matchedLecturers, sidebarListHtml };
+  return { filteredGroups: matchedGroups, filteredLecturers: matchedLecturers, filteredClassrooms: matchedClassrooms, sidebarListHtml };
 }
 
 function attachScheduleSidebarItemListeners(container) {
@@ -4377,22 +4977,29 @@ const DOWNLOAD_SVG_ICON = `<svg class="action-icon-download" viewBox="0 0 24 24"
 const MDI_BADGE_PATHS = {
   book: 'M19 2L14 6.5V17.5L19 13V2M6.5 5C4.55 5 2.45 5.4 1 6.5V21.16C1 21.41 1.25 21.66 1.5 21.66C1.6 21.66 1.65 21.59 1.75 21.59C3.1 20.94 5.05 20.5 6.5 20.5C8.45 20.5 10.55 20.9 12 22C13.35 21.15 15.8 20.5 17.5 20.5C19.15 20.5 20.85 20.81 22.25 21.56C22.35 21.61 22.4 21.59 22.5 21.59C22.75 21.59 23 21.34 23 21.09V6.5C22.4 6.05 21.75 5.75 21 5.5V19C19.9 18.65 18.7 18.5 17.5 18.5C15.8 18.5 13.35 19.15 12 20V6.5C10.55 5.4 8.45 5 6.5 5Z',
   fx: 'M12.42 5.29C11.32 5.19 10.35 5.93 10.17 7.01L9.67 10H13V12H9.33L8.24 18.59C7.92 20.57 6.19 22 4.19 22C3.5 22 2.86 21.84 2.27 21.54L3.16 19.75C3.47 19.91 3.82 20 4.19 20C5.21 20 6.09 19.27 6.26 18.26L7.31 12H5V10H7.65L8.2 6.68C8.55 4.54 10.5 3.09 12.66 3.29C13.39 3.36 14.08 3.63 14.66 4.07L13.46 5.67C13.15 5.44 12.79 5.32 12.42 5.29M22 13.65L20.59 12.24L17.76 15.07L14.93 12.24L13.5 13.65L16.35 16.5L13.5 19.31L14.93 20.72L17.76 17.89L20.59 20.72L22 19.31L19.17 16.5L22 13.65Z',
-  microscope: 'M11.68 4.4L9.56 2.28L6.03 5.81L8.15 7.93L6.74 9.35L5.32 7.93L3.91 9.35L7.44 12.88L8.86 11.47L7.44 10.05L8.86 8.64L10.97 10.76L14.5 7.23L12.39 5.11L13.1 4.4C14.12 3.92 15.27 3.74 16.41 3.92C19.55 4.41 21.7 7.35 21.21 10.5C20.92 12.37 19.72 13.97 18 14.79V13.17C19.24 12.08 19.65 10.32 19 8.79C18.35 7.27 16.79 6.34 15.14 6.5C14.43 6.57 13.75 6.84 13.19 7.29L11.78 5.88L12.39 5.11L11.68 4.4M5 16V18H10.5C11.47 18 12.35 18.56 12.76 19.44L13 20H3V22H21V20H18C19.93 18.54 21 16.27 21 13.85V11H19V13.85C19 16.14 17.14 18 14.85 18H14.15C13.61 16.8 12.41 16 11.09 16H5Z'
+  microscope: 'M11.68 4.4L9.56 2.28L6.03 5.81L8.15 7.93L6.74 9.35L5.32 7.93L3.91 9.35L7.44 12.88L8.86 11.47L7.44 10.05L8.86 8.64L10.97 10.76L14.5 7.23L12.39 5.11L13.1 4.4C14.12 3.92 15.27 3.74 16.41 3.92C19.55 4.41 21.7 7.35 21.21 10.5C20.92 12.37 19.72 13.97 18 14.79V13.17C19.24 12.08 19.65 10.32 19 8.79C18.35 7.27 16.79 6.34 15.14 6.5C14.43 6.57 13.75 6.84 13.19 7.29L11.78 5.88L12.39 5.11L11.68 4.4M5 16V18H10.5C11.47 18 12.35 18.56 12.76 19.44L13 20H3V22H21V20H18C19.93 18.54 21 16.27 21 13.85V11H19V13.85C19 16.14 17.14 18 14.85 18H14.15C13.61 16.8 12.41 16 11.09 16H5Z',
+  comment: 'M9,22A1,1 0 0,1 8,21V18H4A2,2 0 0,1 2,16V4C2,2.89 2.9,2 4,2H20A2,2 0 0,1 22,4V16A2,2 0 0,1 20,18H13.9L10.2,21.71C10,21.9 9.75,22 9.5,22V22H9M10,16V19.08L13.08,16H20V4H4V16H10Z',
+  check: 'M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z',
+  school: 'M12,3L1,9L12,15L21,10.09V17H23V9M5,13.18V17.18L12,21L19,17.18V13.18L12,17L5,13.18Z'
 };
 
 function drawCanvasBadge(ctx, text, x, y) {
   ctx.save();
+  const norm = normalizeClientLessonType(text);
   const badgeMap = {
     'Лек.': { bg: '#e4ffe8', text: '#1b952d', border: '#c6f5cd', icon: 'book' },
     'Упр.': { bg: '#eff7fd', text: '#4386bb', border: '#d2e8fb', icon: 'fx' },
-    'Лаб.': { bg: '#fbf0fe', text: '#c05fdd', border: '#f3d9fd', icon: 'microscope' }
+    'Лаб.': { bg: '#fbf0fe', text: '#c05fdd', border: '#f3d9fd', icon: 'microscope' },
+    'Конс.': { bg: '#fef3c7', text: '#d97706', border: '#fde68a', icon: 'comment' },
+    'Зач.': { bg: '#ccfbf1', text: '#0d9488', border: '#99f6e4', icon: 'check' },
+    'Экз.': { bg: '#ffe4e6', text: '#e11d48', border: '#fecdd3', icon: 'school' }
   };
-  const cfg = badgeMap[text] || { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', icon: 'dot' };
+  const cfg = badgeMap[norm] || { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', icon: 'dot' };
   const h = 20;
 
   ctx.font = 'bold 11px Onest, sans-serif';
-  const textW = text ? ctx.measureText(text).width : 0;
-  const w = text ? Math.max(58, Math.ceil(22 + textW + 8)) : 32;
+  const textW = norm ? ctx.measureText(norm).width : 0;
+  const w = norm ? Math.max(58, Math.ceil(22 + textW + 8)) : 32;
   const r = 6;
 
   ctx.fillStyle = cfg.bg;
@@ -4415,36 +5022,33 @@ function drawCanvasBadge(ctx, text, x, y) {
   ctx.font = 'bold 11px Onest, sans-serif';
   ctx.fillStyle = cfg.text;
   ctx.textAlign = 'left';
-  ctx.fillText(text || '', x + 20, y + 14);
+  ctx.fillText(norm || '', x + 20, y + 14);
 
   ctx.restore();
   return w;
 }
 
 async function saveCanvasPng(canvas, filename, title = '') {
-  const dataUrl = canvas.toDataURL('image/png');
   const isMobile = window.innerWidth <= 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
 
-  if (isMobile && typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
+  if (isMobile && blob && typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
     try {
-      const parts = dataUrl.split(',');
-      const byteStr = atob(parts[1] || '');
-      const ab = new ArrayBuffer(byteStr.length);
-      const ia = new Uint8Array(ab);
-      for (let i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
-      const file = new File([ab], filename, { type: 'image/png' });
+      const file = new File([blob], filename, { type: 'image/png' });
       if (navigator.canShare({ files: [file] })) {
+        // Передаём только файл картинки без дублирующего текста или заголовка
         await navigator.share({
-          files: [file],
-          title: title || filename
+          files: [file]
         });
-        showToast('Изображение готово к сохранению');
+        showToast('Изображение готово к отправке');
         return;
       }
     } catch (err) {
       if (err && err.name === 'AbortError') return;
     }
   }
+
+  const dataUrl = canvas.toDataURL('image/png');
 
   if (isMobile) {
     try {
@@ -4456,7 +5060,7 @@ async function saveCanvasPng(canvas, filename, title = '') {
         body: JSON.stringify({
           dataUrl,
           filename,
-          title,
+          title: '',
           sendToTelegram: Boolean(inTgWebApp && tgId),
           telegramId: tgId
         })
@@ -4542,11 +5146,11 @@ function renderScheduleWorkspace() {
               <h2 class="schedule-sidebar-heading">Расписание</h2>
             </div>
 
-            <div class="sched-filter-caption">Можно вводить номер группы или фамилию преподавателя</div>
+            <div class="sched-filter-caption">Можно вводить номер группы, фамилию преподавателя или номер аудитории</div>
             <div class="sched-filter-wrap">
               <i class="mdi mdi-magnify sched-filter-icon"></i>
               <input type="text" class="sched-filter-input" id="sched-view-search"
-                     placeholder="Например: 546 или Скворцов…"
+                     placeholder="Например: 546, Скворцов или 337…"
                      value="${escapeHtml(directoryFilterQuery)}" autocomplete="off">
               <button type="button" class="input-clear-btn ${directoryFilterQuery ? '' : 'hidden'}" id="sched-view-clear" title="Очистить поиск" aria-label="Очистить поиск">
                 <i class="mdi mdi-close"></i>
@@ -4558,7 +5162,7 @@ function renderScheduleWorkspace() {
             ${sidebarListHtml}
           </div>
         </aside>
-        <button type="button" class="schedule-sidebar-handle" id="schedule-sidebar-handle" title="${scheduleSidebarCollapsed ? 'Развернуть список групп и преподавателей' : 'Свернуть список групп и преподавателей'}">
+        <button type="button" class="schedule-sidebar-handle" id="schedule-sidebar-handle" title="${scheduleSidebarCollapsed ? 'Развернуть список групп, преподавателей и аудиторий' : 'Свернуть список групп, преподавателей и аудиторий'}">
           <i class="mdi ${scheduleSidebarCollapsed ? 'mdi-chevron-right' : 'mdi-chevron-left'}"></i>
         </button>
       </div>
@@ -4599,16 +5203,21 @@ function renderScheduleMainPane() {
     return `
       <div class="schedule-main-empty">
         <div class="schedule-empty-icon"><i class="mdi mdi-calendar-clock-outline"></i></div>
-        <div class="schedule-empty-title">Выберите группу или преподавателя</div>
-        <div class="schedule-empty-sub">В списке слева доступно расписание всех учебных групп и преподавателей Главного корпуса с быстрым переходом к любой аудитории на карте.</div>
+        <div class="schedule-empty-title">Выберите группу, преподавателя или аудиторию</div>
+        <div class="schedule-empty-sub">В списке слева доступно расписание всех учебных групп, преподавателей и аудиторий Главного корпуса с быстрым переходом к любой аудитории на карте.</div>
       </div>
     `;
   }
 
   const data = currentEntityData;
   const isGroup = data.entityType === 'group';
-  const title = isGroup ? `Группа ${data.name}` : (data.fullName || data.shortName || data.name);
-  const kickerText = isGroup ? formatFacultyFullName(data.faculty || data.facultyCode || '') : (data.regalia || '');
+  const isClassroom = data.entityType === 'classroom';
+  const title = isGroup
+    ? `Группа ${data.name}`
+    : (isClassroom ? (data.fullName || `Аудитория ${data.name}`) : (data.fullName || data.shortName || data.name));
+  const kickerText = isGroup
+    ? formatFacultyFullName(data.faculty || data.facultyCode || '')
+    : (data.regalia || '');
 
   const weekTriggerLabel = getCurrentWeekTriggerLabel();
   const weekOptionsHtml = (availableScheduleWeeks.length > 0 ? availableScheduleWeeks : [
@@ -4646,7 +5255,8 @@ function renderScheduleMainPane() {
   `;
 
   const days = data.days || [];
-  const tableHtml = buildWeeklyScheduleTableHtml(days, { mode: isGroup ? 'group' : 'lecturer' });
+  const tableMode = isClassroom ? 'room' : (isGroup ? 'group' : 'lecturer');
+  const tableHtml = buildWeeklyScheduleTableHtml(days, { mode: tableMode });
 
   const toolbarHtml = `
     <div class="schedule-table-toolbar">
@@ -4993,7 +5603,9 @@ function exportScheduleToPng() {
   // Main title
   const title = currentEntityData.entityType === 'group'
     ? `Группа ${currentEntityData.name}`
-    : (currentEntityData.fullName || currentEntityData.name);
+    : (currentEntityData.entityType === 'classroom'
+      ? (currentEntityData.fullName || `Аудитория ${currentEntityData.name}`)
+      : (currentEntityData.fullName || currentEntityData.name));
   ctx.fillStyle = textMain;
   ctx.font = 'bold 22px Onest, sans-serif';
   ctx.fillText(title, padX, 36);
@@ -5398,17 +6010,19 @@ function attachScheduleWorkspaceListeners(view) {
 
   const shareBtn = view.querySelector('#schedule-share-btn');
   if (shareBtn && currentEntitySchedule) {
-    shareBtn.addEventListener('click', async () => {
-      const url = new URL(location);
-      url.searchParams.set('view', 'schedule');
-      url.searchParams.set('type', currentEntitySchedule.type);
-      url.searchParams.set('name', currentEntitySchedule.name);
-      try {
-        await navigator.clipboard.writeText(url.toString());
-        showToast('Ссылка на расписание скопирована');
-      } catch (e) {
-        showToast('Ссылка обновлена в адресной строке');
-      }
+    shareBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const cleanUrl = buildCleanShareUrl({
+        view: 'schedule',
+        type: currentEntitySchedule.type,
+        name: currentEntitySchedule.name
+      });
+      const shareTitle = currentEntitySchedule.type === 'group'
+        ? `Расписание группы ${currentEntitySchedule.name} · РГРТУ`
+        : (currentEntitySchedule.type === 'classroom'
+          ? `Расписание ауд. ${currentEntitySchedule.name} · РГРТУ`
+          : `Расписание ${currentEntitySchedule.name} · РГРТУ`);
+      await triggerSmartShare(cleanUrl, shareTitle);
     });
   }
 
@@ -5446,6 +6060,7 @@ function attachScheduleWorkspaceListeners(view) {
   });
 
   attachEntityInlineLinks(view);
+  attachLessonNoteListeners(view);
 }
 
 // ================ ГРАФ И МАРШРУТЫ ================
@@ -5621,6 +6236,15 @@ async function fetchSvgCentroid(building, floor, roomId) {
 }
 
 async function getRoomNode(roomId) {
+  if (roomId === '__GPS__') {
+    if (gpsState.snapped && gpsState.snapped.nearestNodeId && graph.nodes[gpsState.snapped.nearestNodeId]) {
+      return gpsState.snapped.nearestNodeId;
+    }
+    if (gpsState.lastSvgPos) {
+      return findNearestNode(gpsState.lastSvgPos, gpsState.building || currentBuilding, gpsState.floor ?? currentFloor);
+    }
+    return null;
+  }
   const meta = roomsMeta[roomId];
   if (!meta) return null;
 
@@ -5725,13 +6349,17 @@ function drawRoute(path) {
     }).addTo(routeLayer);
   });
 
-  const fromMeta = roomsMeta[routeState.fromRoomId];
+  const fromMeta = routeState.fromRoomId === '__GPS__'
+    ? { building: gpsState.building || currentBuilding, floor: gpsState.floor ?? currentFloor, isGps: true }
+    : roomsMeta[routeState.fromRoomId];
   const toMeta = roomsMeta[routeState.toRoomId];
 
   if (fromMeta && fromMeta.building === currentBuilding && fromMeta.floor === currentFloor) {
     const startNode = graph.nodes[path[0]];
     if (startNode && startNode.building === currentBuilding && startNode.floor === currentFloor) {
-      const centroid = getShapeCentroidSvg(routeState.fromRoomId);
+      const centroid = fromMeta.isGps
+        ? (gpsState.snapped || gpsState.lastSvgPos)
+        : getShapeCentroidSvg(routeState.fromRoomId);
       if (centroid) {
         L.polyline([[H - centroid.y, centroid.x], [H - startNode.y, startNode.x]], {
           pane: 'routePane', color: startColor, weight: 2, dashArray: '4, 4', opacity: 0.82
@@ -5893,13 +6521,14 @@ function handleRouteMapPick(id) {
 function renderRoutePanel() {
   const panel = document.getElementById('panel');
 
-  const fromMeta = routeState.fromRoomId ? roomsMeta[routeState.fromRoomId] : null;
+  const isGpsFrom = routeState.fromRoomId === '__GPS__';
+  const fromMeta = (!isGpsFrom && routeState.fromRoomId) ? roomsMeta[routeState.fromRoomId] : null;
   const toMeta = routeState.toRoomId ? roomsMeta[routeState.toRoomId] : null;
 
-  const fromValue = fromMeta ? formatRoomName(fromMeta.name) : '';
+  const fromValue = isGpsFrom ? '📍 Моё местоположение (GPS)' : (fromMeta ? formatRoomName(fromMeta.name) : '');
   const toValue = toMeta ? formatRoomName(toMeta.name) : '';
 
-  const shareIconHtml = `<i class="mdi mdi-share share-icon" id="route-share-btn" title="Скопировать ссылку на маршрут"></i>`;
+  const shareIconHtml = `<i class="mdi mdi-share share-icon" id="route-share-btn" title="Поделиться ссылкой на маршрут"></i>`;
   const header = `
     <div class="panel-header">
       <button class="close" onclick="closeRoutePanel()" title="Закрыть и сбросить маршрут">✕</button>
@@ -5913,7 +6542,7 @@ function renderRoutePanel() {
     <div class="route-field">
       <label for="route-from">Откуда</label>
       <div class="route-input-wrap">
-        <input class="route-input has-clear ${fromValue ? 'filled' : ''}" id="route-from" placeholder="Аудитория, вход…" value="${escapeHtml(fromValue)}" autocomplete="off">
+        <input class="route-input has-clear ${fromValue ? 'filled' : ''}" id="route-from" placeholder="Аудитория, вход или GPS…" value="${escapeHtml(fromValue)}" autocomplete="off">
         <button type="button" class="input-clear-btn ${fromValue ? '' : 'hidden'}" id="route-from-clear" title="Очистить" aria-label="Очистить поле Откуда">
           <i class="mdi mdi-close"></i>
         </button>
@@ -5961,22 +6590,14 @@ function renderRoutePanel() {
 
   const shareRouteBtn = panel.querySelector('#route-share-btn');
   if (shareRouteBtn) {
-    shareRouteBtn.addEventListener('click', async () => {
-      const url = new URL(location);
-      url.searchParams.delete('view');
-      url.searchParams.delete('room');
-      if (routeState.fromRoomId) url.searchParams.set('from', routeState.fromRoomId);
-      if (routeState.toRoomId) url.searchParams.set('to', routeState.toRoomId);
-      if (routeIncludeOutdoor) url.searchParams.set('outdoor', '1');
-      else url.searchParams.delete('outdoor');
-      try {
-        await navigator.clipboard.writeText(url.toString());
-        showToast('Ссылка на маршрут скопирована');
-        haptic('success');
-      } catch (e) {
-        history.replaceState({}, '', url);
-        showToast('Ссылка на маршрут обновлена');
-      }
+    shareRouteBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const cleanUrl = buildCleanShareUrl({
+        from: routeState.fromRoomId && routeState.fromRoomId !== '__GPS__' ? routeState.fromRoomId : undefined,
+        to: routeState.toRoomId || undefined,
+        outdoor: routeIncludeOutdoor ? '1' : undefined
+      });
+      await triggerSmartShare(cleanUrl, 'Маршрут по корпусу РГРТУ');
     });
   }
 
@@ -6027,33 +6648,31 @@ function setupRouteInput(side) {
     });
   }
 
-  input.addEventListener('focus', () => {
-    routePickSide = side;
-    const panel = document.getElementById('panel');
-    if (panel) panel.classList.remove('mobile-minimized');
-    const labelFrom = document.querySelector('#route-from')?.closest('.route-field')?.querySelector('.label-hint');
-    const labelTo = document.querySelector('#route-to')?.closest('.route-field')?.querySelector('.label-hint');
-    if (labelFrom) labelFrom.classList.toggle('active', side === 'from');
-    if (labelTo) labelTo.classList.toggle('active', side === 'to');
-  });
+  const renderSuggestionsList = (q) => {
+    results.innerHTML = '';
+    if (side === 'from' && (!q || 'мое местоположение gps геопозиция'.includes(q.toLowerCase()))) {
+      const gpsLi = document.createElement('li');
+      gpsLi.innerHTML = `
+        <div class="res-name" style="color:#2563eb;font-weight:700"><i class="mdi mdi-crosshairs-gps"></i> Моё местоположение (GPS)</div>
+        <div class="res-meta">${gpsState.active && gpsState.snapped ? `Активно · ${gpsState.floor ?? currentFloor} этаж` : 'Включить отслеживание по коридорам'}</div>
+      `;
+      gpsLi.addEventListener('click', async () => {
+        if (!gpsState.active || !gpsState.snapped) {
+          await startGpsTracking({ useForRoute: true });
+        }
+        setRoutePoint('from', '__GPS__', '📍 Моё местоположение (GPS)');
+      });
+      results.appendChild(gpsLi);
+    }
 
-  input.addEventListener('input', () => {
-    syncClearVisibility();
-    const q = input.value.trim();
     if (!q) {
-      if (side === 'from') routeState.fromRoomId = null;
-      else routeState.toRoomId = null;
-      routeState.path = null;
-      if (routeLayer) routeLayer.clearLayers();
-      input.classList.remove('filled');
-      refreshRoutePickHighlight();
-      results.classList.remove('open');
-      results.innerHTML = '';
+      if (results.children.length > 0) results.classList.add('open');
+      else results.classList.remove('open');
       return;
     }
+
     const found = searchRooms(q, 40);
-    results.innerHTML = '';
-    if (!found.length) {
+    if (!found.length && results.children.length === 0) {
       const li = document.createElement('li');
       li.className = 'res-empty';
       li.textContent = 'ничего не найдено';
@@ -6073,6 +6692,35 @@ function setupRouteInput(side) {
       });
     }
     results.classList.add('open');
+  };
+
+  input.addEventListener('focus', () => {
+    routePickSide = side;
+    const panel = document.getElementById('panel');
+    if (panel) panel.classList.remove('mobile-minimized');
+    const labelFrom = document.querySelector('#route-from')?.closest('.route-field')?.querySelector('.label-hint');
+    const labelTo = document.querySelector('#route-to')?.closest('.route-field')?.querySelector('.label-hint');
+    if (labelFrom) labelFrom.classList.toggle('active', side === 'from');
+    if (labelTo) labelTo.classList.toggle('active', side === 'to');
+    if (side === 'from' && !input.value.trim()) {
+      renderSuggestionsList('');
+    }
+  });
+
+  input.addEventListener('input', () => {
+    syncClearVisibility();
+    const q = input.value.trim();
+    if (!q) {
+      if (side === 'from') routeState.fromRoomId = null;
+      else routeState.toRoomId = null;
+      routeState.path = null;
+      if (routeLayer) routeLayer.clearLayers();
+      input.classList.remove('filled');
+      refreshRoutePickHighlight();
+      renderSuggestionsList('');
+      return;
+    }
+    renderSuggestionsList(q);
   });
 
   input.addEventListener('blur', () => {
@@ -6116,6 +6764,10 @@ function setRoutePoint(side, roomId, name) {
 async function onBuildRouteClick() {
   const panel = document.getElementById('panel');
 
+  // Сразу очищаем предыдущий маршрут на карте, чтобы он не оставался при ошибке построения нового
+  routeState.path = null;
+  if (routeLayer) routeLayer.clearLayers();
+
   if (!routeState.fromRoomId || !routeState.toRoomId) {
     showToast('Выберите обе точки маршрута');
     return;
@@ -6128,6 +6780,8 @@ async function onBuildRouteClick() {
   const toNode = await getRoomNode(routeState.toRoomId);
 
   if (!fromNode || !toNode) {
+    routeState.path = null;
+    if (routeLayer) routeLayer.clearLayers();
     if (scrollEl) {
       scrollEl.innerHTML = `
         <div class="route-warning">Не удалось определить положение выбранных помещений на графе этого этажа (сейчас граф проложен по 0 и 1 этажам Главного корпуса).</div>
@@ -6139,6 +6793,8 @@ async function onBuildRouteClick() {
   const path = dijkstra(fromNode, toNode);
 
   if (!path) {
+    routeState.path = null;
+    if (routeLayer) routeLayer.clearLayers();
     if (scrollEl) {
       scrollEl.innerHTML = `
         <div class="route-warning">Между этими точками пока нет связанного пути по графу.</div>
@@ -6217,11 +6873,12 @@ function renderRouteResult(path) {
   }
   if (currentFloorGroup.length > 0) floorGroups.push(currentFloorGroup);
 
-  const fromMeta = roomsMeta[routeState.fromRoomId];
+  const isGpsFrom = routeState.fromRoomId === '__GPS__';
+  const fromMeta = isGpsFrom ? null : roomsMeta[routeState.fromRoomId];
   const toMeta = roomsMeta[routeState.toRoomId];
-  const fromTitle = fromMeta ? formatRoomName(fromMeta.name) : 'Начальная точка';
+  const fromTitle = isGpsFrom ? '📍 Моё местоположение (GPS)' : (fromMeta ? formatRoomName(fromMeta.name) : 'Начальная точка');
   const toTitle = toMeta ? formatRoomName(toMeta.name) : 'Конечная точка';
-  const fromFloor = fromMeta?.floor ?? floorGroups[0]?.[0]?.node?.floor ?? currentFloor;
+  const fromFloor = isGpsFrom ? (gpsState.floor ?? currentFloor) : (fromMeta?.floor ?? floorGroups[0]?.[0]?.node?.floor ?? currentFloor);
   const toFloor = toMeta?.floor ?? floorGroups[floorGroups.length - 1]?.[0]?.node?.floor ?? currentFloor;
 
   let milestonesHtml = `
@@ -6446,36 +7103,784 @@ function setupMapRotation() {
 
 async function updateSmartNextClassPill() {
   const pill = document.getElementById('smart-next-class-pill');
-  if (!pill) return;
-  if (!userProfile.targetName) {
-    pill.classList.add('hidden');
-    return;
-  }
+  if (pill) pill.classList.add('hidden');
+}
+
+// ================ СООБЩЕСТВО, ЗАМЕТКИ К ПАРАМ, БУФЕТЫ, POI И ГИБРИДНЫЙ GPS ================
+
+const POI_CATEGORY_META = {
+  socket: { emoji: '🔌', label: 'Розетка / зарядка' },
+  coffee: { emoji: '☕', label: 'Кофемашина / снэки' },
+  wifi:   { emoji: '📶', label: 'Точка Wi-Fi' },
+  blocked:{ emoji: '🚧', label: 'Перекрытый проход' },
+  info:   { emoji: 'ℹ️', label: 'Полезное место' }
+};
+
+async function loadCommunityState() {
   try {
-    const type = userProfile.role === 'lecturer' ? 'lecturer' : 'group';
-    const res = await fetch(`/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(userProfile.targetName)}`);
-    if (!res.ok) {
-      pill.classList.add('hidden');
-      return;
-    }
+    const uid = currentUserId || (typeof ensureUserId === 'function' ? ensureUserId() : '');
+    const url = uid ? `/api/community/state?userId=${encodeURIComponent(uid)}` : '/api/community/state';
+    const res = await fetch(url);
+    if (!res.ok) return;
     const data = await res.json();
-    const st = computeClientEntityNowStatus(data);
-    if (!st || (!st.roomId && st.type === 'free' && !st.details)) {
-      pill.classList.add('hidden');
-      return;
+    if (!data.ok) return;
+    communityState.markers = Array.isArray(data.markers) ? data.markers : [];
+    communityState.reviews = Array.isArray(data.reviews) ? data.reviews : [];
+    communityState.userReviews = Array.isArray(data.userReviews) ? data.userReviews : [];
+    if (data.gpsConfig && typeof data.gpsConfig === 'object') {
+      communityState.gpsConfig = data.gpsConfig;
     }
-    pill.innerHTML = `<i class="mdi mdi-navigation-variant-outline"></i><span>${escapeHtml(st.title)}${st.details ? ': ' + escapeHtml(st.details) : ''}</span>`;
-    pill.classList.remove('hidden');
-    pill.onclick = () => {
-      if (st.roomId && roomsMeta[st.roomId]) {
-        navigateToRoom(st.roomId);
-      } else {
-        openEntitySchedule(type, userProfile.targetName);
+    renderCommunityPoiMarkers();
+    updatePoiToggleBtnUI();
+  } catch (e) {
+    console.warn('[community] failed to load state:', e.message);
+  }
+}
+
+function updatePoiToggleBtnUI() {
+  const toggleBtn = document.getElementById('map-toggle-poi-btn');
+  if (toggleBtn) {
+    toggleBtn.classList.toggle('active', poiLayerVisible);
+    toggleBtn.title = poiLayerVisible
+      ? 'Слой полезных меток включён (нажмите, чтобы скрыть)'
+      : 'Слой полезных меток выключен (нажмите, чтобы показать)';
+  }
+}
+
+function togglePoiLayer(forcedState = null) {
+  poiLayerVisible = forcedState !== null ? Boolean(forcedState) : !poiLayerVisible;
+  try {
+    localStorage.setItem('radikmap_poi_layer', poiLayerVisible ? 'true' : 'false');
+  } catch (e) {}
+  updatePoiToggleBtnUI();
+  renderCommunityPoiMarkers();
+  showToast(poiLayerVisible ? 'Слой полезных меток включён' : 'Слой полезных меток скрыт');
+}
+
+function renderCommunityPoiMarkers() {
+  if (!poiLayer) return;
+  poiLayer.clearLayers();
+  if (!poiLayerVisible) return;
+
+  const { H } = currentSvgViewBox;
+  if (!H) return;
+
+  const markers = (communityState.markers || []).filter(m =>
+    m && m.building === currentBuilding && Number(m.floor) === Number(currentFloor)
+  );
+
+  markers.forEach(m => {
+    const cat = POI_CATEGORY_META[m.category] || POI_CATEGORY_META.info;
+    const latlng = L.latLng(H - Number(m.y || 0), Number(m.x || 0));
+    const titleText = m.title || cat.label;
+    const icon = L.divIcon({
+      className: 'poi-marker-wrap',
+      html: `<div class="poi-marker-badge" data-cat="${escapeHtml(m.category || 'info')}" title="${escapeHtml(titleText)}">${cat.emoji}</div>`,
+      iconSize: [22, 22],
+      iconAnchor: [11, 11]
+    });
+    const marker = L.marker(latlng, { pane: 'poiPane', icon });
+    marker.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      showToast(`${cat.emoji} ${titleText}${m.description ? ' — ' + m.description : ''}`);
+    });
+    marker.addTo(poiLayer);
+  });
+}
+
+function openCommunityModal(titleHtml, bodyHtml, onReady) {
+  const backdrop = document.getElementById('community-modal-backdrop');
+  if (!backdrop) return;
+  let titleEl = document.getElementById('community-modal-title');
+  let bodyEl = document.getElementById('community-modal-body');
+  if (!titleEl || !bodyEl) {
+    backdrop.innerHTML = `
+      <div class="cheatsheet-modal-card community-modal-card">
+        <div class="cheatsheet-modal-header">
+          <div class="cheatsheet-modal-title" id="community-modal-title"></div>
+          <div class="cheatsheet-modal-header-actions">
+            <button type="button" class="cheatsheet-modal-close" id="community-modal-close" aria-label="Закрыть">✕</button>
+          </div>
+        </div>
+        <div class="cheatsheet-modal-body community-modal-body" id="community-modal-body"></div>
+      </div>
+    `;
+    titleEl = document.getElementById('community-modal-title');
+    bodyEl = document.getElementById('community-modal-body');
+  }
+  titleEl.innerHTML = titleHtml;
+  bodyEl.innerHTML = bodyHtml;
+  backdrop.classList.remove('hidden');
+
+  const close = () => backdrop.classList.add('hidden');
+  const closeBtn = document.getElementById('community-modal-close');
+  if (closeBtn) closeBtn.onclick = close;
+  backdrop.onclick = (e) => {
+    if (e.target === backdrop) close();
+  };
+  if (typeof onReady === 'function') onReady(bodyEl, close);
+}
+
+function requireTelegramAuthPrompt(featureName = 'этой функции') {
+  if (userProfile.telegramLinked && currentUserId) return true;
+  showToast(`Войдите через Telegram в профиле (справа сверху) для использования ${featureName}`);
+  const btn = document.getElementById('user-menu-btn');
+  if (btn) btn.click();
+  return false;
+}
+
+function openLessonNoteModal(noteKey, noteLabel) {
+  if (!requireTelegramAuthPrompt('личных заметок к парам')) return;
+  const rawVal = userProfile.lessonNotes && userProfile.lessonNotes[noteKey];
+  const currentText = rawVal ? (typeof rawVal === 'object' ? String(rawVal.text || '') : String(rawVal)) : '';
+  openCommunityModal(
+    `<i class="mdi mdi-note-edit-outline"></i><span>Личная заметка к паре</span>`,
+    `
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${escapeHtml(noteLabel)}</div>
+      <div class="community-form-field">
+        <label class="community-form-label">Текст заметки (виден только вам)</label>
+        <textarea class="community-textarea" id="lesson-note-textarea" maxlength="400" placeholder="Например: Сдать лабу №3, принести зачётку, ссылка на задание…">${escapeHtml(currentText)}</textarea>
+      </div>
+      <div class="community-modal-actions">
+        ${currentText ? `<button type="button" class="community-btn danger" id="lesson-note-delete-btn">Удалить</button>` : ''}
+        <button type="button" class="community-btn" id="lesson-note-cancel-btn">Отмена</button>
+        <button type="button" class="community-btn primary" id="lesson-note-save-btn">Сохранить</button>
+      </div>
+    `,
+    (bodyEl, close) => {
+      const ta = bodyEl.querySelector('#lesson-note-textarea');
+      if (ta) setTimeout(() => ta.focus(), 40);
+
+      const saveNote = async (textVal) => {
+        try {
+          const res = await fetch('/api/user/notes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: currentUserId,
+              lessonKey: noteKey,
+              noteKey,
+              noteText: textVal,
+              text: textVal
+            })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) {
+            showToast(data.error || 'Не удалось сохранить заметку');
+            return;
+          }
+          userProfile.lessonNotes = data.lessonNotes || {};
+          saveUserProfileLocalCache();
+          close();
+          if (scheduleViewOpen) renderScheduleWorkspace();
+          if (panelMode === 'room' && currentRoomPanelId) {
+            const rid = currentRoomPanelId;
+            currentRoomPanelId = null;
+            onRoomClick(rid, { pushHistory: false });
+          }
+          showToast(textVal ? 'Заметка сохранена' : 'Заметка удалена');
+        } catch (e) {
+          showToast('Ошибка сохранения заметки');
+        }
+      };
+
+      bodyEl.querySelector('#lesson-note-cancel-btn')?.addEventListener('click', close);
+      bodyEl.querySelector('#lesson-note-delete-btn')?.addEventListener('click', () => saveNote(''));
+      bodyEl.querySelector('#lesson-note-save-btn')?.addEventListener('click', () => {
+        saveNote(ta ? ta.value.trim() : '');
+      });
+    }
+  );
+}
+
+function attachLessonNoteListeners(container) {
+  if (!container) return;
+  container.querySelectorAll('[data-note-key]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = el.dataset.noteKey;
+      const label = el.dataset.noteLabel || '';
+      if (key) openLessonNoteModal(key, label);
+    });
+  });
+}
+
+function openBuffetReviewModal(roomId) {
+  if (!requireTelegramAuthPrompt('оценки буфетов и столовых')) return;
+  const meta = roomsMeta[roomId];
+  const roomName = formatRoomName(meta?.name || roomId);
+
+  // Ищем существующий отзыв пользователя к этому буфету
+  const existingReview = (communityState.userReviews || []).find(r => r && r.roomId === roomId) ||
+    (communityState.reviews || []).find(r => r && r.roomId === roomId && r.authorId === currentUserId);
+
+  const initialRating = existingReview ? (Number(existingReview.rating) || 5) : 5;
+  const initialText = existingReview ? (existingReview.text || '') : '';
+  const isEditing = Boolean(existingReview);
+
+  openCommunityModal(
+    `<i class="mdi ${isEditing ? 'mdi-comment-edit-outline' : 'mdi-star-outline'}"></i><span>${isEditing ? 'Редактировать отзыв' : 'Оценить'}: ${escapeHtml(roomName)}</span>`,
+    `
+      ${isEditing ? `<div style="font-size:12px;color:var(--text-accent);margin-bottom:8px;font-weight:600">Вы уже оставляли отзыв. Здесь вы можете изменить оценку и текст.</div>` : ''}
+      <div class="community-form-field">
+        <label class="community-form-label">Ваша оценка</label>
+        <div class="star-picker-row" id="review-star-picker" role="radiogroup" aria-label="Оценка">
+          ${[1, 2, 3, 4, 5].map(n => `
+            <button type="button" class="star-picker-btn ${n <= initialRating ? 'active' : ''}" data-star="${n}" title="${n} из 5" aria-label="${n} звёзд">
+              <svg viewBox="0 0 24 24" class="star-picker-svg">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+              </svg>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+      <div class="community-form-field">
+        <label class="community-form-label">Отзыв (меню, цены, очереди)</label>
+        <textarea class="community-textarea" id="review-text-input" maxlength="500" placeholder="Поделитесь впечатлением о буфете или столовой…">${escapeHtml(initialText)}</textarea>
+      </div>
+      <div style="font-size:11.5px;color:var(--text-muted)">Отзыв появится в карточке буфета после быстрой проверки модератором.</div>
+      <div class="community-modal-actions">
+        <button type="button" class="community-btn" id="review-cancel-btn">Отмена</button>
+        <button type="button" class="community-btn primary" id="review-submit-btn">${isEditing ? 'Сохранить изменения' : 'Отправить'}</button>
+      </div>
+    `,
+    (bodyEl, close) => {
+      let rating = initialRating;
+      const starBtns = bodyEl.querySelectorAll('[data-star]');
+      const updateStarDisplay = (val) => {
+        starBtns.forEach(b => b.classList.toggle('active', Number(b.dataset.star) <= val));
+      };
+      starBtns.forEach(btn => {
+        btn.addEventListener('mouseenter', () => {
+          updateStarDisplay(Number(btn.dataset.star) || 5);
+        });
+        btn.addEventListener('mouseleave', () => {
+          updateStarDisplay(rating);
+        });
+        btn.addEventListener('click', () => {
+          rating = Number(btn.dataset.star) || 5;
+          updateStarDisplay(rating);
+        });
+      });
+      bodyEl.querySelector('#review-cancel-btn')?.addEventListener('click', close);
+      bodyEl.querySelector('#review-submit-btn')?.addEventListener('click', async () => {
+        const text = bodyEl.querySelector('#review-text-input')?.value.trim() || '';
+        try {
+          const res = await fetch('/api/community/review', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUserId, roomId, rating, text })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) {
+            showToast(data.error || 'Не удалось сохранить отзыв');
+            return;
+          }
+          if (data.review) {
+            // Обновляем локальный список отзывов пользователя
+            if (!Array.isArray(communityState.userReviews)) communityState.userReviews = [];
+            const idx = communityState.userReviews.findIndex(r => r && r.roomId === roomId);
+            if (idx !== -1) {
+              communityState.userReviews[idx] = data.review;
+            } else {
+              communityState.userReviews.unshift(data.review);
+            }
+          }
+          close();
+          // Перезагружаем карточку помещения, чтобы отобразить обновлённый статус
+          if (panelMode === 'room' && currentRoomPanelId === roomId) {
+            currentRoomPanelId = null;
+            onRoomClick(roomId, { pushHistory: false });
+          }
+          showToast(isEditing ? 'Отзыв обновлён!' : 'Спасибо! Отзыв отправлен на модерацию');
+        } catch (e) {
+          showToast('Ошибка отправки отзыва');
+        }
+      });
+    }
+  );
+}
+
+function openRoomDescriptionSuggestModal(roomId) {
+  if (!requireTelegramAuthPrompt('предложения описаний кабинетов')) return;
+  const meta = roomsMeta[roomId];
+  const roomName = formatRoomName(meta?.name || roomId);
+  openCommunityModal(
+    `<i class="mdi mdi-pencil-plus-outline"></i><span>Описание: ${escapeHtml(roomName)}</span>`,
+    `
+      <div class="community-form-field">
+        <label class="community-form-label">Предложите описание или ориентир для кабинета</label>
+        <textarea class="community-textarea" id="desc-suggest-input" maxlength="600" placeholder="Например: Кафедра ЭВМ, вход через 336а, есть проектор и розетки у окна…">${escapeHtml(meta?.description || '')}</textarea>
+      </div>
+      <div style="font-size:11.5px;color:var(--text-muted)">После проверки в админ-панели описание обновится на карте для всех студентов.</div>
+      <div class="community-modal-actions">
+        <button type="button" class="community-btn" id="desc-cancel-btn">Отмена</button>
+        <button type="button" class="community-btn primary" id="desc-submit-btn">Отправить</button>
+      </div>
+    `,
+    (bodyEl, close) => {
+      bodyEl.querySelector('#desc-cancel-btn')?.addEventListener('click', close);
+      bodyEl.querySelector('#desc-submit-btn')?.addEventListener('click', async () => {
+        const description = bodyEl.querySelector('#desc-suggest-input')?.value.trim() || '';
+        if (!description) {
+          showToast('Введите текст описания');
+          return;
+        }
+        try {
+          const res = await fetch('/api/community/description', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUserId, roomId, description })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) {
+            showToast(data.error || 'Не удалось отправить предложение');
+            return;
+          }
+          close();
+          showToast('Описание отправлено на модерацию!');
+        } catch (e) {
+          showToast('Ошибка соединения с сервером');
+        }
+      });
+    }
+  );
+}
+
+function openAddPoiMarkerModal(svgX, svgY) {
+  if (!requireTelegramAuthPrompt('добавления меток на карту')) return;
+  openCommunityModal(
+    `<i class="mdi mdi-map-marker-plus-outline"></i><span>Предложить метку на карте</span>`,
+    `
+      <div style="font-size:12px;color:var(--text-muted)">${escapeHtml(BUILDINGS[currentBuilding]?.name || '')} · ${currentFloor} этаж (коорд. ${Math.round(svgX)}, ${Math.round(svgY)})</div>
+      <div class="community-form-field">
+        <label class="community-form-label">Категория метки</label>
+        <select class="community-select" id="poi-category-select">
+          <option value="socket">🔌 Розетка / зарядка</option>
+          <option value="coffee">☕ Кофемашина / автомат с едой</option>
+          <option value="wifi">📶 Точка Wi-Fi</option>
+          <option value="blocked">🚧 Перекрытый проход</option>
+          <option value="info">ℹ️ Полезное место / ориентир</option>
+        </select>
+      </div>
+      <div class="community-form-field">
+        <label class="community-form-label">Короткое название</label>
+        <input type="text" class="community-input" id="poi-title-input" maxlength="60" placeholder="Например: Розетки у лавочки">
+      </div>
+      <div class="community-form-field">
+        <label class="community-form-label">Подробности (необязательно)</label>
+        <input type="text" class="community-input" id="poi-desc-input" maxlength="200" placeholder="Например: Работают 4 розетки 220В">
+      </div>
+      <div style="font-size:11.5px;color:var(--text-muted)">После одобрения в админке метка появится на карте этажа.</div>
+      <div class="community-modal-actions">
+        <button type="button" class="community-btn" id="poi-cancel-btn">Отмена</button>
+        <button type="button" class="community-btn primary" id="poi-submit-btn">Отправить</button>
+      </div>
+    `,
+    (bodyEl, close) => {
+      bodyEl.querySelector('#poi-cancel-btn')?.addEventListener('click', close);
+      bodyEl.querySelector('#poi-submit-btn')?.addEventListener('click', async () => {
+        const category = bodyEl.querySelector('#poi-category-select')?.value || 'socket';
+        const catMeta = POI_CATEGORY_META[category] || POI_CATEGORY_META.info;
+        const title = bodyEl.querySelector('#poi-title-input')?.value.trim() || catMeta.label;
+        const description = bodyEl.querySelector('#poi-desc-input')?.value.trim() || '';
+        try {
+          const res = await fetch('/api/community/marker', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: currentUserId,
+              building: currentBuilding,
+              floor: currentFloor,
+              x: Math.round(svgX),
+              y: Math.round(svgY),
+              category,
+              title,
+              description
+            })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) {
+            showToast(data.error || 'Не удалось отправить метку');
+            return;
+          }
+          close();
+          showToast('Метка отправлена на модерацию!');
+        } catch (e) {
+          showToast('Ошибка отправки метки');
+        }
+      });
+    }
+  );
+}
+
+// ================ ГИБРИДНЫЙ GPS + WI-FI / BLE FUSION + MAP-MATCHING ПО КОРИДОРАМ ================
+
+function projectLatLonToSvgFloor(lat, lon, building = currentBuilding) {
+  const cfg = communityState.gpsConfig || {};
+  const bCfg = (cfg.buildings && cfg.buildings[building]) || {
+    centerLat: 54.61435,
+    centerLon: 39.70825,
+    rotationDeg: -18,
+    scaleMetersPerSvgUnit: 0.10,
+    anchors: []
+  };
+
+  const anchors = Array.isArray(bCfg.anchors) ? bCfg.anchors.filter(a => Number.isFinite(Number(a.lat)) && Number.isFinite(Number(a.lon))) : [];
+  if (anchors.length >= 2) {
+    // Используем ближайшие калибровочные опорные точки (реперы) для точной локальной интерполяции
+    let bestA = anchors[0];
+    let minD = Infinity;
+    for (const a of anchors) {
+      const d = Math.hypot((a.lat - lat) * 111320, (a.lon - lon) * 111320 * Math.cos((lat * Math.PI) / 180));
+      if (d < minD) {
+        minD = d;
+        bestA = a;
+      }
+    }
+    const latRef = Number(bestA.lat);
+    const lonRef = Number(bestA.lon);
+    const eastM = (lon - lonRef) * 111320 * Math.cos((latRef * Math.PI) / 180);
+    const northM = (lat - latRef) * 111320;
+    const rotRad = ((Number(bCfg.rotationDeg) || 0) * Math.PI) / 180;
+    const localX = eastM * Math.cos(rotRad) - northM * Math.sin(rotRad);
+    const localY = -(eastM * Math.sin(rotRad) + northM * Math.cos(rotRad));
+    const scale = Math.max(0.01, Number(bCfg.scaleMetersPerSvgUnit) || 0.10);
+    return {
+      x: Number(bestA.x || 0) + localX / scale,
+      y: Number(bestA.y || 0) + localY / scale
+    };
+  }
+
+  const { W, H } = currentSvgViewBox;
+  const latRef = Number(bCfg.centerLat) || 54.61435;
+  const lonRef = Number(bCfg.centerLon) || 39.70825;
+  const eastM = (lon - lonRef) * 111320 * Math.cos((latRef * Math.PI) / 180);
+  const northM = (lat - latRef) * 111320;
+  const rotRad = ((Number(bCfg.rotationDeg) || 0) * Math.PI) / 180;
+  const localX = eastM * Math.cos(rotRad) - northM * Math.sin(rotRad);
+  const localY = -(eastM * Math.sin(rotRad) + northM * Math.cos(rotRad));
+  const scale = Math.max(0.01, Number(bCfg.scaleMetersPerSvgUnit) || 0.10);
+  return {
+    x: (W || 1200) / 2 + localX / scale,
+    y: (H || 800) / 2 + localY / scale
+  };
+}
+
+function snapSvgPointToCorridor(rawPt, building = currentBuilding, floor = currentFloor) {
+  const nodes = graph.nodes || {};
+  const edges = graph.edges || [];
+  let bestX = rawPt.x;
+  let bestY = rawPt.y;
+  let bestDist = Infinity;
+  let nearestNodeId = null;
+
+  for (const [id, n] of Object.entries(nodes)) {
+    if (n.building !== building || Number(n.floor) !== Number(floor)) continue;
+    const d = Math.hypot(n.x - rawPt.x, n.y - rawPt.y);
+    if (d < bestDist) {
+      bestDist = d;
+      bestX = n.x;
+      bestY = n.y;
+      nearestNodeId = id;
+    }
+  }
+
+  for (const e of edges) {
+    const a = nodes[e.from];
+    const b = nodes[e.to];
+    if (!a || !b) continue;
+    if (a.building !== building || b.building !== building) continue;
+    if (Number(a.floor) !== Number(floor) || Number(b.floor) !== Number(floor)) continue;
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const lenSq = abx * abx + aby * aby;
+    let t = 0;
+    if (lenSq > 0) {
+      t = ((rawPt.x - a.x) * abx + (rawPt.y - a.y) * aby) / lenSq;
+      t = Math.max(0, Math.min(1, t));
+    }
+    const px = a.x + t * abx;
+    const py = a.y + t * aby;
+    const d = Math.hypot(rawPt.x - px, rawPt.y - py);
+    if (d < bestDist) {
+      bestDist = d;
+      bestX = px;
+      bestY = py;
+      nearestNodeId = t < 0.5 ? e.from : e.to;
+    }
+  }
+
+  return { x: bestX, y: bestY, nearestNodeId, distance: bestDist };
+}
+
+function updateGpsPositionFromSvg(svgPt, accuracyMeters = 12, sourceLabel = 'GPS + Wi-Fi/BLE') {
+  gpsState.building = currentBuilding;
+  gpsState.floor = currentFloor;
+  gpsState.accuracy = accuracyMeters;
+
+  // Экспоненциальное сглаживание скачков сигнала внутри здания
+  if (gpsState.lastSvgPos) {
+    svgPt = {
+      x: gpsState.lastSvgPos.x * 0.35 + svgPt.x * 0.65,
+      y: gpsState.lastSvgPos.y * 0.35 + svgPt.y * 0.65
+    };
+  }
+  gpsState.lastSvgPos = svgPt;
+  gpsState.snapped = snapSvgPointToCorridor(svgPt, currentBuilding, currentFloor);
+
+  const banner = document.getElementById('map-gps-banner');
+  const bannerText = document.getElementById('map-gps-banner-text');
+  if (banner && bannerText && gpsState.active) {
+    banner.classList.remove('hidden');
+    const nearNode = gpsState.snapped?.nearestNodeId ? graph.nodes[gpsState.snapped.nearestNodeId] : null;
+    const accStr = accuracyMeters ? `±${Math.round(accuracyMeters)} м` : '';
+    bannerText.textContent = `${sourceLabel} ${accStr} · привязка к коридору ${currentFloor} эт.${nearNode ? '' : ''}`.trim();
+  }
+
+  renderGpsPositionOnMap();
+
+  if (routeState.fromRoomId === '__GPS__' && routeState.toRoomId) {
+    onBuildRouteClick();
+  }
+}
+
+function renderGpsPositionOnMap() {
+  if (!gpsLayer) return;
+  gpsLayer.clearLayers();
+  if (!gpsState.active || !gpsState.snapped) return;
+  if (gpsState.building !== currentBuilding || Number(gpsState.floor) !== Number(currentFloor)) return;
+
+  const { H } = currentSvgViewBox;
+  if (!H) return;
+
+  const pt = gpsState.snapped;
+  const latlng = L.latLng(H - pt.y, pt.x);
+  const icon = L.divIcon({
+    className: 'gps-user-dot-wrap',
+    html: `<div class="gps-user-pulse"></div><div class="gps-user-dot"></div>`,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10]
+  });
+  L.marker(latlng, { pane: 'gpsPane', icon, interactive: false }).addTo(gpsLayer);
+}
+
+async function startGpsTracking({ useForRoute = false } = {}) {
+  const gpsBtn = document.getElementById('map-gps-btn');
+  const banner = document.getElementById('map-gps-banner');
+  const bannerText = document.getElementById('map-gps-banner-text');
+
+  gpsState.active = true;
+  if (gpsBtn) gpsBtn.classList.add('active');
+  if (banner) banner.classList.remove('hidden');
+  if (bannerText) {
+    bannerText.textContent = 'Поиск сигнала (включите Wi-Fi и Bluetooth для точности внутри корпуса)…';
+  }
+
+  // Подключаем компас и шагомер (PDR Dead Reckoning) для плавного смещения по коридору при слабом спутниковом сигнале
+  if (!gpsState.orientationHandler && typeof window.DeviceOrientationEvent !== 'undefined') {
+    gpsState.orientationHandler = (ev) => {
+      const heading = ev.webkitCompassHeading ?? (ev.alpha != null ? (360 - ev.alpha) % 360 : null);
+      if (heading != null && Number.isFinite(heading)) {
+        gpsState.headingDeg = heading;
       }
     };
-  } catch (e) {
-    pill.classList.add('hidden');
+    window.addEventListener('deviceorientation', gpsState.orientationHandler, true);
   }
+
+  if (!gpsState.motionHandler && typeof window.DeviceMotionEvent !== 'undefined') {
+    let lastStepTs = 0;
+    gpsState.motionHandler = (ev) => {
+      if (!gpsState.active || !gpsState.lastSvgPos) return;
+      const acc = ev.accelerationIncludingGravity;
+      if (!acc) return;
+      const mag = Math.hypot(acc.x || 0, acc.y || 0, acc.z || 0);
+      const now = Date.now();
+      if (mag > 12.6 && now - lastStepTs > 460) {
+        lastStepTs = now;
+        const bCfg = communityState.gpsConfig?.buildings?.[currentBuilding] || {};
+        const rotDeg = Number(bCfg.rotationDeg) || -18;
+        const angleRad = (((gpsState.headingDeg - rotDeg) || 0) * Math.PI) / 180;
+        const stepSvgUnits = 6.5; // ~0.65 м шаг
+        const nextPt = {
+          x: gpsState.lastSvgPos.x + Math.sin(angleRad) * stepSvgUnits,
+          y: gpsState.lastSvgPos.y - Math.cos(angleRad) * stepSvgUnits
+        };
+        updateGpsPositionFromSvg(nextPt, gpsState.accuracy || 10, 'Инерциальный шаг + коридор');
+      }
+    };
+    window.addEventListener('devicemotion', gpsState.motionHandler, true);
+  }
+
+  if ('geolocation' in navigator) {
+    if (gpsState.watchId != null) {
+      navigator.geolocation.clearWatch(gpsState.watchId);
+    }
+    gpsState.outOfBoundsNotified = false;
+    gpsState.watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        const svgPt = projectLatLonToSvgFloor(latitude, longitude, currentBuilding);
+        const { W, H } = currentSvgViewBox;
+        // Проверяем, попадают ли координаты в пределы плана вуза
+        const inBounds = svgPt.x >= -250 && svgPt.x <= (W || 1500) + 250 && svgPt.y >= -250 && svgPt.y <= (H || 1200) + 250;
+        if (inBounds) {
+          gpsState.outOfBoundsNotified = false;
+          updateGpsPositionFromSvg(svgPt, accuracy, 'GPS + Wi-Fi/BLE');
+        } else {
+          // Если координаты вне плана РГРТУ — показываем уведомление и статус в плашке
+          if (!gpsState.outOfBoundsNotified) {
+            gpsState.outOfBoundsNotified = true;
+            showToast('Вы не на территории РГРТУ');
+          }
+          const fallbackPt = gpsState.lastSvgPos || { x: (W || 1000) / 2, y: (H || 800) / 2 };
+          updateGpsPositionFromSvg(fallbackPt, accuracy, 'Вы не на территории РГРТУ (нажмите «Уточнить»)');
+        }
+      },
+      () => {
+        const { W, H } = currentSvgViewBox;
+        const fallbackPt = gpsState.lastSvgPos || { x: (W || 1000) / 2, y: (H || 800) / 2 };
+        updateGpsPositionFromSvg(fallbackPt, 15, 'Ручной режим по коридорам');
+        showToast('Спутниковый сигнал слабый — нажмите «Уточнить» и укажите точку на коридоре');
+      },
+      { enableHighAccuracy: true, maximumAge: 1500, timeout: 8000 }
+    );
+  } else {
+    const { W, H } = currentSvgViewBox;
+    updateGpsPositionFromSvg({ x: (W || 1000) / 2, y: (H || 800) / 2 }, 15, 'Ориентир по коридору');
+  }
+
+  if (useForRoute) {
+    const { W, H } = currentSvgViewBox;
+    if (!gpsState.snapped) {
+      updateGpsPositionFromSvg({ x: (W || 1000) / 2, y: (H || 800) / 2 }, 12, 'Старт по коридору');
+    }
+  }
+}
+
+function stopGpsTracking() {
+  gpsState.active = false;
+  gpsState.calibratingClick = false;
+  if (gpsState.watchId != null && 'geolocation' in navigator) {
+    navigator.geolocation.clearWatch(gpsState.watchId);
+    gpsState.watchId = null;
+  }
+  const gpsBtn = document.getElementById('map-gps-btn');
+  const banner = document.getElementById('map-gps-banner');
+  if (gpsBtn) gpsBtn.classList.remove('active', 'calibrating');
+  if (banner) banner.classList.add('hidden');
+  if (gpsLayer) gpsLayer.clearLayers();
+}
+
+function setupHybridGpsTracking() {
+  const togglePoiBtn = document.getElementById('map-toggle-poi-btn');
+  const gpsBtn = document.getElementById('map-gps-btn');
+  const refineBtn = document.getElementById('map-gps-refine-btn');
+  const closeBtn = document.getElementById('map-gps-close-btn');
+  const addPoiBtn = document.getElementById('map-add-poi-btn');
+
+  updatePoiToggleBtnUI();
+
+  if (togglePoiBtn) {
+    togglePoiBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePoiLayer();
+    });
+  }
+
+  function centerMapOnUserPosition() {
+    if (!gpsState.snapped || !map) return;
+    const { H } = currentSvgViewBox;
+    if (!H) return;
+    const pt = gpsState.snapped;
+    const targetLatLng = L.latLng(H - pt.y, pt.x);
+    if (gpsState.building && gpsState.building !== currentBuilding) {
+      currentBuilding = gpsState.building;
+    }
+    if (gpsState.floor != null && Number(gpsState.floor) !== Number(currentFloor)) {
+      showFloor(currentBuilding, Number(gpsState.floor));
+    }
+    const currentZoom = map.getZoom();
+    const targetZoom = Math.max(currentZoom, 1);
+    map.flyTo(targetLatLng, targetZoom, {
+      animate: true,
+      duration: 0.85,
+      easeLinearity: 0.25
+    });
+  }
+
+  if (gpsBtn) {
+    gpsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (gpsState.active) {
+        if (gpsState.snapped) {
+          centerMapOnUserPosition();
+          showToast('Перемещение к вашему местоположению');
+        } else {
+          showToast('Определяем координаты...');
+        }
+      } else {
+        startGpsTracking();
+        showToast('Включите Wi-Fi и Bluetooth на телефоне — браузер использует их для точной привязки к коридорам');
+      }
+    });
+  }
+
+  if (refineBtn) {
+    refineBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      gpsState.calibratingClick = true;
+      if (gpsBtn) gpsBtn.classList.add('calibrating');
+      showToast('Коснитесь коридора на карте, где вы сейчас находитесь');
+    });
+  }
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      stopGpsTracking();
+    });
+  }
+
+  if (addPoiBtn) {
+    addPoiBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!requireTelegramAuthPrompt('добавления полезных меток на карту')) return;
+      addingPoiMode = !addingPoiMode;
+      addPoiBtn.classList.toggle('active', addingPoiMode);
+      const mapEl = document.getElementById('map');
+      if (mapEl) mapEl.style.cursor = addingPoiMode ? 'crosshair' : '';
+      if (addingPoiMode) {
+        showToast('Нажмите на место на карте этажа, чтобы поставить метку (розетка, кофе, Wi-Fi)');
+      } else {
+        showToast('Режим добавления метки отменён');
+      }
+    });
+  }
+
+  map.on('click', (e) => {
+    const { H } = currentSvgViewBox;
+    if (!H || !e.latlng) return;
+    const svgX = e.latlng.lng;
+    const svgY = H - e.latlng.lat;
+
+    if (addingPoiMode) {
+      addingPoiMode = false;
+      if (addPoiBtn) addPoiBtn.classList.remove('active');
+      const mapEl = document.getElementById('map');
+      if (mapEl) mapEl.style.cursor = '';
+      openAddPoiMarkerModal(svgX, svgY);
+      return;
+    }
+
+    if (gpsState.active && gpsState.calibratingClick) {
+      gpsState.calibratingClick = false;
+      if (gpsBtn) gpsBtn.classList.remove('calibrating');
+      gpsState.lastSvgPos = null;
+      updateGpsPositionFromSvg({ x: svgX, y: svgY }, 3, 'Точка уточнена вручную');
+      showToast('Местоположение привязано к выбранному коридору');
+    }
+  });
 }
 
 // ================ СТАРТ ================
@@ -6485,29 +7890,30 @@ async function updateSmartNextClassPill() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
-  roomsMeta = await fetch('data/rooms.json').then(r => r.json());
-  await Promise.all([loadGraph(), loadScheduleDirectory()]);
 
+  // Сразу добавляем переключатель этажей на карту и инициализируем базовый UI без ожидания фоновых API
+  createFloorSwitcher().addTo(map);
+  updateFloorSwitcher();
   setupSearch();
   setupUserProfileAndTheme();
-  createFloorSwitcher().addTo(map);
   setupPanelHandle();
   setupMobilePanelSheet();
   setupMapRotation();
+  setupHybridGpsTracking();
   setupHotkeys();
 
-  const cornerTab = document.getElementById('schedule-corner-tab');
-  if (cornerTab) {
-    cornerTab.addEventListener('click', () => {
-      if (scheduleViewOpen) {
-        closeScheduleView();
-      } else {
-        openScheduleDirectory();
-      }
-    });
-  }
-
+  // Глобальный делегированный обработчик клика по кнопке/плашке заметки к паре
   document.addEventListener('click', (e) => {
+    const noteEl = e.target.closest('[data-note-key]');
+    if (noteEl) {
+      e.preventDefault();
+      e.stopPropagation();
+      const key = noteEl.dataset.noteKey;
+      const label = noteEl.dataset.noteLabel || '';
+      if (key) openLessonNoteModal(key, label);
+      return;
+    }
+
     if (scheduleWeekDropdownOpen && !e.target.closest('#schedule-week-trigger') && !e.target.closest('#schedule-week-dropdown')) {
       scheduleWeekDropdownOpen = false;
       const dd = document.getElementById('schedule-week-dropdown');
@@ -6524,6 +7930,30 @@ async function updateSmartNextClassPill() {
     }
   });
 
+  const cornerTab = document.getElementById('schedule-corner-tab');
+  if (cornerTab) {
+    cornerTab.addEventListener('click', () => {
+      if (scheduleViewOpen) {
+        closeScheduleView();
+      } else {
+        openScheduleDirectory();
+      }
+    });
+  }
+
+  try {
+    roomsMeta = await fetch('data/rooms.json').then(r => r.json());
+  } catch (e) {
+    console.warn('[init] Не удалось загрузить rooms.json:', e.message);
+    roomsMeta = {};
+  }
+
+  await loadGraph().catch(() => {});
+
+  // Фоновая загрузка справочника расписания и меток сообщества (не блокирует показ карты и переключателя этажей)
+  const dirPromise = loadScheduleDirectory().catch(() => {});
+  loadCommunityState().catch(() => {});
+
   syncModeUI();
   updateSmartNextClassPill();
 
@@ -6532,6 +7962,8 @@ async function updateSmartNextClassPill() {
   const entityTypeParam = params.get('type');
   const entityNameParam = params.get('name');
   const roomId = params.get('room');
+  const buildingParam = params.get('building');
+  const floorParam = params.get('floor');
   const fromParam = params.get('from');
   const toParam = params.get('to');
   const outdoorParam = params.get('outdoor');
@@ -6546,8 +7978,13 @@ async function updateSmartNextClassPill() {
     await navigateToRoom(roomId);
     isPoppingState = false;
   } else {
-    await showFloor('C', 1);
+    const startBld = (buildingParam && BUILDINGS[buildingParam]) ? buildingParam : 'C';
+    const startFlr = (floorParam !== null && BUILDINGS[startBld]?.floors?.[Number(floorParam)])
+      ? Number(floorParam)
+      : 1;
+    await showFloor(startBld, startFlr);
     if (viewParam === 'schedule') {
+      await dirPromise;
       if (entityTypeParam && entityNameParam) {
         await openEntitySchedule(entityTypeParam, entityNameParam);
       } else {

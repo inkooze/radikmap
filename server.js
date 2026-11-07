@@ -9,6 +9,7 @@ require('dotenv').config({ path: path.join(__dirname, '.env'), override: true })
 const {
   searchRoomsInMeta,
   formatWeekTriggerLabel,
+  normalizeLessonType,
   parseRaspSchedulePageHtml,
   buildGroupCheatSheet,
   findUpcomingLessonRemindersForUser,
@@ -201,13 +202,33 @@ function saveEntityCacheToDisk() {
   }, 400);
 }
 
+function getCurrentMoscowMondayISO() {
+  try {
+    const { todayISO } = getMoscowClockNow();
+    if (!todayISO) return '';
+    const d = new Date(`${todayISO}T12:00:00Z`);
+    if (Number.isNaN(d.getTime())) return '';
+    const dow = d.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+    const diffToMonday = dow === 0 ? -6 : (1 - dow);
+    const mon = new Date(d);
+    mon.setUTCDate(d.getUTCDate() + diffToMonday);
+    return mon.toISOString().slice(0, 10);
+  } catch (e) {
+    return '';
+  }
+}
+
 function getFormattedAvailableWeeks() {
   const rawWeeks = Array.isArray(raspDirectoryMeta.availableWeeks) ? raspDirectoryMeta.availableWeeks : [];
+  const currentMondayISO = getCurrentMoscowMondayISO();
+  const hasExactMondayMatch = Boolean(currentMondayISO && rawWeeks.some(w => w && w.value === currentMondayISO));
   return rawWeeks.map(w => ({
     value: w.value,
     rawLabel: w.label || w.rawLabel || '',
     label: formatWeekTriggerLabel(w.value, w.label || w.rawLabel || ''),
-    isDefault: Boolean(w.isDefault || w.isCurrent || /текущ/i.test(w.label || w.rawLabel || ''))
+    isDefault: hasExactMondayMatch
+      ? w.value === currentMondayISO
+      : Boolean(w.isDefault || w.isCurrent || /текущ/i.test(w.label || w.rawLabel || ''))
   }));
 }
 
@@ -848,6 +869,11 @@ async function fetchCompleteEntitySchedule(type, entityObj, dateParam = '') {
       const dateQuery = effectiveDate ? `&date=${encodeURIComponent(effectiveDate)}` : '';
       raspUrl = `https://rasp.rsreu.ru/schedule-frame/lecturer?lecturer=${encodeURIComponent(lMeta.raspId)}${dateQuery}`;
     }
+  } else if (type === 'classroom') {
+    if (entityObj.building && entityObj.classroom) {
+      const dateQuery = effectiveDate ? `&date=${encodeURIComponent(effectiveDate)}` : '';
+      raspUrl = `https://rasp.rsreu.ru/schedule-frame/classroom?building=${encodeURIComponent(entityObj.building)}&classroom=${encodeURIComponent(entityObj.classroom)}${dateQuery}`;
+    }
   }
 
   if (raspUrl) {
@@ -1118,7 +1144,7 @@ function parseScheduleWithCheerio(html, mondayISO) {
       $cell.children('div').each((_, el) => {
         const $div = $(el);
         const badge = $div.find('.schedule-lesson-type-badge');
-        const type = badge.length ? badge.text().trim() : '';
+        const type = normalizeLessonType(badge.length ? badge.text().trim() : '');
         const clone = $div.clone();
         clone.find('.schedule-lesson-type-badge').remove();
         const text = clone.text().replace(/\s+/g, ' ').trim();
@@ -2353,6 +2379,667 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // --- API: Админ-панель управления базой данных, пользователями, ботом, аудиториями и кэшем ---
+  if (url.pathname.startsWith('/api/admin/')) {
+    if (!isEditorAuthorized(req)) {
+      sendJsonCompressed(req, res, 401, { ok: false, error: 'Требуется авторизация администратора' });
+      return;
+    }
+
+    await userStore.init().catch(() => {});
+
+    if (url.pathname === '/api/admin/overview' && req.method === 'GET') {
+      userStore.cleanupExpired();
+      const usersList = Object.values(userStore.data.users || {})
+        .filter(Boolean)
+        .map(u => ({
+          id: u.id,
+          telegramId: u.telegramId || null,
+          firstName: u.firstName || '',
+          username: u.username || '',
+          role: u.role || 'student',
+          targetName: u.targetName || '',
+          notificationsEnabled: u.notificationsEnabled !== false,
+          theme: u.theme || 'system',
+          favorites: Array.isArray(u.favorites) ? u.favorites : [],
+          recentViews: u.recentViews && typeof u.recentViews === 'object' ? u.recentViews : {},
+          lastNotifiedSlot: u.lastNotifiedSlot || null,
+          notifiedSlots: Array.isArray(u.notifiedSlots) ? u.notifiedSlots : [],
+          lessonNotes: (u.lessonNotes && typeof u.lessonNotes === 'object') ? u.lessonNotes : {},
+          createdAt: u.createdAt || null,
+          updatedAt: u.updatedAt || null,
+          isTelegramLinked: Boolean(u.telegramId || u.username)
+        }))
+        .sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+
+      const authCodesList = Object.entries(userStore.data.authCodes || {}).map(([code, info]) => ({
+        code,
+        telegramId: info.telegramId || null,
+        firstName: info.firstName || '',
+        username: info.username || '',
+        expiresAt: info.expiresAt || 0
+      }));
+
+      const authSessionsList = Object.entries(userStore.data.authSessions || {}).map(([token, info]) => ({
+        token,
+        status: info.status || 'pending',
+        userId: info.userId || null,
+        expiresAt: info.expiresAt || 0
+      }));
+
+      const { getBotUsername } = (() => {
+        try { return require('./bot.js'); } catch (e) { return {}; }
+      })();
+
+      const modData = userStore.getModerationData();
+      sendJsonCompressed(req, res, 200, {
+        ok: true,
+        users: usersList,
+        authCodes: authCodesList,
+        authSessions: authSessionsList,
+        botTemplates: userStore.getBotTemplatesCatalog(),
+        moderation: modData,
+        mapMarkers: modData.markers,
+        roomReviews: modData.reviews,
+        descriptionSuggestions: modData.descriptions,
+        gpsConfig: userStore.getGpsConfig(),
+        cloud: userStore.getCloudStatus(),
+        bot: {
+          configured: Boolean((process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '').trim()),
+          username: typeof getBotUsername === 'function' ? getBotUsername() : ''
+        },
+        cache: {
+          ready: cacheStatus.ready,
+          warming: cacheStatus.warming,
+          progress: cacheStatus.progress,
+          lastUpdate: cacheStatus.lastUpdate,
+          roomsCachedCount: Object.keys(scheduleCache || {}).length,
+          entityCachedCount: Object.keys(entityScheduleCache || {}).length,
+          groupsCount: scheduleIndex.groups.size,
+          lecturersCount: scheduleIndex.lecturers.size,
+          departmentsCount: Object.keys(scheduleIndex.departmentRoomsIndex || {}).length,
+          availableWeeks: getFormattedAvailableWeeks(),
+          defaultWeek: getDefaultWeekValue(),
+          moscowClock: getMoscowClockNow()
+        },
+        roomsCount: Object.keys(roomsMeta || {}).length
+      });
+      return;
+    }
+
+    if (url.pathname === '/api/admin/bot/templates' && req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const mode = String(body.mode || 'save').trim();
+        const templateId = String(body.templateId || '').trim();
+
+        if (mode === 'save') {
+          const updatedTpl = userStore.saveBotTemplate(templateId, body.text || '');
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, {
+            ok: true,
+            template: updatedTpl,
+            botTemplates: userStore.getBotTemplatesCatalog()
+          });
+          return;
+        }
+
+        if (mode === 'reset') {
+          const updatedTpl = userStore.resetBotTemplate(templateId);
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, {
+            ok: true,
+            template: updatedTpl,
+            botTemplates: userStore.getBotTemplatesCatalog()
+          });
+          return;
+        }
+
+        if (mode === 'reset-all') {
+          const catalog = userStore.resetAllBotTemplates();
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, {
+            ok: true,
+            botTemplates: catalog
+          });
+          return;
+        }
+
+        if (mode === 'test-send') {
+          const { sendAdminTelegramMessage } = require('./bot.js');
+          const catalog = userStore.getBotTemplatesCatalog();
+          const tplMeta = catalog.find(t => t.id === templateId);
+          if (!tplMeta) throw new Error('Шаблон не найден');
+
+          const u = (body.userId && userStore.getUser(body.userId))
+            || (body.telegramId && userStore.getUserByTelegramId(body.telegramId))
+            || Object.values(userStore.data.users || {}).find(x => x && x.telegramId)
+            || null;
+          const tgId = Number(body.telegramId) || (u && u.telegramId) || null;
+          if (!tgId) {
+            throw new Error('Выберите получателя с Telegram ID во вкладке «Telegram-бот»');
+          }
+
+          const sampleVars = {};
+          for (const v of (tplMeta.variables || [])) {
+            sampleVars[v.key] = v.sample || '';
+          }
+          if (u) {
+            if (u.firstName) sampleVars.name = u.firstName;
+            if (u.username) sampleVars.username = u.username;
+            sampleVars.role = u.role === 'lecturer' ? 'Преподаватель' : 'Студент';
+            if (u.targetName) sampleVars.target = u.targetName;
+            sampleVars.notifStatus = u.notificationsEnabled !== false ? 'Включены ✅' : 'Выключены 🔕';
+          }
+
+          const rawToTest = typeof body.text === 'string' && body.text.trim() ? body.text : tplMeta.text;
+          const result = await sendAdminTelegramMessage(tgId, rawToTest, sampleVars);
+          sendJsonCompressed(req, res, result.ok ? 200 : 400, {
+            ...result,
+            telegramId: tgId
+          });
+          return;
+        }
+
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Неизвестное действие с шаблонами' });
+      } catch (e) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/admin/user/save' && req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        let userId = String(body.userId || body.id || '').trim();
+        const tgIdNum = body.telegramId ? Number(body.telegramId) : null;
+        if (!userId && tgIdNum) {
+          userId = `tg_${tgIdNum}`;
+        }
+        if (!userId) {
+          sendJsonCompressed(req, res, 400, { ok: false, error: 'Укажите ID пользователя или Telegram ID' });
+          return;
+        }
+        const patch = {
+          telegramId: tgIdNum,
+          firstName: body.firstName !== undefined ? String(body.firstName).trim() : undefined,
+          username: body.username !== undefined ? String(body.username).replace(/^@/, '').trim() : undefined,
+          role: body.role === 'lecturer' ? 'lecturer' : 'student',
+          targetName: body.targetName !== undefined ? String(body.targetName).trim() : undefined,
+          explicitClear: body.targetName === '',
+          notificationsEnabled: body.notificationsEnabled !== false,
+          theme: (body.theme === 'dark' || body.theme === 'light' || body.theme === 'system') ? body.theme : 'system',
+          favorites: Array.isArray(body.favorites) ? body.favorites : undefined,
+          recentViews: (body.recentViews && typeof body.recentViews === 'object' && !Array.isArray(body.recentViews)) ? body.recentViews : undefined,
+          resetNotifiedSlots: Boolean(body.resetNotifiedSlots)
+        };
+        if (body.firstName === '' && userStore.data.users[userId]) {
+          userStore.data.users[userId].firstName = '';
+        }
+        if (body.username === '' && userStore.data.users[userId]) {
+          userStore.data.users[userId].username = '';
+        }
+        userStore.upsertUser(userId, patch);
+        await userStore.pushToCloud([userId]).catch(() => {});
+        sendJsonCompressed(req, res, 200, { ok: true, user: userStore.data.users[userId] });
+      } catch (e) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/admin/user/delete' && req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const userId = String(body.userId || body.id || '').trim();
+        if (!userId) {
+          sendJsonCompressed(req, res, 400, { ok: false, error: 'Не указан userId' });
+          return;
+        }
+        await userStore.deleteUser(userId);
+        sendJsonCompressed(req, res, 200, { ok: true, deletedId: userId });
+      } catch (e) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/admin/auth/action' && req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const action = String(body.action || '').trim();
+        if (action === 'create-code') {
+          const telegramId = Number(body.telegramId);
+          if (!telegramId) throw new Error('Укажите числовой Telegram ID');
+          const code = userStore.createAuthCodeForTelegramUser({
+            telegramId,
+            firstName: body.firstName || '',
+            username: body.username || ''
+          });
+          await userStore.pushToCloud([`tg_${telegramId}`]).catch(() => {});
+          sendJsonCompressed(req, res, 200, { ok: true, code });
+          return;
+        }
+        if (action === 'delete-code') {
+          userStore.deleteAuthCode(body.code);
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, { ok: true });
+          return;
+        }
+        if (action === 'clear-codes') {
+          userStore.clearAuthCodes();
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, { ok: true });
+          return;
+        }
+        if (action === 'delete-session') {
+          userStore.deleteAuthSession(body.token);
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, { ok: true });
+          return;
+        }
+        if (action === 'clear-sessions') {
+          userStore.clearAuthSessions();
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, { ok: true });
+          return;
+        }
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Неизвестное действие' });
+      } catch (e) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/admin/cloud/sync' && req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const mode = String(body.mode || 'push').trim();
+        if (mode === 'push') {
+          const ok = await userStore.pushToCloud(Object.keys(userStore.data.users || {}));
+          sendJsonCompressed(req, res, 200, {
+            ok,
+            cloud: userStore.getCloudStatus(),
+            usersCount: Object.keys(userStore.data.users || {}).length
+          });
+          return;
+        }
+        if (mode === 'pull') {
+          const ok = await userStore.pullFromCloud(false);
+          sendJsonCompressed(req, res, 200, {
+            ok,
+            cloud: userStore.getCloudStatus(),
+            usersCount: Object.keys(userStore.data.users || {}).length
+          });
+          return;
+        }
+        if (mode === 'import') {
+          const importedCount = await userStore.importBackupData(body.backupData || {}, Boolean(body.replaceAll));
+          sendJsonCompressed(req, res, 200, {
+            ok: true,
+            importedCount,
+            cloud: userStore.getCloudStatus(),
+            usersCount: Object.keys(userStore.data.users || {}).length
+          });
+          return;
+        }
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Неизвестный режим синхронизации' });
+      } catch (e) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/admin/bot/send' && req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const mode = String(body.mode || 'direct').trim();
+        const {
+          sendAdminTelegramMessage,
+          checkUpcomingLessonNotifications,
+          buildLessonReminderVariables
+        } = require('./bot.js');
+
+        if (mode === 'run-check-now') {
+          await checkUpcomingLessonNotifications();
+          sendJsonCompressed(req, res, 200, {
+            ok: true,
+            candidatesCount: userStore.getUsersForNotifications().length
+          });
+          return;
+        }
+
+        if (mode === 'test-lesson') {
+          const userId = String(body.userId || '').trim();
+          const u = userStore.getUser(userId) || (body.telegramId ? userStore.getUserByTelegramId(body.telegramId) : null);
+          const tgId = (u && u.telegramId) || Number(body.telegramId) || null;
+          if (!tgId) {
+            sendJsonCompressed(req, res, 400, { ok: false, error: 'У пользователя не привязан числовой Telegram ID' });
+            return;
+          }
+
+          const role = (u && u.role) || 'student';
+          const targetName = String((u && u.targetName) || body.targetName || '546М').trim();
+          let sampleLesson = null;
+          let sampleDayName = '';
+
+          if (targetName) {
+            const entityType = role === 'lecturer' ? 'lecturer' : 'group';
+            let entityObj = entityType === 'lecturer'
+              ? (scheduleIndex.lecturers.get(targetName) || findMatchingLecturers(targetName)[0] || null)
+              : (scheduleIndex.groups.get(targetName.toUpperCase()) || scheduleIndex.groups.get(targetName) || null);
+            if (entityObj) {
+              const sched = await fetchCompleteEntitySchedule(entityType, entityObj).catch(() => null);
+              if (sched && Array.isArray(sched.days)) {
+                const { todayISO } = getMoscowClockNow();
+                const dayWithLessons = sched.days.find(d => d.date >= todayISO && d.lessons && d.lessons.length > 0)
+                  || sched.days.find(d => d.lessons && d.lessons.length > 0);
+                if (dayWithLessons && dayWithLessons.lessons.length > 0) {
+                  sampleLesson = dayWithLessons.lessons[0];
+                  sampleDayName = dayWithLessons.dayName || '';
+                }
+              }
+            }
+          }
+
+          if (!sampleLesson) {
+            sampleLesson = {
+              time: '09:55–11:30',
+              type: 'Лек.',
+              subject: 'Интеллектуальные информационные системы',
+              subgroup: '',
+              roomShort: '337',
+              floor: 3,
+              group: role === 'lecturer' ? '546М' : targetName,
+              lecturer: role === 'lecturer' ? targetName : 'проф. Скворцов С.В.'
+            };
+          }
+
+          const dayNote = sampleDayName ? ` (${sampleDayName})` : '';
+          const vars = buildLessonReminderVariables({
+            minutesLeft: 15,
+            dayNote,
+            role,
+            firstName: (u && u.firstName) || 'друг',
+            targetName,
+            lesson: sampleLesson
+          });
+
+          const rawTemplate = userStore.getBotTemplateRaw('lesson_reminder');
+          const result = await sendAdminTelegramMessage(tgId, rawTemplate, vars);
+          sendJsonCompressed(req, res, result.ok ? 200 : 400, {
+            ...result,
+            previewText: result.renderedText || rawTemplate
+          });
+          return;
+        }
+
+        if (mode === 'direct') {
+          const tgId = Number(body.telegramId);
+          const text = String(body.text || '').trim();
+          const u = userStore.getUserByTelegramId(tgId);
+          const userVars = {
+            name: (u && u.firstName) || 'друг',
+            username: (u && u.username) || '',
+            role: u && u.role === 'lecturer' ? 'Преподаватель' : 'Студент',
+            target: (u && u.targetName) || 'не выбрано',
+            notifStatus: u && u.notificationsEnabled !== false ? 'Включены ✅' : 'Выключены 🔕'
+          };
+          const result = await sendAdminTelegramMessage(tgId, text, userVars);
+          sendJsonCompressed(req, res, result.ok ? 200 : 400, result);
+          return;
+        }
+
+        if (mode === 'broadcast') {
+          const text = String(body.text || '').trim();
+          const audience = String(body.audience || 'all').trim(); // 'all' | 'student' | 'lecturer' | 'group'
+          const groupFilter = String(body.groupName || '').trim().toUpperCase();
+          if (!text) {
+            sendJsonCompressed(req, res, 400, { ok: false, error: 'Введите текст рассылки' });
+            return;
+          }
+
+          const allLinked = Object.values(userStore.data.users || {}).filter(u => u && u.telegramId);
+          const recipients = allLinked.filter(u => {
+            if (audience === 'student') return (u.role || 'student') === 'student';
+            if (audience === 'lecturer') return u.role === 'lecturer';
+            if (audience === 'group') return String(u.targetName || '').trim().toUpperCase() === groupFilter;
+            return true;
+          });
+
+          let sentCount = 0;
+          let failedCount = 0;
+          const errors = [];
+
+          for (const rec of recipients) {
+            const userVars = {
+              name: rec.firstName || 'друг',
+              username: rec.username || '',
+              role: rec.role === 'lecturer' ? 'Преподаватель' : 'Студент',
+              target: rec.targetName || 'не выбрано',
+              notifStatus: rec.notificationsEnabled !== false ? 'Включены ✅' : 'Выключены 🔕'
+            };
+            const r = await sendAdminTelegramMessage(rec.telegramId, text, userVars);
+            if (r.ok) sentCount++;
+            else {
+              failedCount++;
+              errors.push({ telegramId: rec.telegramId, error: r.error });
+            }
+          }
+
+          sendJsonCompressed(req, res, 200, {
+            ok: true,
+            totalRecipients: recipients.length,
+            sentCount,
+            failedCount,
+            errors: errors.slice(0, 10)
+          });
+          return;
+        }
+
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Неизвестный режим отправки' });
+      } catch (e) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/admin/rooms' && req.method === 'GET') {
+      sendJsonCompressed(req, res, 200, { ok: true, rooms: roomsMeta });
+      return;
+    }
+
+    if (url.pathname === '/api/admin/rooms/save' && req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const mode = String(body.mode || 'upsert').trim();
+        const roomsPath = path.join(ROOT, 'data', 'rooms.json');
+        const roomsBackupPath = path.join(ROOT, 'data', 'rooms.backup.json');
+
+        if (fs.existsSync(roomsPath)) {
+          try { fs.copyFileSync(roomsPath, roomsBackupPath); } catch (e) {}
+        }
+
+        if (mode === 'upsert') {
+          const roomId = String(body.roomId || '').trim();
+          const roomData = body.room || {};
+          if (!roomId || !roomData.name) {
+            throw new Error('Укажите ID и название помещения');
+          }
+          const existing = roomsMeta[roomId] || {};
+          const updatedRoom = {
+            ...existing,
+            name: String(roomData.name || '').trim(),
+            shortName: String(roomData.shortName || '').trim(),
+            building: String(roomData.building || existing.building || 'C').trim(),
+            floor: Number(roomData.floor !== undefined ? roomData.floor : (existing.floor ?? 1)),
+            type: String(roomData.type || existing.type || 'classroom').trim(),
+            description: String(roomData.description !== undefined ? roomData.description : (existing.description || '')).trim()
+          };
+          const clsVal = String(roomData.classroom !== undefined ? roomData.classroom : (existing.classroom || '')).trim();
+          if (clsVal) {
+            updatedRoom.classroom = clsVal;
+          } else {
+            delete updatedRoom.classroom;
+          }
+          roomsMeta[roomId] = updatedRoom;
+        } else if (mode === 'delete') {
+          const roomId = String(body.roomId || '').trim();
+          if (!roomId || !roomsMeta[roomId]) {
+            throw new Error('Помещение не найдено');
+          }
+          delete roomsMeta[roomId];
+        } else if (mode === 'bulk') {
+          if (!body.rooms || typeof body.rooms !== 'object' || Object.keys(body.rooms).length < 10) {
+            throw new Error('Некорректный объект rooms.json');
+          }
+          roomsMeta = body.rooms;
+        } else {
+          throw new Error('Неизвестный режим сохранения rooms.json');
+        }
+
+        fs.writeFileSync(roomsPath, JSON.stringify(roomsMeta, null, 2), 'utf8');
+        rebuildClassroomMap();
+        rebuildScheduleIndex();
+
+        sendJsonCompressed(req, res, 200, {
+          ok: true,
+          roomsCount: Object.keys(roomsMeta).length
+        });
+      } catch (e) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/admin/cache/action' && req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const action = String(body.action || '').trim();
+        if (action === 'warmup-rooms') {
+          warmUpCache();
+          sendJsonCompressed(req, res, 200, { ok: true, status: cacheStatus });
+          return;
+        }
+        if (action === 'clear-entities') {
+          entityScheduleCache = {};
+          try {
+            if (fs.existsSync(ENTITY_CACHE_FILE)) fs.unlinkSync(ENTITY_CACHE_FILE);
+          } catch (e) {}
+          sendJsonCompressed(req, res, 200, { ok: true, entityCachedCount: 0 });
+          return;
+        }
+        if (action === 'rebuild-index') {
+          normalizeScheduleCache();
+          rebuildScheduleIndex();
+          sendJsonCompressed(req, res, 200, {
+            ok: true,
+            groupsCount: scheduleIndex.groups.size,
+            lecturersCount: scheduleIndex.lecturers.size
+          });
+          return;
+        }
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Неизвестное действие с кэшем' });
+      } catch (e) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/admin/moderation/action' && req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const category = String(body.category || body.itemType || '').trim(); // 'marker' | 'review' | 'description'
+        const action = String(body.action || '').trim(); // 'approve' | 'reject' | 'delete' | 'create'
+        const id = String(body.id || '').trim();
+
+        if (category === 'marker') {
+          if (action === 'create') {
+            const marker = userStore.addCommunityMarker({
+              ...body.marker,
+              status: 'approved',
+              authorName: 'Администратор'
+            });
+            await userStore.pushToCloud([]).catch(() => {});
+            sendJsonCompressed(req, res, 200, { ok: true, marker, moderation: userStore.getModerationData() });
+            return;
+          }
+          if (action === 'delete') {
+            userStore.deleteCommunityMarker(id);
+            await userStore.pushToCloud([]).catch(() => {});
+            sendJsonCompressed(req, res, 200, { ok: true, moderation: userStore.getModerationData() });
+            return;
+          }
+          const status = action === 'approve' ? 'approved' : 'rejected';
+          const updated = userStore.moderateCommunityMarker(id, status, body.patch || {});
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, { ok: true, item: updated, moderation: userStore.getModerationData() });
+          return;
+        }
+
+        if (category === 'review') {
+          if (action === 'delete') {
+            userStore.deleteRoomReview(id);
+            await userStore.pushToCloud([]).catch(() => {});
+            sendJsonCompressed(req, res, 200, { ok: true, moderation: userStore.getModerationData() });
+            return;
+          }
+          const status = action === 'approve' ? 'approved' : 'rejected';
+          const updated = userStore.moderateRoomReview(id, status, body.patch || {});
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, { ok: true, item: updated, moderation: userStore.getModerationData() });
+          return;
+        }
+
+        if (category === 'description') {
+          if (action === 'delete') {
+            userStore.deleteDescriptionSuggestion(id);
+            await userStore.pushToCloud([]).catch(() => {});
+            sendJsonCompressed(req, res, 200, { ok: true, moderation: userStore.getModerationData() });
+            return;
+          }
+          const status = action === 'approve' ? 'approved' : 'rejected';
+          const updated = userStore.moderateDescriptionSuggestion(id, status, body.patch || {});
+          if (status === 'approved' && updated && updated.roomId && roomsMeta[updated.roomId]) {
+            roomsMeta[updated.roomId].description = String(updated.suggestedDescription || '').trim();
+            const roomsPath = path.join(ROOT, 'data', 'rooms.json');
+            try {
+              fs.writeFileSync(roomsPath, JSON.stringify(roomsMeta, null, 2), 'utf8');
+            } catch (e) {}
+          }
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, {
+            ok: true,
+            item: updated,
+            moderation: userStore.getModerationData(),
+            roomUpdated: Boolean(status === 'approved' && updated && roomsMeta[updated.roomId])
+          });
+          return;
+        }
+
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Неизвестная категория модерации' });
+      } catch (e) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/admin/gps/save' && req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const gpsConfig = userStore.saveGpsConfig(body.gpsConfig || body || {});
+        await userStore.pushToCloud([]).catch(() => {});
+        sendJsonCompressed(req, res, 200, { ok: true, gpsConfig });
+      } catch (e) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    sendJsonCompressed(req, res, 404, { ok: false, error: 'Admin endpoint not found' });
+    return;
+  }
+
   // --- API: сохранение graph.json (защищено токеном администратора) ---
   if ((url.pathname === '/api/graph/save' || url.pathname === '/api/save-graph') && req.method === 'POST') {
     if (url.pathname === '/api/graph/save' && !isEditorAuthorized(req)) {
@@ -2423,19 +3110,46 @@ const server = http.createServer(async (req, res) => {
       }))
       .sort((a, b) => collator.compare(a.name, b.name));
 
+    const classrooms = Object.entries(roomsMeta)
+      .filter(([, meta]) => Boolean(meta && meta.classroom))
+      .map(([roomId, meta]) => {
+        const shortName = getRoomScheduleShortName(meta);
+        const cachedEntry = scheduleCache[roomId];
+        const lessonsCount = cachedEntry && Array.isArray(cachedEntry.days)
+          ? cachedEntry.days.reduce((acc, d) => acc + (d.lessons ? d.lessons.length : 0), 0)
+          : 0;
+        return {
+          roomId,
+          name: shortName || meta.name,
+          shortName,
+          fullName: meta.name || `Аудитория ${shortName}`,
+          floor: meta.floor,
+          building: meta.building || 'C',
+          classroom: String(meta.classroom),
+          lessonsCount
+        };
+      })
+      .filter(c => {
+        if (!q) return true;
+        const hay = `${c.name} ${c.shortName} ${c.fullName} ауд аудитория ${c.floor} этаж`.toLowerCase().replace(/ё/g, 'е');
+        return hay.includes(q);
+      })
+      .sort((a, b) => collator.compare(a.shortName, b.shortName));
+
     sendJsonCompressed(req, res, 200, {
       ready: cacheStatus.ready,
       lecturers,
       groups,
+      classrooms,
       availableWeeks: getFormattedAvailableWeeks(),
       defaultWeek: getDefaultWeekValue()
     }, 'public, max-age=30');
     return;
   }
 
-  // --- API: полное расписание группы или преподавателя (с поддержкой выбора недели date) ---
+  // --- API: полное расписание группы, преподавателя или аудитории (с поддержкой выбора недели date) ---
   if (url.pathname === '/api/entity-schedule') {
-    const type = url.searchParams.get('type'); // 'lecturer' | 'group'
+    const type = url.searchParams.get('type'); // 'lecturer' | 'group' | 'classroom'
     const name = (url.searchParams.get('name') || '').trim();
     const dateParam = (url.searchParams.get('date') || '').trim();
     if (!type || !name) {
@@ -2479,6 +3193,57 @@ const server = http.createServer(async (req, res) => {
           faculty: resolveGroupFaculty(norm),
           rooms: new Set(),
           lessons: []
+        };
+      }
+    } else if (type === 'classroom') {
+      const cleanTarget = name.replace(/^(?:ауд\.?|аудитория)\s*/i, '').trim().toLowerCase();
+      let matchedRoomId = null;
+      let matchedMeta = null;
+      if (roomsMeta[name]) {
+        matchedRoomId = name;
+        matchedMeta = roomsMeta[name];
+      } else {
+        for (const [rId, m] of Object.entries(roomsMeta)) {
+          if (!m || !m.classroom) continue;
+          const sName = getRoomScheduleShortName(m).toLowerCase();
+          const fName = String(m.name || '').toLowerCase();
+          if (sName === cleanTarget || fName === cleanTarget || String(m.classroom) === cleanTarget) {
+            matchedRoomId = rId;
+            matchedMeta = m;
+            break;
+          }
+        }
+      }
+      if (matchedRoomId && matchedMeta) {
+        const shortName = getRoomScheduleShortName(matchedMeta);
+        const cachedRoom = scheduleCache[matchedRoomId];
+        const fallbackLessons = [];
+        if (cachedRoom && Array.isArray(cachedRoom.days)) {
+          for (const d of cachedRoom.days) {
+            for (const l of (d.lessons || [])) {
+              fallbackLessons.push({
+                ...l,
+                date: d.date,
+                dayName: d.dayName,
+                roomId: matchedRoomId,
+                roomShort: shortName,
+                floor: matchedMeta.floor,
+                building: matchedMeta.building || 'C'
+              });
+            }
+          }
+        }
+        entityObj = {
+          roomId: matchedRoomId,
+          name: shortName,
+          shortName,
+          fullName: matchedMeta.name || `Аудитория ${shortName}`,
+          regalia: `${matchedMeta.floor} этаж · Главный корпус`,
+          building: matchedMeta.building || 'C',
+          classroom: matchedMeta.classroom,
+          floor: matchedMeta.floor,
+          rooms: new Set([matchedRoomId]),
+          lessons: fallbackLessons
         };
       }
     }
@@ -2591,6 +3356,7 @@ const server = http.createServer(async (req, res) => {
 
   // --- API: Профиль пользователя ---
   if (url.pathname === '/api/user/profile' && req.method === 'GET') {
+    await userStore.init().catch(() => {});
     const userId = (url.searchParams.get('userId') || '').trim();
     const rawUser = userId ? userStore.getUser(userId) : null;
     const { getBotUsername } = (() => {
@@ -2606,6 +3372,7 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/api/user/profile' && req.method === 'POST') {
     try {
+      await userStore.init().catch(() => {});
       const rawBody = await readBody(req);
       const body = JSON.parse(rawBody || '{}');
       const userId = String(body.userId || '').trim();
@@ -2627,6 +3394,7 @@ const server = http.createServer(async (req, res) => {
       if (body.recentViews !== undefined) patch.recentViews = body.recentViews;
 
       const user = userStore.upsertUser(userId, patch);
+      await userStore.pushToCloud([userId]).catch(() => {});
       if (patch.notificationsEnabled === true || patch.targetName) {
         try {
           const { checkUpcomingLessonNotifications } = require('./bot.js');
@@ -2645,13 +3413,15 @@ const server = http.createServer(async (req, res) => {
   // --- API: Авторизация и привязка через Telegram ---
   if (url.pathname === '/api/user/auth-telegram' && req.method === 'POST') {
     try {
+      await userStore.init().catch(() => {});
       const rawBody = await readBody(req);
       const body = JSON.parse(rawBody || '{}');
       const mode = String(body.mode || 'code').trim();
       const mergePrefs = {
         role: body.role,
         targetName: body.targetName,
-        theme: body.theme
+        theme: body.theme,
+        targetUpdatedAt: Number(body.targetUpdatedAt) || 0
       };
 
       if (mode === 'webapp') {
@@ -2671,11 +3441,18 @@ const server = http.createServer(async (req, res) => {
           firstName: tgUser.first_name || tgUser.firstName || '',
           username: tgUser.username || ''
         };
-        if ((!existing || !existing.targetName) && mergePrefs.targetName) {
-          patch.role = mergePrefs.role;
-          patch.targetName = mergePrefs.targetName;
+        const isClientTargetNewer = mergePrefs.targetUpdatedAt > (Number(existing && existing.updatedAt) || 0);
+        if (((!existing || !existing.targetName) || isClientTargetNewer) && mergePrefs.targetName !== undefined) {
+          if (mergePrefs.targetName || isClientTargetNewer) {
+            patch.role = mergePrefs.role;
+            patch.targetName = mergePrefs.targetName;
+            patch.explicitClear = mergePrefs.targetName === '';
+          }
         }
         const user = userStore.upsertUser(userId, patch);
+        if (isClientTargetNewer) {
+          await userStore.pushToCloud([userId]).catch(() => {});
+        }
         sendJsonCompressed(req, res, 200, { ok: true, user });
         return;
       }
@@ -2763,14 +3540,156 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // --- API: Экспорт PNG (для скачивания и сохранения на мобильных устройствах и в Telegram Mini App) ---
+  // --- API: Личные заметки к парам (только для авторизованных через Telegram пользователей) ---
+  if (url.pathname === '/api/user/notes' && req.method === 'POST') {
+    try {
+      await userStore.init().catch(() => {});
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const userId = String(body.userId || '').trim();
+      const lessonKey = String(body.lessonKey || body.noteKey || '').trim();
+      const noteText = String(body.noteText !== undefined ? body.noteText : (body.text || ''));
+      if (!userId || !lessonKey) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Укажите userId и lessonKey' });
+        return;
+      }
+      const existing = userStore.getUser(userId);
+      if (!existing || (!existing.telegramId && !existing.username)) {
+        sendJsonCompressed(req, res, 403, { ok: false, error: 'Личные заметки доступны только после входа через Telegram' });
+        return;
+      }
+      const lessonNotes = userStore.saveUserLessonNote(userId, lessonKey, noteText);
+      sendJsonCompressed(req, res, 200, { ok: true, lessonNotes });
+    } catch (e) {
+      sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+    }
+    return;
+  }
+
+  // --- API: Пользовательские метки на карте, отзывы о буфетах/столовых, предложка описаний и настройки GPS ---
+  if (url.pathname === '/api/community/state' && req.method === 'GET') {
+    await userStore.init().catch(() => {});
+    const reqUserId = String(url.searchParams.get('userId') || '').trim();
+    let userReviews = [];
+    if (reqUserId) {
+      userReviews = userStore.getRoomReviews({ includeAll: true }).filter(r => r && r.authorId === reqUserId);
+    }
+    sendJsonCompressed(req, res, 200, {
+      ok: true,
+      markers: userStore.getApprovedMapMarkers(),
+      reviews: userStore.getApprovedRoomReviews(),
+      userReviews,
+      gpsConfig: userStore.getGpsConfig()
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/community/marker' && req.method === 'POST') {
+    try {
+      await userStore.init().catch(() => {});
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const isAdmin = isEditorAuthorized(req);
+      const userId = String(body.userId || '').trim();
+      const u = userId ? userStore.getUser(userId) : null;
+      if (!isAdmin && (!u || (!u.telegramId && !u.username))) {
+        sendJsonCompressed(req, res, 403, { ok: false, error: 'Предлагать метки могут только авторизованные через Telegram пользователи' });
+        return;
+      }
+      const marker = userStore.addCommunityMarker({
+        building: body.building || 'C',
+        floor: Number(body.floor ?? 1),
+        x: Number(body.x || 0),
+        y: Number(body.y || 0),
+        category: body.category || 'socket',
+        title: body.title || '',
+        description: body.description || '',
+        status: isAdmin ? 'approved' : 'pending',
+        authorId: isAdmin ? 'admin' : u.id,
+        authorName: isAdmin ? 'Администратор' : (u.firstName || (u.username ? `@${u.username}` : 'Студент'))
+      });
+      await userStore.pushToCloud([]).catch(() => {});
+      sendJsonCompressed(req, res, 200, {
+        ok: true,
+        marker,
+        approved: marker.status === 'approved'
+      });
+    } catch (e) {
+      sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/community/review' && req.method === 'POST') {
+    try {
+      await userStore.init().catch(() => {});
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const userId = String(body.userId || '').trim();
+      const roomId = String(body.roomId || '').trim();
+      const u = userId ? userStore.getUser(userId) : null;
+      if (!u || (!u.telegramId && !u.username)) {
+        sendJsonCompressed(req, res, 403, { ok: false, error: 'Оставлять оценки и отзывы могут только авторизованные через Telegram пользователи' });
+        return;
+      }
+      const meta = roomsMeta[roomId];
+      if (!meta || meta.type !== 'buffet') {
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Оценки и отзывы доступны только для столовых и буфетов' });
+        return;
+      }
+      const review = userStore.addRoomReview({
+        roomId,
+        roomName: meta.name || roomId,
+        rating: Number(body.rating || 5),
+        text: body.text || '',
+        status: 'pending',
+        authorId: u.id,
+        authorName: u.firstName || (u.username ? `@${u.username}` : 'Студент')
+      });
+      await userStore.pushToCloud([]).catch(() => {});
+      sendJsonCompressed(req, res, 200, { ok: true, review });
+    } catch (e) {
+      sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/community/description' && req.method === 'POST') {
+    try {
+      await userStore.init().catch(() => {});
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const userId = String(body.userId || '').trim();
+      const roomId = String(body.roomId || '').trim();
+      const u = userId ? userStore.getUser(userId) : null;
+      if (!u || (!u.telegramId && !u.username)) {
+        sendJsonCompressed(req, res, 403, { ok: false, error: 'Предлагать описание кабинета могут только авторизованные через Telegram пользователи' });
+        return;
+      }
+      const meta = roomsMeta[roomId];
+      if (!meta) {
+        sendJsonCompressed(req, res, 404, { ok: false, error: 'Кабинет не найден' });
+        return;
+      }
+      const suggestion = userStore.addDescriptionSuggestion({
+        roomId,
+        roomName: meta.name || roomId,
+        suggestedDescription: body.description || '',
+        status: 'pending',
+        authorId: u.id,
+        authorName: u.firstName || (u.username ? `@${u.username}` : 'Студент')
+      });
+      await userStore.pushToCloud([]).catch(() => {});
+      sendJsonCompressed(req, res, 200, { ok: true, suggestion });
+    } catch (e) {
+      sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+    }
+    return;
+  }
+
+  // --- API: Экспорт PNG (мгновенное сохранение без блокировки и без лишней подписи в Telegram) ---
   if (url.pathname === '/api/export-png' && req.method === 'POST') {
     try {
       const rawBody = await readBody(req);
       const body = JSON.parse(rawBody || '{}');
       const dataUrl = String(body.dataUrl || '');
       const filename = String(body.filename || 'schedule.png').replace(/[^a-zA-Z0-9а-яА-ЯёЁ._-]/g, '_');
-      const title = String(body.title || '');
       const m = dataUrl.match(/^data:image\/png;base64,(.+)$/);
       if (!m) {
         sendJsonCompressed(req, res, 400, { ok: false, error: 'Invalid PNG dataUrl' });
@@ -2785,21 +3704,23 @@ const server = http.createServer(async (req, res) => {
       const id = Math.random().toString(36).slice(2, 12) + now.toString(36);
       global.__exportedPngStore.set(id, { buf, filename, createdAt: now });
 
-      let sentToTelegram = false;
-      if (body.sendToTelegram && body.telegramId) {
-        try {
-          const { sendPngToTelegramUser } = require('./bot.js');
-          if (typeof sendPngToTelegramUser === 'function') {
-            sentToTelegram = await sendPngToTelegramUser(body.telegramId, buf, filename, title);
-          }
-        } catch (e) {}
+      const queuedToTelegram = Boolean(body.sendToTelegram && body.telegramId);
+      if (queuedToTelegram) {
+        setImmediate(async () => {
+          try {
+            const { sendPngToTelegramUser } = require('./bot.js');
+            if (typeof sendPngToTelegramUser === 'function') {
+              await sendPngToTelegramUser(body.telegramId, buf, filename);
+            }
+          } catch (e) {}
+        });
       }
 
       sendJsonCompressed(req, res, 200, {
         ok: true,
         id,
         url: `/api/export-png/${id}/${encodeURIComponent(filename)}`,
-        sentToTelegram
+        sentToTelegram: queuedToTelegram
       });
     } catch (e) {
       sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
@@ -2829,7 +3750,9 @@ const server = http.createServer(async (req, res) => {
 
   // --- API: Проверка приближающихся пар для рассылки уведомлений в Telegram ---
   if (url.pathname === '/api/internal/upcoming-notifications' && req.method === 'GET') {
+    await userStore.init().catch(() => {});
     const { todayISO, todayDayName, nowMin } = getMoscowClockNow();
+    const markSentImmediately = url.searchParams.get('markSent') !== '0';
 
     const candidates = userStore.getUsersForNotifications();
     const notifications = [];
@@ -2888,12 +3811,15 @@ const server = http.createServer(async (req, res) => {
       });
 
       for (const item of upcomingItems) {
-        userStore.upsertUser(u.id, { lastNotifiedSlot: item.slotKey });
+        if (markSentImmediately) {
+          userStore.upsertUser(u.id, { lastNotifiedSlot: item.slotKey });
+        }
         notifications.push({
           userId: u.id,
           telegramId: u.telegramId,
           role: u.role,
           targetName: u.targetName,
+          slotKey: item.slotKey,
           minutesLeft: item.minutesLeft,
           lesson: item.lesson
         });
@@ -2978,6 +3904,10 @@ server.listen(PORT, '0.0.0.0', () => {
     warmUpCache();
   }
   setInterval(() => { console.log('[cache] Плановое обновление…'); warmUpCache(); }, REFRESH_INTERVAL_MS);
+
+  userStore.init().catch(e => {
+    console.warn('[users/db] Ошибка инициализации облачной базы:', e.message);
+  });
 
   try {
     const { startBot } = require('./bot.js');

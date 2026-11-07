@@ -476,6 +476,18 @@ const RU_MONTHS_MAP = {
   'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12'
 };
 
+function normalizeLessonType(rawType) {
+  const s = String(rawType || '').trim();
+  if (!s) return '';
+  if (/конс/i.test(s)) return 'Конс.';
+  if (/зач/i.test(s)) return 'Зач.';
+  if (/экз/i.test(s)) return 'Экз.';
+  if (/^лек/i.test(s)) return 'Лек.';
+  if (/^(?:упр|прак|сем)/i.test(s)) return 'Упр.';
+  if (/^лаб/i.test(s)) return 'Лаб.';
+  return s;
+}
+
 /**
  * Parses a single schedule cell `<td>` from rasp.rsreu.ru (works for group, lecturer, or classroom tables).
  * Returns an array of lesson items in that cell (supporting multiple subgroups or multiple lessons in one slot).
@@ -492,7 +504,7 @@ function parseScheduleCellHtml(tdHtml, timeRange, context = {}) {
 
   for (const block of blocks) {
     const badgeMatch = block.match(/<span class="schedule-lesson-type-badge">[\s\S]*?<\/i>\s*([^<]+)<\/span>/i);
-    const type = badgeMatch ? stripTags(badgeMatch[1]) : '';
+    const type = normalizeLessonType(badgeMatch ? stripTags(badgeMatch[1]) : '');
 
     const lecturers = [];
     const lectRe = /<a[^>]*href="[^"]*\/schedule-frame\/lecturer\?[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
@@ -819,7 +831,7 @@ function formatLecturerCheatSheetTitle(lectShort, meta = {}) {
  */
 function buildGroupCheatSheet(days, resolveLecturerMeta) {
   const bySubject = new Map();
-  const TYPE_ORDER = ['Лек.', 'Упр.', 'Лаб.'];
+  const TYPE_ORDER = ['Лек.', 'Упр.', 'Лаб.', 'Конс.', 'Зач.', 'Экз.'];
 
   for (const day of (days || [])) {
     for (const lesson of (day.lessons || [])) {
@@ -965,6 +977,9 @@ function findUpcomingLessonRemindersForUser({
   }
   if (!todayDay || !Array.isArray(todayDay.lessons) || todayDay.lessons.length === 0) return [];
 
+  const notifiedSet = new Set(Array.isArray(user.notifiedSlots) ? user.notifiedSlots : []);
+  if (user.lastNotifiedSlot) notifiedSet.add(user.lastNotifiedSlot);
+
   const results = [];
   for (const lesson of todayDay.lessons) {
     const m = String(lesson.time || '').match(/^(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})/);
@@ -973,7 +988,8 @@ function findUpcomingLessonRemindersForUser({
     const diffMin = startMin - nowMin;
     if (diffMin >= minLead && diffMin <= maxLead) {
       const slotKey = `${todayISO || todayDay.date || todayDayName}|${lesson.time}|${lesson.subject}|${lesson.roomId || lesson.roomShort || ''}`;
-      if (user.lastNotifiedSlot === slotKey) continue;
+      if (notifiedSet.has(slotKey)) continue;
+      notifiedSet.add(slotKey);
       results.push({
         slotKey,
         minutesLeft: diffMin,
@@ -981,6 +997,7 @@ function findUpcomingLessonRemindersForUser({
           time: lesson.time,
           type: lesson.type || '',
           subject: lesson.subject || '',
+          subgroup: lesson.subgroup || '',
           roomShort: lesson.roomShort || '',
           floor: lesson.floor,
           group: lesson.group || '',
@@ -1018,6 +1035,81 @@ function detectUserTone(message) {
   return 'neutral';
 }
 
+/**
+ * Snaps an indoor (rawX, rawY) SVG coordinate to the nearest corridor segment or node
+ * on the given building and floor (Map-Matching).
+ */
+function snapPointToGraphCorridor(graph, building, floor, rawX, rawY, maxSnapDist = 350) {
+  const nodeMap = normalizeGraphNodes(graph);
+  const bCode = String(building || 'C');
+  const floorNum = Number(floor);
+  const floorNodes = Object.values(nodeMap).filter(
+    n => String(n.building || 'C') === bCode && Number(n.floor) === floorNum
+  );
+  if (floorNodes.length === 0) {
+    return { x: rawX, y: rawY, nearestNodeId: null, dist: 0, snapped: false };
+  }
+
+  let bestX = rawX;
+  let bestY = rawY;
+  let bestDist = Infinity;
+  let nearestNodeId = null;
+
+  for (const n of floorNodes) {
+    const d = Math.hypot((n.x || 0) - rawX, (n.y || 0) - rawY);
+    if (d < bestDist) {
+      bestDist = d;
+      bestX = n.x;
+      bestY = n.y;
+      nearestNodeId = n.id;
+    }
+  }
+
+  const edges = Array.isArray(graph && graph.edges) ? graph.edges : [];
+  for (const e of edges) {
+    const a = nodeMap[e.from];
+    const b = nodeMap[e.to];
+    if (!a || !b) continue;
+    if (String(a.building || 'C') !== bCode || String(b.building || 'C') !== bCode) continue;
+    if (Number(a.floor) !== floorNum || Number(b.floor) !== floorNum) continue;
+
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq < 1e-6) continue;
+    const t = Math.max(0, Math.min(1, ((rawX - a.x) * dx + (rawY - a.y) * dy) / lenSq));
+    const projX = a.x + t * dx;
+    const projY = a.y + t * dy;
+    const d = Math.hypot(projX - rawX, projY - rawY);
+    if (d < bestDist) {
+      bestDist = d;
+      bestX = Math.round(projX);
+      bestY = Math.round(projY);
+      const dA = Math.hypot(a.x - projX, a.y - projY);
+      const dB = Math.hypot(b.x - projX, b.y - projY);
+      nearestNodeId = dA <= dB ? a.id : b.id;
+    }
+  }
+
+  if (bestDist <= maxSnapDist) {
+    return {
+      x: Math.round(bestX),
+      y: Math.round(bestY),
+      nearestNodeId,
+      dist: Math.round(bestDist),
+      snapped: true
+    };
+  }
+
+  return {
+    x: Math.round(rawX),
+    y: Math.round(rawY),
+    nearestNodeId,
+    dist: Math.round(bestDist),
+    snapped: false
+  };
+}
+
 module.exports = {
   generateNextNodeId,
   dijkstra,
@@ -1030,10 +1122,12 @@ module.exports = {
   levenshtein,
   extractGroupTokens,
   formatWeekTriggerLabel,
+  normalizeLessonType,
   parseScheduleCellHtml,
   parseRaspSchedulePageHtml,
   buildGroupCheatSheet,
   computeCameraPivotRotationOffset,
   findUpcomingLessonRemindersForUser,
-  detectUserTone
+  detectUserTone,
+  snapPointToGraphCorridor
 };

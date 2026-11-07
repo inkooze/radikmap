@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isValidSnapshot(data) {
+      return data.keys().hasAll(['appKey', 'usersJson', 'authCodesJson', 'authSessionsJson', 'updatedAt'])
+        && data.appKey == 'radikmap-v1-store'
+        && data.usersJson is string
+        && data.usersJson.size() <= 950000
+        && data.authCodesJson is string
+        && data.authCodesJson.size() <= 200000
+        && data.authSessionsJson is string
+        && data.authSessionsJson.size() <= 200000
+        && (!('botTemplatesJson' in data) || (data.botTemplatesJson is string && data.botTemplatesJson.size() <= 200000))
+        && data.updatedAt is number;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['appKey', 'id', 'payloadJson', 'updatedAt'])
+        && data.appKey == 'radikmap-v1-store'
+        && data.id == userId
+        && data.payloadJson is string
+        && data.payloadJson.size() <= 100000
+        && data.updatedAt is number;
+    }
+
+    match /radikmap_state/{docId} {
+      allow get, list: if docId == 'user_store';
+      allow create, update: if docId == 'user_store' && isValidSnapshot(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /radikmap_users/{userId} {
+      allow get, list: if true;
+      allow create, update: if isValidUserProfile(request.resource.data, userId);
+      allow delete: if false;
+    }
+  }
+}

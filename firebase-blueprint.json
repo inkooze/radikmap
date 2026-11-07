@@ -1,0 +1,90 @@
+{
+  "entities": {
+    "UserStoreSnapshot": {
+      "title": "UserStoreSnapshot",
+      "description": "Persistent snapshot of RadikMap user profiles, Telegram auth codes, and browser auth sessions.",
+      "type": "object",
+      "properties": {
+        "appKey": {
+          "type": "string",
+          "description": "Application key identifier for validation"
+        },
+        "usersJson": {
+          "type": "string",
+          "description": "Serialized JSON map of user profiles"
+        },
+        "authCodesJson": {
+          "type": "string",
+          "description": "Serialized JSON map of active Telegram login codes"
+        },
+        "authSessionsJson": {
+          "type": "string",
+          "description": "Serialized JSON map of browser login sessions"
+        },
+        "botTemplatesJson": {
+          "type": "string",
+          "description": "Serialized JSON map of customizable Telegram bot message templates"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Epoch timestamp in milliseconds of last update"
+        }
+      },
+      "required": ["appKey", "usersJson", "authCodesJson", "authSessionsJson", "updatedAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Individual user profile synced with Telegram and RadikMap web app.",
+      "type": "object",
+      "properties": {
+        "appKey": {
+          "type": "string",
+          "description": "Application key identifier"
+        },
+        "id": {
+          "type": "string",
+          "description": "Unique user ID (e.g. tg_123456)"
+        },
+        "role": {
+          "type": "string",
+          "description": "User role: student or lecturer"
+        },
+        "targetName": {
+          "type": "string",
+          "description": "Selected study group or lecturer name"
+        },
+        "notificationsEnabled": {
+          "type": "boolean",
+          "description": "Whether 15-minute Telegram lesson reminders are enabled"
+        },
+        "lastNotifiedSlot": {
+          "type": "string",
+          "description": "Last notified lesson slot key to prevent duplicate notifications"
+        },
+        "payloadJson": {
+          "type": "string",
+          "description": "Full serialized user object JSON"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Last update timestamp in ms"
+        }
+      },
+      "required": ["appKey", "id", "payloadJson", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/radikmap_state/{docId}": {
+      "schema": {
+        "$ref": "#/entities/UserStoreSnapshot"
+      },
+      "description": "Stores the persistent UserStore state for RadikMap backend and Telegram bot."
+    },
+    "/radikmap_users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Stores individual user profiles keyed by userId."
+    }
+  }
+}

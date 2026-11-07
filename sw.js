@@ -1,9 +1,9 @@
-const CACHE_NAME = 'rgrtu-map-v1.2.9';
+const CACHE_NAME = 'rgrtu-map-v1.3.1';
 const PRECACHE_URLS = [
   '/',
   '/index.html',
-  '/css/style.css?v=1.2.9',
-  '/js/app.js?v=1.2.9',
+  '/css/style.css?v=1.3.1',
+  '/js/app.js?v=1.3.1',
   '/data/rooms.json',
   '/data/graph.json',
   '/data/floor0.svg',
