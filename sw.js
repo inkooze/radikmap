@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rgrtu-map-v1.4.2';
+const CACHE_NAME = 'rgrtu-map-v1.4.6';
 
 const LOCAL_PRECACHE_URLS = [
   '/',
@@ -7,6 +7,7 @@ const LOCAL_PRECACHE_URLS = [
   '/js/app.js',
   '/data/rooms.json',
   '/data/graph.json',
+  '/data/cache.json',
   '/data/floor0.svg',
   '/data/floor1.svg',
   '/data/floor2.svg',
@@ -14,7 +15,8 @@ const LOCAL_PRECACHE_URLS = [
   '/data/floor4.svg',
   '/manifest.json',
   '/icons/icon-192.svg',
-  '/icons/icon-512.svg'
+  '/icons/icon-512.svg',
+  '/api/schedule-directory'
 ];
 
 const CDN_PRECACHE_URLS = [
@@ -142,7 +144,72 @@ self.addEventListener('fetch', (event) => {
       return;
     }
 
-    // Для API данных расписания и комнат: Network-first с откатом на кэш
+    // Для API данных расписания и комнат: Network-first с откатом на кэш с точным поиском по query
+    const isScheduleApi =
+      url.pathname === '/api/schedule' ||
+      url.pathname === '/api/entity-schedule' ||
+      url.pathname === '/api/schedule-directory' ||
+      url.pathname === '/api/free-now';
+
+    if (isScheduleApi) {
+      event.respondWith(
+        fetch(event.request)
+          .then((response) => {
+            if (response && response.status === 200) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            }
+            return response;
+          })
+          .catch(async () => {
+            // 1. Точный поиск по URL с query-параметрами
+            const exact = await caches.match(event.request);
+            if (exact) return exact;
+
+            // 2. Если конкретная неделя не была закэширована, ищем любую сохранённую неделю этой же сущности
+            if (url.pathname === '/api/entity-schedule') {
+              const reqType = url.searchParams.get('type');
+              const reqName = url.searchParams.get('name');
+              if (reqType && reqName) {
+                const cache = await caches.open(CACHE_NAME);
+                const keys = await cache.keys();
+                for (const k of keys) {
+                  const u = new URL(k.url);
+                  if (
+                    u.pathname === '/api/entity-schedule' &&
+                    u.searchParams.get('type') === reqType &&
+                    u.searchParams.get('name') === reqName
+                  ) {
+                    const fallback = await cache.match(k);
+                    if (fallback) return fallback;
+                  }
+                }
+              }
+            }
+
+            // 3. Для расписания конкретной аудитории
+            if (url.pathname === '/api/schedule') {
+              const classroom = url.searchParams.get('classroom');
+              if (classroom) {
+                const cache = await caches.open(CACHE_NAME);
+                const keys = await cache.keys();
+                for (const k of keys) {
+                  const u = new URL(k.url);
+                  if (u.pathname === '/api/schedule' && u.searchParams.get('classroom') === classroom) {
+                    const fallback = await cache.match(k);
+                    if (fallback) return fallback;
+                  }
+                }
+              }
+            }
+
+            return await caches.match(event.request, { ignoreSearch: true });
+          })
+      );
+      return;
+    }
+
+    // Для остальных API запросов
     event.respondWith(
       fetch(event.request)
         .then((response) => {
@@ -152,7 +219,7 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         })
-        .catch(() => caches.match(event.request, { ignoreSearch: true }))
+        .catch(() => caches.match(event.request))
     );
   }
 });

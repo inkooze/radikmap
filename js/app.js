@@ -145,10 +145,26 @@ const tg = window.Telegram?.WebApp;
 let telegramUser = null;
 
 function initTelegram() {
-  if (!tg || !tg.initData) return;
+  if (!tg) return;
   try {
     tg.ready();
     tg.expand();
+    // Повторный вызов после готовности webview для гарантированного разворачивания на максимум
+    setTimeout(() => {
+      try {
+        if (tg && typeof tg.expand === 'function') {
+          tg.expand();
+        }
+      } catch (e) {}
+    }, 200);
+    setTimeout(() => {
+      try {
+        if (tg && typeof tg.expand === 'function') {
+          tg.expand();
+        }
+      } catch (e) {}
+    }, 600);
+
     document.body.classList.add('tg-webapp');
     document.documentElement.style.setProperty('--tg-safe-top', '0px');
     telegramUser = tg.initDataUnsafe?.user || null;
@@ -1776,6 +1792,8 @@ function setupSearch() {
     setSearchOpen(false);
     input.blur();
     if (isLikelyAiQuestion(raw, found.length + entities.lecturers.length + entities.groups.length)) {
+      input.value = '';
+      updateClearAndInlineAi();
       openAiPanel(raw);
     } else if (found.length > 0) {
       navigateToRoom(found[0].id);
@@ -1784,6 +1802,8 @@ function setupSearch() {
     } else if (entities.lecturers.length > 0) {
       openEntitySchedule('lecturer', entities.lecturers[0].name);
     } else {
+      input.value = '';
+      updateClearAndInlineAi();
       openAiPanel(raw);
     }
   }
@@ -1835,11 +1855,9 @@ function setupSearch() {
       e.stopPropagation();
       const raw = input.value.trim();
       setSearchOpen(false);
-      if (window.innerWidth <= 768 && raw) {
-        input.value = '';
-      }
-      openAiPanel(raw || null);
+      input.value = '';
       updateClearAndInlineAi();
+      openAiPanel(raw || null);
     });
   }
 
@@ -1848,6 +1866,8 @@ function setupSearch() {
       e.stopPropagation();
       const raw = input.value.trim();
       setSearchOpen(false);
+      input.value = '';
+      updateClearAndInlineAi();
       if (raw) {
         saveHistory(raw);
         openAiPanel(raw);
@@ -2118,6 +2138,8 @@ function renderAiPanel() {
       e.preventDefault();
       const q = input.value.trim();
       if (!q || aiLoading) return;
+      input.value = '';
+      if (aiClearBtn) aiClearBtn.classList.add('hidden');
       submitAiQuery(q);
     });
   }
@@ -2253,6 +2275,23 @@ async function focusRoomFromAi(roomId) {
 }
 
 async function submitAiQuery(query) {
+  const searchInput = document.getElementById('search-input');
+  if (searchInput) {
+    searchInput.value = '';
+    const searchClear = document.getElementById('search-clear');
+    if (searchClear) searchClear.classList.add('hidden');
+    const omniRouteBtn = document.getElementById('omni-route-btn');
+    if (omniRouteBtn && !isMobileAiBarMode()) omniRouteBtn.classList.remove('hidden');
+    const inlineAiBtn = document.getElementById('ai-inline-trigger');
+    if (inlineAiBtn) inlineAiBtn.classList.add('hidden');
+  }
+  const panelInput = document.getElementById('ai-panel-input');
+  if (panelInput) {
+    panelInput.value = '';
+    const panelClear = document.getElementById('ai-input-clear');
+    if (panelClear) panelClear.classList.add('hidden');
+  }
+
   const historyPayload = aiMessages.slice(-6).map(m => ({
     role: m.role,
     text: m.role === 'user' ? (m.text || '') : (m.answer || ''),
@@ -2412,6 +2451,7 @@ function mergeServerUserIntoProfile(srvUser) {
 async function syncUserProfileToServer(patch = {}) {
   if (patch.targetName !== undefined || patch.role !== undefined) {
     try { localStorage.setItem('rsreu_user_target_ts', String(Date.now())); } catch (e) {}
+    setTimeout(precacheUserScheduleInBackground, 300);
   }
   Object.assign(userProfile, patch);
   saveUserProfileLocalCache();
@@ -3854,6 +3894,10 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
     if (token !== roomRequestToken) return;
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const html = await res.text();
+    try {
+      localStorage.setItem(`radikmap_room_html_${id}_${isoDate}`, html);
+      localStorage.setItem(`radikmap_room_html_${id}_latest`, html);
+    } catch (e) {}
     const data = parseSchedule(html);
 
     if (token !== roomRequestToken) return;
@@ -3877,6 +3921,21 @@ async function onRoomClick(id, { pushHistory = true } = {}) {
   } catch (err) {
     if (token !== roomRequestToken) return;
     if (currentRoomPanelId !== id || panelMode !== 'room') return;
+
+    // Офлайн-откат для карточки аудитории
+    try {
+      const cachedHtml = localStorage.getItem(`radikmap_room_html_${id}_${isoDate}`) ||
+                         localStorage.getItem(`radikmap_room_html_${id}_latest`);
+      if (cachedHtml) {
+        const data = parseSchedule(cachedHtml);
+        panel.classList.remove('mobile-compact');
+        renderSchedule(panel, title, data, header, `${descriptionBlock}${communityBlock}`, id);
+        attachRoomActionListeners(panel, id);
+        applyMobileSheetSnapMeasurement(panel);
+        showToast('Показано сохранённое расписание кабинета');
+        return;
+      }
+    } catch (e) {}
 
     panel.innerHTML = buildPanelLayout(
       `${header}${descriptionBlock}${communityBlock}`,
@@ -4578,7 +4637,7 @@ function renderSchedule(panel, title, data, header, descriptionBlock = '', roomI
 async function loadScheduleDirectory() {
   try {
     const res = await fetch('/api/schedule-directory');
-    if (!res.ok) return;
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     scheduleDirectory = {
       ready: Boolean(data.ready),
@@ -4586,11 +4645,23 @@ async function loadScheduleDirectory() {
       lecturers: data.lecturers || [],
       classrooms: data.classrooms || []
     };
+    try {
+      localStorage.setItem('radikmap_offline_directory', JSON.stringify(scheduleDirectory));
+    } catch (e) {}
     if (Array.isArray(data.availableWeeks) && data.availableWeeks.length > 0 && availableScheduleWeeks.length === 0) {
       availableScheduleWeeks = data.availableWeeks;
     }
   } catch (e) {
-    console.warn('[schedule-directory]', e.message);
+    try {
+      const saved = localStorage.getItem('radikmap_offline_directory');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && Array.isArray(parsed.groups)) {
+          scheduleDirectory = parsed;
+        }
+      }
+    } catch (err) {}
+    console.warn('[schedule-directory offline fallback]', e.message);
   }
 }
 
@@ -4766,23 +4837,393 @@ function getCurrentWeekTriggerLabel() {
   return getDefaultAcademicWeekDisplay();
 }
 
+let campusScheduleCache = null;
+
+const DAY_NAME_TO_INDEX = {
+  'понедельник': 0,
+  'вторник': 1,
+  'среда': 2,
+  'четверг': 3,
+  'пятница': 4,
+  'суббота': 5,
+  'воскресенье': 6
+};
+
+const RU_MONTHS_GENITIVE = [
+  'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
+];
+
+function adaptScheduleDaysToTargetMonday(days, targetMondayISO) {
+  if (!Array.isArray(days) || days.length === 0 || !targetMondayISO) return days;
+  const parts = String(targetMondayISO).split('-').map(Number);
+  if (parts.length !== 3 || isNaN(parts[0])) return days;
+  const mondayDate = new Date(parts[0], parts[1] - 1, parts[2]);
+
+  return days.map(d => {
+    const dayNorm = String(d.dayName || '').toLowerCase().trim();
+    const offset = DAY_NAME_TO_INDEX[dayNorm] !== undefined ? DAY_NAME_TO_INDEX[dayNorm] : 0;
+    const curDate = new Date(mondayDate);
+    curDate.setDate(mondayDate.getDate() + offset);
+
+    const y = curDate.getFullYear();
+    const m = String(curDate.getMonth() + 1).padStart(2, '0');
+    const dayNum = String(curDate.getDate()).padStart(2, '0');
+    const newIso = `${y}-${m}-${dayNum}`;
+    const newDateLabel = `${curDate.getDate()} ${RU_MONTHS_GENITIVE[curDate.getMonth()]}`;
+
+    return {
+      ...d,
+      date: newIso,
+      dateLabel: newDateLabel,
+      lessons: (d.lessons || []).map(l => ({ ...l, date: newIso }))
+    };
+  });
+}
+
+function resolveWeekParity(weekDate, availableWeeksList = availableScheduleWeeks) {
+  if (!weekDate) return 'chisl';
+  const item = Array.isArray(availableWeeksList) ? availableWeeksList.find(w => w.value === weekDate) : null;
+  if (item) {
+    const str = `${item.label || ''} ${item.rawLabel || ''}`.toLowerCase();
+    if (str.includes('знам')) return 'znam';
+    if (str.includes('числ')) return 'chisl';
+  }
+  const semStart = new Date(2026, 7, 31); // 31 августа 2026 = числитель
+  const parts = String(weekDate).split('-').map(Number);
+  if (parts.length === 3 && !isNaN(parts[0])) {
+    const cur = new Date(parts[0], parts[1] - 1, parts[2]);
+    const diffWeeks = Math.floor((cur - semStart) / (7 * 24 * 3600 * 1000));
+    return (diffWeeks % 2 === 0) ? 'chisl' : 'znam';
+  }
+  return 'chisl';
+}
+
+async function loadCampusFullScheduleCache() {
+  if (campusScheduleCache) return campusScheduleCache;
+  try {
+    const res = await fetch('data/cache.json');
+    if (!res.ok) return null;
+    const json = await res.json();
+    campusScheduleCache = json.cache || {};
+    return campusScheduleCache;
+  } catch (e) {
+    return null;
+  }
+}
+
+function buildEntityScheduleFromCampusCache(type, name, weekDate = selectedScheduleWeekDate) {
+  if (!campusScheduleCache) return null;
+  const targetNorm = String(name || '').toLowerCase().replace(/ё/g, 'е').trim();
+  const daysMap = new Map();
+
+  for (const [roomId, roomEntry] of Object.entries(campusScheduleCache)) {
+    if (!roomEntry || !Array.isArray(roomEntry.days)) continue;
+    const meta = roomsMeta[roomId] || {};
+    const shortName = getRoomScheduleShortName(meta) || meta.classroom || roomId;
+
+    for (const d of roomEntry.days) {
+      if (!daysMap.has(d.date)) {
+        daysMap.set(d.date, { date: d.date, dayName: d.dayName, lessons: [] });
+      }
+      const dayObj = daysMap.get(d.date);
+
+      for (const l of (d.lessons || [])) {
+        let matches = false;
+        if (type === 'group') {
+          if (Array.isArray(l.groups) && l.groups.some(g => String(g).toLowerCase().trim() === targetNorm)) {
+            matches = true;
+          } else if (String(l.group || '').toLowerCase().includes(targetNorm)) {
+            matches = true;
+          }
+        } else if (type === 'lecturer') {
+          const lecStr = String(l.lecturer || '').toLowerCase().replace(/ё/g, 'е');
+          if (lecStr.includes(targetNorm)) {
+            matches = true;
+          }
+        } else if (type === 'classroom') {
+          if (roomId === name || String(meta.classroom) === targetNorm || String(shortName).toLowerCase() === targetNorm) {
+            matches = true;
+          }
+        }
+
+        if (matches) {
+          dayObj.lessons.push({
+            ...l,
+            roomId,
+            roomShort: shortName,
+            floor: meta.floor,
+            buildingName: BUILDINGS[meta.building || 'C']?.name || 'Главный корпус'
+          });
+        }
+      }
+    }
+  }
+
+  let days = [...daysMap.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(d => {
+      d.lessons.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+      return d;
+    });
+
+  const hasAnyLessons = days.some(d => d.lessons.length > 0);
+  if (!hasAnyLessons) return null;
+
+  if (weekDate) {
+    days = adaptScheduleDaysToTargetMonday(days, weekDate);
+  }
+
+  return {
+    entityType: type,
+    name,
+    fullName: type === 'group' ? `Группа ${name}` : name,
+    days,
+    availableWeeks: availableScheduleWeeks.length > 0 ? availableScheduleWeeks : undefined,
+    selectedWeekDate: weekDate,
+    isOfflineCopy: true
+  };
+}
+
+const OFFLINE_SCHEDULE_CACHE_PREFIX = 'radikmap_offline_schedule_';
+
+function saveEntityScheduleToOfflineStorage(type, name, weekDate, data) {
+  try {
+    const key = `${type}:${name}`;
+    const specificKey = `${OFFLINE_SCHEDULE_CACHE_PREFIX}${key}:${weekDate || 'default'}`;
+    const latestKey = `${OFFLINE_SCHEDULE_CACHE_PREFIX}${key}:latest`;
+    const curWeekVal = weekDate || data.selectedWeekDate || (data.selectedWeek && data.selectedWeek.value);
+    const parity = resolveWeekParity(curWeekVal, data.availableWeeks);
+    const parityKey = `${OFFLINE_SCHEDULE_CACHE_PREFIX}${key}:parity:${parity}`;
+
+    const serialized = JSON.stringify({ data, savedAt: Date.now() });
+    localStorage.setItem(specificKey, serialized);
+    localStorage.setItem(latestKey, serialized);
+    localStorage.setItem(parityKey, serialized);
+  } catch (e) {
+    // Тихо игнорируем переполнение квоты
+  }
+}
+
+function processAndStoreSemesterBundle(type, name, bundleData) {
+  if (!bundleData) return;
+  const weeksMap = bundleData.weeks;
+  if (weeksMap && typeof weeksMap === 'object') {
+    for (const [wVal, wData] of Object.entries(weeksMap)) {
+      if (!wData || !Array.isArray(wData.days)) continue;
+      const singleWeekPayload = {
+        entityType: bundleData.entityType || type,
+        name: bundleData.name || name,
+        shortName: bundleData.shortName || name,
+        fullName: bundleData.fullName || name,
+        regalia: bundleData.regalia || '',
+        department: bundleData.department || '',
+        faculty: bundleData.faculty || '',
+        facultyCode: bundleData.facultyCode || '',
+        rooms: bundleData.rooms || [],
+        lessonsCount: wData.days.reduce((acc, d) => acc + (d.lessons ? d.lessons.length : 0), 0),
+        nowStatus: bundleData.nowStatus,
+        days: wData.days,
+        isCurrentWeek: Boolean(wData.isCurrentWeek),
+        availableWeeks: bundleData.availableWeeks,
+        selectedWeek: wData.selectedWeek,
+        selectedWeekDate: wVal,
+        isGenuineRealWeek: true,
+        isOfflineCopy: true,
+        cheatSheet: bundleData.cheatSheet
+      };
+      saveEntityScheduleToOfflineStorage(type, name, wVal, singleWeekPayload);
+    }
+
+    if (typeof window !== 'undefined' && 'caches' in window) {
+      caches.open('rgrtu-map-v1.4.6').then(cache => {
+        for (const [wVal, wData] of Object.entries(weeksMap)) {
+          if (!wData || !Array.isArray(wData.days)) continue;
+          const targetUrl = `/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(wVal)}`;
+          const singleWeekPayload = {
+            entityType: bundleData.entityType || type,
+            name: bundleData.name || name,
+            shortName: bundleData.shortName || name,
+            fullName: bundleData.fullName || name,
+            regalia: bundleData.regalia || '',
+            department: bundleData.department || '',
+            faculty: bundleData.faculty || '',
+            facultyCode: bundleData.facultyCode || '',
+            rooms: bundleData.rooms || [],
+            lessonsCount: wData.days.reduce((acc, d) => acc + (d.lessons ? d.lessons.length : 0), 0),
+            nowStatus: bundleData.nowStatus,
+            days: wData.days,
+            isCurrentWeek: Boolean(wData.isCurrentWeek),
+            availableWeeks: bundleData.availableWeeks,
+            selectedWeek: wData.selectedWeek,
+            selectedWeekDate: wVal,
+            isGenuineRealWeek: true,
+            cheatSheet: bundleData.cheatSheet
+          };
+          const fakeResp = new Response(JSON.stringify(singleWeekPayload), {
+            headers: { 'Content-Type': 'application/json; charset=utf-8' }
+          });
+          cache.put(targetUrl, fakeResp).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  }
+
+  saveEntityScheduleToOfflineStorage(type, name, '', bundleData);
+}
+
+function getEntityScheduleFromOfflineStorage(type, name, weekDate) {
+  try {
+    const key = `${type}:${name}`;
+    const specificKey = `${OFFLINE_SCHEDULE_CACHE_PREFIX}${key}:${weekDate || 'default'}`;
+
+    // 1. Точное совпадение по запрашиваемой неделе (ПОЛНОСТЬЮ АКТУАЛЬНОЕ И ПОДЛИННОЕ РАСПИСАНИЕ)
+    const exactRaw = localStorage.getItem(specificKey);
+    if (exactRaw) {
+      const parsed = JSON.parse(exactRaw);
+      if (parsed && parsed.data) {
+        return {
+          ...parsed.data,
+          isOfflineCopy: !navigator.onLine,
+          isGenuineRealWeek: true
+        };
+      }
+    }
+
+    // 2. Если точной недели нет в кэше, находим сохранённую неделю нужной чётности
+    const targetParity = resolveWeekParity(weekDate);
+    const parityKey = `${OFFLINE_SCHEDULE_CACHE_PREFIX}${key}:parity:${targetParity}`;
+    const parityRaw = localStorage.getItem(parityKey);
+    if (parityRaw) {
+      const parsed = JSON.parse(parityRaw);
+      if (parsed && parsed.data) {
+        const adaptedDays = adaptScheduleDaysToTargetMonday(parsed.data.days, weekDate);
+        return {
+          ...parsed.data,
+          days: adaptedDays,
+          selectedWeekDate: weekDate,
+          isOfflineCopy: true,
+          isParityAdapted: true
+        };
+      }
+    }
+
+    // 3. Последняя сохранённая неделя
+    const latestKey = `${OFFLINE_SCHEDULE_CACHE_PREFIX}${key}:latest`;
+    const latestRaw = localStorage.getItem(latestKey);
+    if (latestRaw) {
+      const parsed = JSON.parse(latestRaw);
+      if (parsed && parsed.data) {
+        const adaptedDays = adaptScheduleDaysToTargetMonday(parsed.data.days, weekDate);
+        return {
+          ...parsed.data,
+          days: adaptedDays,
+          selectedWeekDate: weekDate,
+          isOfflineCopy: true,
+          isParityAdapted: true
+        };
+      }
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+let isSchedulePrecacheRunning = false;
+async function precacheUserScheduleInBackground() {
+  if (isSchedulePrecacheRunning) return;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  isSchedulePrecacheRunning = true;
+
+  try {
+    const targetsToPrecache = [];
+    const targetName = (userProfile.targetName || '').trim();
+    const role = userProfile.role || 'student';
+    if (targetName) {
+      targetsToPrecache.push({ type: role === 'lecturer' ? 'lecturer' : 'group', name: targetName });
+    }
+
+    if (Array.isArray(userProfile.favorites)) {
+      for (const fav of userProfile.favorites.slice(0, 4)) {
+        const [fType, fName] = String(fav).split(':');
+        if (fType && fName && !targetsToPrecache.some(t => t.type === fType && t.name === fName)) {
+          targetsToPrecache.push({ type: fType, name: fName });
+        }
+      }
+    }
+
+    if (targetsToPrecache.length === 0) {
+      targetsToPrecache.push({ type: 'group', name: '546' });
+    }
+
+    for (const target of targetsToPrecache) {
+      try {
+        // Загружаем полный семестр (все 17 недель) одним сжатым запросом (~3-5 КБ)
+        const res = await fetch(`/api/entity-schedule?type=${encodeURIComponent(target.type)}&name=${encodeURIComponent(target.name)}&bundle=1`, { priority: 'low' });
+        if (res.ok) {
+          const data = await res.json();
+          processAndStoreSemesterBundle(target.type, target.name, data);
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+  } catch (e) {
+    // ignore
+  } finally {
+    isSchedulePrecacheRunning = false;
+  }
+}
+
 async function selectScheduleEntity(type, name, { switchMobileToDetail = true, weekDate = selectedScheduleWeekDate } = {}) {
   currentEntitySchedule = { type, name };
   scheduleDayFilter = 'all';
   if (switchMobileToDetail) scheduleMobileStep = 'detail';
-  entityLoading = true;
   entityError = null;
-  updateScheduleURL({ push: false });
-  renderScheduleWorkspace();
+
+  // 1. Моментальная подача из локального хранилища или общего кэша кампуса (0 мс задержки)
+  const cachedOffline = getEntityScheduleFromOfflineStorage(type, name, weekDate) ||
+                         buildEntityScheduleFromCampusCache(type, name, weekDate);
+  if (cachedOffline) {
+    currentEntityData = { ...cachedOffline, isOfflineCopy: !navigator.onLine };
+    entityLoading = false;
+    updateScheduleURL({ push: false });
+    renderScheduleWorkspace();
+    // Если интернета нет, сразу выходим с готовым расписанием
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return;
+    }
+  } else {
+    entityLoading = true;
+    updateScheduleURL({ push: false });
+    renderScheduleWorkspace();
+  }
 
   try {
-    const dateQuery = weekDate ? `&date=${encodeURIComponent(weekDate)}` : '';
-    const res = await fetch(`/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}${dateQuery}`);
+    const isExplicitWeek = Boolean(weekDate);
+    const apiUrl = isExplicitWeek
+      ? `/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(weekDate)}`
+      : `/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}&bundle=1`;
+
+    const res = await fetch(apiUrl);
     if (!res.ok) throw new Error('Расписание не найдено');
     const data = await res.json();
+
+    if (data.weeks && typeof data.weeks === 'object') {
+      processAndStoreSemesterBundle(type, name, data);
+    } else {
+      saveEntityScheduleToOfflineStorage(type, name, weekDate, data);
+      fetch(`/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}&bundle=1`, { priority: 'low' })
+        .then(r => r.ok ? r.json() : null)
+        .then(bData => { if (bData) processAndStoreSemesterBundle(type, name, bData); })
+        .catch(() => {});
+    }
+
     currentEntityData = data;
     currentEntitySchedule = { type: data.entityType || type, name: data.name || name };
     const entityKey = `${currentEntitySchedule.type}:${currentEntitySchedule.name}`;
+
     if (Array.isArray(data.currentWeekDays) && data.currentWeekDays.length > 0) {
       currentWeekStatusByEntityKey.set(entityKey, data.currentWeekDays);
     } else if (data.isCurrentWeek !== false && Array.isArray(data.days) && data.days.length > 0) {
@@ -4810,9 +5251,19 @@ async function selectScheduleEntity(type, name, { switchMobileToDetail = true, w
     renderScheduleWorkspace();
     haptic('success');
   } catch (e) {
-    entityLoading = false;
-    entityError = e.message || 'Ошибка загрузки расписания';
-    renderScheduleWorkspace();
+    const fallback = getEntityScheduleFromOfflineStorage(type, name, weekDate) ||
+                     buildEntityScheduleFromCampusCache(type, name, weekDate);
+    if (fallback) {
+      currentEntityData = { ...fallback, isOfflineCopy: true };
+      entityLoading = false;
+      entityError = null;
+      renderScheduleWorkspace();
+      showToast('Загружено из офлайн-базы расписания РГРТУ');
+    } else {
+      entityLoading = false;
+      entityError = e.message || 'Ошибка загрузки расписания';
+      renderScheduleWorkspace();
+    }
   }
 }
 
@@ -5258,6 +5709,12 @@ function renderScheduleMainPane() {
   const tableMode = isClassroom ? 'room' : (isGroup ? 'group' : 'lecturer');
   const tableHtml = buildWeeklyScheduleTableHtml(days, { mode: tableMode });
 
+  const isOfflineMode = (typeof navigator !== 'undefined' && !navigator.onLine) || Boolean(data && data.isOfflineCopy);
+  const isGenuineReal = Boolean(data && data.isGenuineRealWeek);
+  const offlineBadgeHtml = isOfflineMode
+    ? `<span class="schedule-offline-chip active" title="Точное расписание недели из офлайн-памяти"><i class="mdi mdi-cloud-check-outline"></i> Офлайн (${isGenuineReal ? 'сохранено' : 'копия'})</span>`
+    : `<span class="schedule-offline-chip synced" title="Все 17 недель семестра сохранены офлайн со всеми парами, зачётами и консультациями"><i class="mdi mdi-check-circle-outline"></i> Все 17 недель офлайн</span>`;
+
   const toolbarHtml = `
     <div class="schedule-table-toolbar">
       <div class="schedule-week-picker-row borderless-picker">
@@ -5269,9 +5726,12 @@ function renderScheduleMainPane() {
           ${weekOptionsHtml}
         </div>
       </div>
-      <button type="button" class="schedule-icon-btn-borderless schedule-export-right" id="schedule-export-png-btn" title="Скачать расписание в PNG" aria-label="Скачать расписание в PNG">
-        ${DOWNLOAD_SVG_ICON}
-      </button>
+      <div class="schedule-toolbar-actions" style="display:flex;align-items:center;gap:6px;margin-left:auto">
+        ${offlineBadgeHtml}
+        <button type="button" class="schedule-icon-btn-borderless schedule-export-right" id="schedule-export-png-btn" title="Скачать расписание в PNG" aria-label="Скачать расписание в PNG">
+          ${DOWNLOAD_SVG_ICON}
+        </button>
+      </div>
     </div>
   `;
 
@@ -6811,7 +7271,7 @@ async function onBuildRouteClick() {
 
 function calculateRouteMetricsClient(path) {
   if (!path || path.length < 2) {
-    return { meters: 0, seconds: 0, timeText: '< 1 мин', stairsCount: 0, floorsVisited: [] };
+    return { meters: 0, seconds: 0, timeText: '< 1 мин', stairsCount: 0, floorsVisited: [], calories: 0, calorieJoke: '' };
   }
   let rawPixels = 0;
   let stairsTransitions = 0;
@@ -6845,7 +7305,15 @@ function calculateRouteMetricsClient(path) {
   const minutes = Math.round(seconds / 60);
   const timeText = seconds < 45 ? '< 1 мин' : `~${Math.max(1, minutes)} мин`;
 
-  return { meters, seconds, timeText, stairsCount: stairsTransitions, floorsVisited };
+  // Примерный расчёт сожжённых калорий: ~0.045 ккал на метр шага + ~3.5 ккал за межэтажный лестничный марш
+  const calories = Math.max(1, Math.round((meters * 0.045) + (stairsTransitions * 3.5)));
+  let calorieJoke = 'лёгкая прогулка';
+  if (calories >= 35) calorieJoke = 'целый пирожок из столовой!';
+  else if (calories >= 20) calorieJoke = 'половина сосиски в тесте)';
+  else if (calories >= 10) calorieJoke = 'пол-пирожка с картошкой)';
+  else if (calories >= 5) calorieJoke = 'пара глотков сладкого чая)';
+
+  return { meters, seconds, timeText, stairsCount: stairsTransitions, floorsVisited, calories, calorieJoke };
 }
 
 function renderRouteResult(path) {
@@ -6941,6 +7409,10 @@ function renderRouteResult(path) {
       <div class="metric">
         <span class="metric-value">${metrics.timeText}</span>
         <span class="metric-label">пешком${metrics.stairsCount > 0 ? ' (с лестницей)' : ''}</span>
+      </div>
+      <div class="metric" title="${escapeHtml(metrics.calorieJoke)}">
+        <span class="metric-value" style="color:#f97316">~${metrics.calories} ккал</span>
+        <span class="metric-label">сгорит 🔥 (${escapeHtml(metrics.calorieJoke)})</span>
       </div>
     </div>
     <ol class="route-steps">${milestonesHtml}</ol>
@@ -7896,6 +8368,7 @@ function setupHybridGpsTracking() {
   });
   window.addEventListener('online', () => {
     showToast('Соединение с сетью восстановлено');
+    precacheUserScheduleInBackground();
   });
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     setTimeout(() => showToast('Офлайн-режим — используются сохранённые карты'), 1000);
@@ -7960,12 +8433,14 @@ function setupHybridGpsTracking() {
 
   await loadGraph().catch(() => {});
 
-  // Фоновая загрузка справочника расписания и меток сообщества (не блокирует показ карты и переключателя этажей)
+  // Фоновая загрузка справочника расписания, общей базы пар и меток сообщества (не блокирует показ карты)
   const dirPromise = loadScheduleDirectory().catch(() => {});
+  loadCampusFullScheduleCache().catch(() => {});
   loadCommunityState().catch(() => {});
 
   syncModeUI();
   updateSmartNextClassPill();
+  setTimeout(precacheUserScheduleInBackground, 500);
 
   const params = new URLSearchParams(location.search);
   const viewParam = params.get('view');

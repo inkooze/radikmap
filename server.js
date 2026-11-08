@@ -780,47 +780,113 @@ function buildEntityScheduleResponse(entityType, entityObj, customDays = null, w
   };
 }
 
-async function ensureFourWeekGroupCache(groupName, raspId, availableWeeks, anchorDate) {
-  if (!raspId) return;
-  const weekValues = selectFourCycleWeekValues(availableWeeks, anchorDate);
+async function ensureAllSemesterWeeksCache(type, entityObj, availableWeeks) {
+  if (!entityObj) return;
+  const weeks = (Array.isArray(availableWeeks) && availableWeeks.length > 0)
+    ? availableWeeks
+    : getFormattedAvailableWeeks();
+  const weekValues = weeks.map(w => w.value).filter(Boolean);
+  if (weekValues.length === 0) return;
+
+  let raspUrlBuilder = null;
+  if (type === 'group') {
+    const groupRaspId = resolveGroupRaspId(entityObj.name);
+    if (groupRaspId) {
+      raspUrlBuilder = (wVal) => `https://rasp.rsreu.ru/schedule-frame/group?group=${encodeURIComponent(groupRaspId)}&date=${encodeURIComponent(wVal)}`;
+    }
+  } else if (type === 'lecturer') {
+    const lMeta = resolveLecturerMeta(entityObj.name);
+    if (lMeta && lMeta.raspId) {
+      raspUrlBuilder = (wVal) => `https://rasp.rsreu.ru/schedule-frame/lecturer?lecturer=${encodeURIComponent(lMeta.raspId)}&date=${encodeURIComponent(wVal)}`;
+    }
+  } else if (type === 'classroom') {
+    if (entityObj.building && entityObj.classroom) {
+      raspUrlBuilder = (wVal) => `https://rasp.rsreu.ru/schedule-frame/classroom?building=${encodeURIComponent(entityObj.building)}&classroom=${encodeURIComponent(entityObj.classroom)}&date=${encodeURIComponent(wVal)}`;
+    }
+  }
+
+  if (!raspUrlBuilder) return;
+
   const missingWeeks = weekValues.filter(wVal => {
-    const k = `group:${groupName}:${wVal}`;
+    const k = `${type}:${entityObj.name}:${wVal}`;
     const entry = entityScheduleCache[k];
     return !(entry && (Date.now() - entry.fetchedAt < ENTITY_CACHE_TTL_MS) && Array.isArray(entry.days) && entry.days.length > 0);
   });
   if (missingWeeks.length === 0) return;
 
-  await Promise.all(missingWeeks.map(async (wVal) => {
-    try {
-      const url = `https://rasp.rsreu.ru/schedule-frame/group?group=${encodeURIComponent(raspId)}&date=${encodeURIComponent(wVal)}`;
-      const resp = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; RSREUMap/1.2)',
-          'Accept': 'text/html,application/xhtml+xml',
-          'Accept-Language': 'ru-RU,ru;q=0.9'
-        },
-        signal: AbortSignal.timeout(5500)
-      });
-      if (!resp.ok) return;
-      const html = await resp.text();
-      const parsed = parseRaspSchedulePageHtml(html, {
-        entityType: 'group',
-        entityName: groupName,
-        classroomToRoomMap
-      });
-      if (!parsed.empty && Array.isArray(parsed.days) && parsed.days.length > 0) {
-        entityScheduleCache[`group:${groupName}:${wVal}`] = {
-          days: parsed.days,
-          availableWeeks: parsed.availableWeeks,
-          selectedWeek: parsed.selectedWeek,
-          fetchedAt: Date.now()
-        };
+  const BATCH_SIZE = 6;
+  let didUpdate = false;
+  for (let i = 0; i < missingWeeks.length; i += BATCH_SIZE) {
+    const chunk = missingWeeks.slice(i, i + BATCH_SIZE);
+    await Promise.all(chunk.map(async (wVal) => {
+      try {
+        const url = raspUrlBuilder(wVal);
+        const resp = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; RSREUMap/1.4)',
+            'Accept': 'text/html,application/xhtml+xml',
+            'Accept-Language': 'ru-RU,ru;q=0.9'
+          },
+          signal: AbortSignal.timeout(6000)
+        });
+        if (!resp.ok) return;
+        const html = await resp.text();
+        const parsed = parseRaspSchedulePageHtml(html, {
+          entityType: type,
+          entityName: entityObj.name,
+          classroomToRoomMap
+        });
+        if (!parsed.empty && Array.isArray(parsed.days) && parsed.days.length > 0) {
+          entityScheduleCache[`${type}:${entityObj.name}:${wVal}`] = {
+            days: parsed.days,
+            availableWeeks: parsed.availableWeeks,
+            selectedWeek: parsed.selectedWeek,
+            fetchedAt: Date.now()
+          };
+          didUpdate = true;
+        }
+      } catch (e) {
+        // Ignore individual network error
       }
-    } catch (e) {
-      // Ignore individual week fetch error
+    }));
+  }
+
+  if (didUpdate) {
+    saveEntityCacheToDisk();
+  }
+}
+
+async function fetchEntitySemesterBundle(type, entityObj) {
+  if (!entityObj) return null;
+  const availableWeeks = getFormattedAvailableWeeks();
+  await ensureAllSemesterWeeksCache(type, entityObj, availableWeeks);
+
+  const defaultWeek = getDefaultWeekValue();
+  const weeksMap = {};
+
+  for (const w of availableWeeks) {
+    const k = `${type}:${entityObj.name}:${w.value}`;
+    const entry = entityScheduleCache[k];
+    if (entry && Array.isArray(entry.days) && entry.days.length > 0) {
+      weeksMap[w.value] = {
+        days: entry.days,
+        selectedWeek: entry.selectedWeek || w,
+        isCurrentWeek: w.value === defaultWeek
+      };
     }
-  }));
-  saveEntityCacheToDisk();
+  }
+
+  const baseResponse = buildEntityScheduleResponse(type, entityObj, weeksMap[defaultWeek]?.days || null, {
+    availableWeeks,
+    selectedWeek: availableWeeks.find(w => w.value === defaultWeek) || availableWeeks[0],
+    isCurrentWeek: true
+  });
+
+  return {
+    ...baseResponse,
+    weeks: weeksMap,
+    isCompleteSemesterBundle: true
+  };
 }
 
 /**
@@ -836,18 +902,9 @@ async function fetchCompleteEntitySchedule(type, entityObj, dateParam = '') {
   const currentWeekCacheKey = `${type}:${entityObj.name}:${defaultWeek || 'current'}`;
   const currentWeekCachedDays = entityScheduleCache[currentWeekCacheKey]?.days || null;
 
-  const groupRaspId = type === 'group' ? resolveGroupRaspId(entityObj.name) : null;
-
   const cached = entityScheduleCache[cacheKey];
   if (cached && (Date.now() - cached.fetchedAt < ENTITY_CACHE_TTL_MS) && Array.isArray(cached.days) && cached.days.length > 0) {
-    if (type === 'group' && groupRaspId) {
-      await ensureFourWeekGroupCache(
-        entityObj.name,
-        groupRaspId,
-        cached.availableWeeks || getFormattedAvailableWeeks(),
-        defaultWeek || effectiveDate
-      );
-    }
+    ensureAllSemesterWeeksCache(type, entityObj, cached.availableWeeks || getFormattedAvailableWeeks()).catch(() => {});
     return buildEntityScheduleResponse(type, entityObj, cached.days, {
       availableWeeks: cached.availableWeeks,
       selectedWeek: cached.selectedWeek,
@@ -859,6 +916,7 @@ async function fetchCompleteEntitySchedule(type, entityObj, dateParam = '') {
 
   let raspUrl = null;
   if (type === 'group') {
+    const groupRaspId = resolveGroupRaspId(entityObj.name);
     if (groupRaspId) {
       const dateQuery = effectiveDate ? `&date=${encodeURIComponent(effectiveDate)}` : '';
       raspUrl = `https://rasp.rsreu.ru/schedule-frame/group?group=${encodeURIComponent(groupRaspId)}${dateQuery}`;
@@ -880,7 +938,7 @@ async function fetchCompleteEntitySchedule(type, entityObj, dateParam = '') {
     try {
       const resp = await fetch(raspUrl, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; RSREUMap/1.2)',
+          'User-Agent': 'Mozilla/5.0 (compatible; RSREUMap/1.4)',
           'Accept': 'text/html,application/xhtml+xml',
           'Accept-Language': 'ru-RU,ru;q=0.9'
         },
@@ -908,14 +966,7 @@ async function fetchCompleteEntitySchedule(type, entityObj, dateParam = '') {
             fetchedAt: Date.now()
           };
           saveEntityCacheToDisk();
-          if (type === 'group' && groupRaspId) {
-            await ensureFourWeekGroupCache(
-              entityObj.name,
-              groupRaspId,
-              parsed.availableWeeks || getFormattedAvailableWeeks(),
-              defaultWeek || effectiveDate
-            );
-          }
+          ensureAllSemesterWeeksCache(type, entityObj, parsed.availableWeeks || getFormattedAvailableWeeks()).catch(() => {});
           return buildEntityScheduleResponse(type, entityObj, parsed.days, {
             availableWeeks: parsed.availableWeeks,
             selectedWeek: parsed.selectedWeek,
@@ -3152,6 +3203,7 @@ const server = http.createServer(async (req, res) => {
     const type = url.searchParams.get('type'); // 'lecturer' | 'group' | 'classroom'
     const name = (url.searchParams.get('name') || '').trim();
     const dateParam = (url.searchParams.get('date') || '').trim();
+    const isBundle = url.searchParams.get('bundle') === '1' || url.searchParams.get('all') === '1';
     if (!type || !name) {
       sendJsonCompressed(req, res, 400, { error: 'Missing type or name' });
       return;
@@ -3250,6 +3302,12 @@ const server = http.createServer(async (req, res) => {
 
     if (!entityObj) {
       sendJsonCompressed(req, res, 404, { error: 'Расписание не найдено' });
+      return;
+    }
+
+    if (isBundle) {
+      const payload = await fetchEntitySemesterBundle(type, entityObj);
+      sendJsonCompressed(req, res, 200, payload);
       return;
     }
 
