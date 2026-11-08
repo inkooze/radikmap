@@ -7891,6 +7891,16 @@ function setupHybridGpsTracking() {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 
+  window.addEventListener('offline', () => {
+    showToast('Офлайн-режим — используются сохранённые карты');
+  });
+  window.addEventListener('online', () => {
+    showToast('Соединение с сетью восстановлено');
+  });
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    setTimeout(() => showToast('Офлайн-режим — используются сохранённые карты'), 1000);
+  }
+
   // Сразу добавляем переключатель этажей на карту и инициализируем базовый UI без ожидания фоновых API
   createFloorSwitcher().addTo(map);
   updateFloorSwitcher();

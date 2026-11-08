@@ -1,9 +1,10 @@
-const CACHE_NAME = 'rgrtu-map-v1.3.1';
-const PRECACHE_URLS = [
+const CACHE_NAME = 'rgrtu-map-v1.4.2';
+
+const LOCAL_PRECACHE_URLS = [
   '/',
   '/index.html',
-  '/css/style.css?v=1.3.1',
-  '/js/app.js?v=1.3.1',
+  '/css/style.css',
+  '/js/app.js',
   '/data/rooms.json',
   '/data/graph.json',
   '/data/floor0.svg',
@@ -16,9 +17,31 @@ const PRECACHE_URLS = [
   '/icons/icon-512.svg'
 ];
 
+const CDN_PRECACHE_URLS = [
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+  'https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css',
+  'https://telegram.org/js/telegram-web-app.js'
+];
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS)).catch(() => {})
+    caches.open(CACHE_NAME).then(async (cache) => {
+      // Кэшируем локальные файлы
+      await Promise.allSettled(
+        LOCAL_PRECACHE_URLS.map((url) => cache.add(url).catch((err) => console.warn('[sw] Precache local failed:', url, err)))
+      );
+      // Кэшируем внешние CDN зависимости (Leaflet, иконки, Telegram WebApp)
+      await Promise.allSettled(
+        CDN_PRECACHE_URLS.map((url) =>
+          fetch(url, { mode: 'cors' })
+            .then((res) => {
+              if (res.ok) return cache.put(url, res);
+            })
+            .catch(() => {})
+        )
+      );
+    })
   );
   self.skipWaiting();
 });
@@ -39,20 +62,9 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin) return;
 
-  // Network-first with offline cache fallback for HTML, JS, CSS, JSON data, and schedule APIs
-  const isAppCodeOrApi =
-    url.pathname === '/' ||
-    url.pathname.endsWith('.html') ||
-    url.pathname.endsWith('.js') ||
-    url.pathname.endsWith('.css') ||
-    url.pathname.endsWith('.json') ||
-    url.pathname.startsWith('/api/schedule') ||
-    url.pathname.startsWith('/api/entity-schedule') ||
-    url.pathname.startsWith('/api/free-rooms');
-
-  if (isAppCodeOrApi) {
+  // 1. Навигационные запросы (открытие главной страницы браузером)
+  if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
@@ -62,25 +74,86 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         })
-        .catch(() => caches.match(event.request))
+        .catch(async () => {
+          // При отсутствии интернета открываем закэшированную оболочку index.html
+          return (
+            (await caches.match(event.request, { ignoreSearch: true })) ||
+            (await caches.match('/index.html')) ||
+            (await caches.match('/'))
+          );
+        })
     );
     return;
   }
 
-  // Stale-while-revalidate for heavy SVG floor plans and static data
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const clone = networkResponse.clone();
+  // 2. Внешние CDN библиотеки (Leaflet, шрифты, иконки MDI, Telegram WebApp)
+  const isCdn =
+    url.hostname === 'unpkg.com' ||
+    url.hostname === 'cdn.jsdelivr.net' ||
+    url.hostname === 'telegram.org' ||
+    url.hostname.includes('fonts.googleapis.com') ||
+    url.hostname.includes('fonts.gstatic.com');
+
+  if (isCdn) {
+    event.respondWith(
+      caches.match(event.request, { ignoreSearch: true }).then((cachedResponse) => {
+        if (cachedResponse) return cachedResponse;
+        return fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              const clone = networkResponse.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            }
+            return networkResponse;
+          })
+          .catch(() => cachedResponse);
+      })
+    );
+    return;
+  }
+
+  // 3. Запросы к нашему домену (JS, CSS, SVG, JSON, API)
+  if (url.origin === self.location.origin) {
+    const isStaticAsset =
+      url.pathname.endsWith('.js') ||
+      url.pathname.endsWith('.css') ||
+      url.pathname.endsWith('.svg') ||
+      url.pathname.endsWith('.json') ||
+      url.pathname.endsWith('.ttf') ||
+      url.pathname.endsWith('.png');
+
+    if (isStaticAsset) {
+      // Stale-while-revalidate с игнорированием версионных хэшей в query (?v=...)
+      event.respondWith(
+        caches.match(event.request, { ignoreSearch: true }).then((cachedResponse) => {
+          const fetchPromise = fetch(event.request)
+            .then((networkResponse) => {
+              if (networkResponse && networkResponse.status === 200) {
+                const clone = networkResponse.clone();
+                caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+              }
+              return networkResponse;
+            })
+            .catch(() => cachedResponse);
+
+          return cachedResponse || fetchPromise;
+        })
+      );
+      return;
+    }
+
+    // Для API данных расписания и комнат: Network-first с откатом на кэш
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
           }
-          return networkResponse;
+          return response;
         })
-        .catch(() => cachedResponse);
-
-      return cachedResponse || fetchPromise;
-    })
-  );
+        .catch(() => caches.match(event.request, { ignoreSearch: true }))
+    );
+  }
 });
+
