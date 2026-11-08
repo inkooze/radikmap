@@ -5036,7 +5036,7 @@ function processAndStoreSemesterBundle(type, name, bundleData) {
     }
 
     if (typeof window !== 'undefined' && 'caches' in window) {
-      caches.open('rgrtu-map-v1.4.6').then(cache => {
+      caches.open('rgrtu-map-v1.4.7').then(cache => {
         for (const [wVal, wData] of Object.entries(weeksMap)) {
           if (!wData || !Array.isArray(wData.days)) continue;
           const targetUrl = `/api/entity-schedule?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(wVal)}`;

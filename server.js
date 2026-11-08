@@ -2382,7 +2382,10 @@ function sendJsonCompressed(req, res, statusCode, payloadObj, cacheControl = 'no
   const acceptEncoding = req.headers['accept-encoding'] || '';
   const headers = {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': cacheControl
+    'Cache-Control': cacheControl,
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With'
   };
   if (raw.length > 1024 && acceptEncoding.includes('gzip')) {
     zlib.gzip(Buffer.from(raw, 'utf8'), (err, compressed) => {
@@ -3923,6 +3926,7 @@ const server = http.createServer(async (req, res) => {
       const headers = {
         'Content-Type': contentType,
         'Cache-Control': cacheControl,
+        'Access-Control-Allow-Origin': '*',
         ETag: etag
       };
 

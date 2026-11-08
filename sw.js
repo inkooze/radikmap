@@ -1,10 +1,17 @@
-const CACHE_NAME = 'rgrtu-map-v1.4.6';
+const CACHE_NAME = 'rgrtu-map-v1.4.7';
 
 const LOCAL_PRECACHE_URLS = [
   '/',
   '/index.html',
   '/css/style.css',
   '/js/app.js',
+  '/vendor/leaflet/leaflet.css',
+  '/vendor/leaflet/leaflet.js',
+  '/vendor/mdi/css/materialdesignicons.min.css',
+  '/vendor/mdi/fonts/materialdesignicons-webfont.woff2',
+  '/vendor/telegram/telegram-web-app.js',
+  '/css/fonts/Onest-Cyrillic.woff2',
+  '/css/fonts/Onest-Latin.woff2',
   '/data/rooms.json',
   '/data/graph.json',
   '/data/cache.json',
@@ -19,29 +26,14 @@ const LOCAL_PRECACHE_URLS = [
   '/api/schedule-directory'
 ];
 
-const CDN_PRECACHE_URLS = [
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
-  'https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css',
-  'https://telegram.org/js/telegram-web-app.js'
-];
+const CDN_PRECACHE_URLS = [];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
-      // Кэшируем локальные файлы
+      // Кэшируем локальные файлы без зависимости от сторонних CDN
       await Promise.allSettled(
         LOCAL_PRECACHE_URLS.map((url) => cache.add(url).catch((err) => console.warn('[sw] Precache local failed:', url, err)))
-      );
-      // Кэшируем внешние CDN зависимости (Leaflet, иконки, Telegram WebApp)
-      await Promise.allSettled(
-        CDN_PRECACHE_URLS.map((url) =>
-          fetch(url, { mode: 'cors' })
-            .then((res) => {
-              if (res.ok) return cache.put(url, res);
-            })
-            .catch(() => {})
-        )
       );
     })
   );
