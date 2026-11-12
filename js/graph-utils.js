@@ -579,26 +579,54 @@ function parseScheduleCellHtml(tdHtml, timeRange, context = {}) {
     let roomId = null;
     let roomShort = '';
     let roomFloor = null;
-    let buildingName = '';
+    let building = 'C';
+    let buildingName = 'Главный корпус';
+
+    const BUILDING_CODE_NAMES = {
+      C: 'Главный корпус',
+      L: 'Лабораторный корпус',
+      B: 'Бизнес-инкубатор',
+      F: 'Первый корпус'
+    };
+    const normalizeBuildingLetter = (rawLetter) => {
+      const ch = String(rawLetter || '').trim().toUpperCase();
+      if (ch === 'L' || ch === 'Л') return 'L';
+      if (ch === 'B' || ch === 'В') return 'B';
+      if (ch === 'F' || ch === 'Ф') return 'F';
+      return 'C';
+    };
 
     if (classrooms.length > 0) {
       const firstCls = classrooms[0];
-      const cleanLabel = firstCls.label ? firstCls.label.replace(/\s+[CBFLСВФЛ]$/i, '').trim() : '';
+      const rawLbl = String(firstCls.label || '').trim();
+      const bldMatch = rawLbl.match(/\s+([CBFLСВФЛ])$/i);
+      const cleanLabel = rawLbl ? rawLbl.replace(/\s+[CBFLСВФЛ]$/i, '').trim() : '';
       const mapped = firstCls.classroomId ? classroomToRoomMap[String(firstCls.classroomId)] : null;
+      if (bldMatch) {
+        building = normalizeBuildingLetter(bldMatch[1]);
+        buildingName = BUILDING_CODE_NAMES[building] || 'Главный корпус';
+      } else if (mapped && mapped.building) {
+        building = normalizeBuildingLetter(mapped.building);
+        buildingName = mapped.buildingName || BUILDING_CODE_NAMES[building] || 'Главный корпус';
+      }
       if (mapped) {
-        roomId = mapped.roomId;
-        roomShort = (cleanLabel && cleanLabel !== '🏀') ? cleanLabel : mapped.roomShort;
-        roomFloor = mapped.floor;
-        buildingName = mapped.buildingName || 'Главный корпус';
-      } else if (firstCls.label) {
-        roomShort = cleanLabel || firstCls.label;
+        roomId = mapped.roomId || null;
+        roomShort = (cleanLabel && cleanLabel !== '🏀') ? cleanLabel : (mapped.roomShort || cleanLabel);
+        roomFloor = mapped.floor !== undefined ? mapped.floor : null;
+        if (!bldMatch && mapped.buildingName) {
+          buildingName = mapped.buildingName;
+        }
+      } else if (rawLbl) {
+        roomShort = cleanLabel || rawLbl;
+        const flMatch = String(roomShort).match(/^(\d)/);
+        if (flMatch) roomFloor = parseInt(flMatch[1], 10);
       }
     }
 
     results.push({
       time: timeRange,
       type,
-      subject,
+      subject: normalizeSubjectNameForCheatSheet(subject),
       subgroup,
       group: groupStr,
       groups,
@@ -607,6 +635,7 @@ function parseScheduleCellHtml(tdHtml, timeRange, context = {}) {
       roomId,
       roomShort,
       floor: roomFloor,
+      building,
       buildingName
     });
   }
@@ -955,7 +984,99 @@ function computeCameraPivotRotationOffset({ pivotX, pivotY, centerX, centerY, ol
 }
 
 /**
- * Finds upcoming lessons starting within [minLead, maxLead] minutes (default 1..16 min)
+ * Consolidates multiple lesson entries occurring in the exact same time slot
+ * (e.g. subgroup 1 and subgroup 2, or multi-lecturer splits) into a single merged lesson
+ * so that notifications are never duplicated and {{lecturer}} contains all lecturers.
+ */
+function consolidateSameSlotLessons(rawLessons = []) {
+  if (!Array.isArray(rawLessons) || rawLessons.length === 0) return [];
+  const byTime = new Map();
+
+  for (const l of rawLessons) {
+    if (!l) continue;
+    const timeKey = String(l.time || '').trim();
+    if (!timeKey) continue;
+    if (!byTime.has(timeKey)) byTime.set(timeKey, []);
+    byTime.get(timeKey).push(l);
+  }
+
+  const consolidated = [];
+  for (const [time, groupLessons] of byTime.entries()) {
+    const first = groupLessons[0];
+    const types = [];
+    const subjects = [];
+    const subgroups = [];
+    const lecturerEntries = [];
+    const allLecturersRaw = [];
+    const roomEntries = [];
+    const groupsList = [];
+
+    const hasDistinctSubgroups = groupLessons.length > 1 && groupLessons.some(item => item.subgroup);
+
+    for (const item of groupLessons) {
+      const t = String(item.type || '').trim();
+      if (t && !types.includes(t)) types.push(t);
+
+      const cleanSubj = normalizeSubjectNameForCheatSheet(item.subject || '');
+      if (cleanSubj && !subjects.some(s => s.toLowerCase() === cleanSubj.toLowerCase())) {
+        subjects.push(cleanSubj);
+      }
+
+      const sg = String(item.subgroup || '').trim();
+      if (sg && !subgroups.includes(sg)) subgroups.push(sg);
+
+      const itemLects = Array.isArray(item.lecturers) && item.lecturers.length > 0
+        ? item.lecturers.map(x => String(x || '').trim()).filter(Boolean)
+        : String(item.lecturer || '').split(',').map(x => x.trim()).filter(Boolean);
+
+      for (const lk of itemLects) {
+        if (!allLecturersRaw.includes(lk)) allLecturersRaw.push(lk);
+      }
+
+      if (itemLects.length > 0) {
+        const joinedItemLect = itemLects.join(', ');
+        const formattedLect = (hasDistinctSubgroups && sg) ? `${joinedItemLect} (${sg})` : joinedItemLect;
+        if (!lecturerEntries.includes(formattedLect)) lecturerEntries.push(formattedLect);
+      }
+
+      const rShort = String(item.roomShort || '').trim();
+      const bldCode = String(item.building || 'C').trim().toUpperCase();
+      const rWithBld = (rShort && bldCode && bldCode !== 'C' && !rShort.endsWith(` ${bldCode}`))
+        ? `${rShort} (${bldCode})`
+        : rShort;
+      if (rWithBld) {
+        const formattedRoom = (hasDistinctSubgroups && sg && groupLessons.some(other => other.roomShort !== item.roomShort))
+          ? `${rWithBld} (${sg})`
+          : rWithBld;
+        if (!roomEntries.includes(formattedRoom)) roomEntries.push(formattedRoom);
+      }
+
+      const gStr = String(item.group || '').replace(/\s*(?:п\.?\s*г\.?\s*\d+|\d+\s*п\.?\s*г\.?)$/i, '').trim();
+      if (gStr && !groupsList.includes(gStr)) groupsList.push(gStr);
+    }
+
+    consolidated.push({
+      time,
+      type: types.join('/') || first.type || '',
+      subject: subjects.join(' / ') || normalizeSubjectNameForCheatSheet(first.subject || ''),
+      subgroup: subgroups.length === 1 ? subgroups[0] : (subgroups.length > 1 ? subgroups.join(', ') : ''),
+      roomId: first.roomId || null,
+      roomShort: roomEntries.join(', ') || first.roomShort || '',
+      floor: first.floor !== undefined ? first.floor : null,
+      building: first.building || 'C',
+      buildingName: first.buildingName || 'Главный корпус',
+      group: groupsList.join(', ') || first.group || '',
+      groups: Array.isArray(first.groups) ? first.groups : groupsList,
+      lecturer: lecturerEntries.join(', ') || allLecturersRaw.join(', '),
+      lecturers: allLecturersRaw
+    });
+  }
+
+  return consolidated;
+}
+
+/**
+ * Finds upcoming lessons starting within [minLead, maxLead] minutes (default 1..20 min)
  * for a Telegram-subscribed user, with fallback matching by weekday name if ISO date differs.
  */
 function findUpcomingLessonRemindersForUser({
@@ -965,7 +1086,7 @@ function findUpcomingLessonRemindersForUser({
   todayDayName = '',
   nowMin = 0,
   minLead = 1,
-  maxLead = 16
+  maxLead = 20
 }) {
   if (!user || !user.telegramId || !user.notificationsEnabled || !user.targetName) return [];
   if (!Array.isArray(days) || days.length === 0) return [];
@@ -980,15 +1101,21 @@ function findUpcomingLessonRemindersForUser({
   const notifiedSet = new Set(Array.isArray(user.notifiedSlots) ? user.notifiedSlots : []);
   if (user.lastNotifiedSlot) notifiedSet.add(user.lastNotifiedSlot);
 
+  const dayKey = todayISO || todayDay.date || todayDayName;
+  const mergedLessons = consolidateSameSlotLessons(todayDay.lessons);
+
   const results = [];
-  for (const lesson of todayDay.lessons) {
+  for (const lesson of mergedLessons) {
     const m = String(lesson.time || '').match(/^(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})/);
     if (!m) continue;
     const startMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
     const diffMin = startMin - nowMin;
     if (diffMin >= minLead && diffMin <= maxLead) {
-      const slotKey = `${todayISO || todayDay.date || todayDayName}|${lesson.time}|${lesson.subject}|${lesson.roomId || lesson.roomShort || ''}`;
-      if (notifiedSet.has(slotKey)) continue;
+      const slotKey = `${dayKey}|${startMin}`;
+      const legacyPrefix = `${dayKey}|${lesson.time}|`;
+      const alreadyNotified = notifiedSet.has(slotKey) ||
+        Array.from(notifiedSet).some(k => String(k).startsWith(legacyPrefix));
+      if (alreadyNotified) continue;
       notifiedSet.add(slotKey);
       results.push({
         slotKey,
@@ -998,15 +1125,65 @@ function findUpcomingLessonRemindersForUser({
           type: lesson.type || '',
           subject: lesson.subject || '',
           subgroup: lesson.subgroup || '',
+          roomId: lesson.roomId || null,
           roomShort: lesson.roomShort || '',
           floor: lesson.floor,
+          building: lesson.building || 'C',
+          buildingName: lesson.buildingName || 'Главный корпус',
           group: lesson.group || '',
-          lecturer: lesson.lecturer || (Array.isArray(lesson.lecturers) ? lesson.lecturers.join(', ') : '')
+          lecturer: lesson.lecturer || (Array.isArray(lesson.lecturers) ? lesson.lecturers.join(', ') : ''),
+          lecturers: Array.isArray(lesson.lecturers) ? lesson.lecturers : []
         }
       });
     }
   }
   return results;
+}
+
+/**
+ * Builds a day-before (evening) reminder payload for tomorrow's classes if the user has classes
+ * tomorrow and has not yet been notified for that date.
+ */
+function findNextDayScheduleReminderForUser({
+  user,
+  days = [],
+  tomorrowISO = '',
+  tomorrowDayName = ''
+}) {
+  if (!user || !user.telegramId || !user.notificationsEnabled || !user.targetName) return null;
+  if (!Array.isArray(days) || days.length === 0) return null;
+
+  let tomorrowDay = tomorrowISO ? days.find(d => d && d.date === tomorrowISO) : null;
+  if (!tomorrowDay && tomorrowDayName) {
+    const normTarget = String(tomorrowDayName).trim().toLowerCase();
+    tomorrowDay = days.find(d => d && String(d.dayName || '').trim().toLowerCase() === normTarget);
+  }
+  if (!tomorrowDay || !Array.isArray(tomorrowDay.lessons) || tomorrowDay.lessons.length === 0) return null;
+
+  const dayKey = tomorrowISO || tomorrowDay.date || tomorrowDayName;
+  const slotKey = `nextday|${dayKey}`;
+  const notifiedSet = new Set(Array.isArray(user.notifiedSlots) ? user.notifiedSlots : []);
+  if (user.lastNotifiedSlot) notifiedSet.add(user.lastNotifiedSlot);
+  if (notifiedSet.has(slotKey)) return null;
+
+  const mergedLessons = consolidateSameSlotLessons(tomorrowDay.lessons);
+  if (mergedLessons.length === 0) return null;
+
+  mergedLessons.sort((a, b) => {
+    const ma = String(a.time || '').match(/^(\d{1,2}):(\d{2})/);
+    const mb = String(b.time || '').match(/^(\d{1,2}):(\d{2})/);
+    const sa = ma ? parseInt(ma[1], 10) * 60 + parseInt(ma[2], 10) : 0;
+    const sb = mb ? parseInt(mb[1], 10) * 60 + parseInt(mb[2], 10) : 0;
+    return sa - sb;
+  });
+
+  return {
+    slotKey,
+    date: dayKey,
+    dateLabel: tomorrowDay.dateLabel || dayKey,
+    dayName: tomorrowDay.dayName || tomorrowDayName || 'Завтра',
+    lessons: mergedLessons
+  };
 }
 
 /**
@@ -1123,11 +1300,14 @@ module.exports = {
   extractGroupTokens,
   formatWeekTriggerLabel,
   normalizeLessonType,
+  normalizeSubjectNameForCheatSheet,
   parseScheduleCellHtml,
   parseRaspSchedulePageHtml,
   buildGroupCheatSheet,
   computeCameraPivotRotationOffset,
+  consolidateSameSlotLessons,
   findUpcomingLessonRemindersForUser,
+  findNextDayScheduleReminderForUser,
   detectUserTone,
   snapPointToGraphCorridor
 };

@@ -10,9 +10,12 @@ const {
   searchRoomsInMeta,
   formatWeekTriggerLabel,
   normalizeLessonType,
+  normalizeSubjectNameForCheatSheet,
   parseRaspSchedulePageHtml,
   buildGroupCheatSheet,
+  consolidateSameSlotLessons,
   findUpcomingLessonRemindersForUser,
+  findNextDayScheduleReminderForUser,
   detectUserTone
 } = require('./js/graph-utils.js');
 const { splitGroupAndLecturer, defaultUserStore, verifyTelegramWebAppInitData } = require('./js/user-store.js');
@@ -25,7 +28,7 @@ const GRAPH_FILE = path.join(ROOT, 'data', 'graph.json');
 const GRAPH_BACKUP_FILE = path.join(ROOT, 'data', 'graph.backup.json');
 const USERS_FILE = path.join(ROOT, 'data', 'users.json');
 const REFRESH_INTERVAL_MS = 30 * 60 * 1000;
-const ENTITY_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+const ENTITY_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 const userStore = defaultUserStore;
 
@@ -99,6 +102,7 @@ let raspDirectoryMeta = {
   groupIdByName: {},
   deptByFullFio: {},
   facultyByGroup: {},
+  classroomById: {},
   availableWeeks: []
 };
 let lecturersReportList = [];
@@ -112,6 +116,13 @@ let scheduleIndex = {
   departmentRoomsIndex: {} // deptUpper -> { deptName, ownedRooms: [], frequentRooms: [] }
 };
 
+const BUILDING_NAMES_BY_CODE = {
+  C: 'Главный корпус',
+  L: 'Лабораторный корпус',
+  B: 'Бизнес-инкубатор',
+  F: 'Первый корпус'
+};
+
 function getRoomScheduleShortName(meta) {
   if (!meta) return '';
   const rawShort = String(meta.shortName || '').trim();
@@ -123,27 +134,33 @@ function getRoomScheduleShortName(meta) {
 
 function rebuildClassroomMap() {
   classroomToRoomMap = {};
+  if (raspDirectoryMeta && raspDirectoryMeta.classroomById && typeof raspDirectoryMeta.classroomById === 'object') {
+    for (const [cid, cInfo] of Object.entries(raspDirectoryMeta.classroomById)) {
+      if (!cInfo) continue;
+      const bCode = String(cInfo.building || 'C').trim().toUpperCase();
+      classroomToRoomMap[String(cid)] = {
+        roomId: null,
+        roomShort: String(cInfo.shortName || cInfo.label || cid).replace(/\s+[CBFLСВФЛ]$/i, '').trim(),
+        roomName: `Аудитория ${cInfo.shortName || cid}`,
+        floor: cInfo.floor !== undefined ? cInfo.floor : null,
+        building: bCode,
+        buildingName: cInfo.buildingName || BUILDING_NAMES_BY_CODE[bCode] || 'Главный корпус'
+      };
+    }
+  }
   for (const [roomId, meta] of Object.entries(roomsMeta)) {
     if (meta && meta.classroom) {
+      const bCode = String(meta.building || 'C').trim().toUpperCase();
       classroomToRoomMap[String(meta.classroom)] = {
         roomId,
         roomShort: getRoomScheduleShortName(meta),
         roomName: meta.name,
         floor: meta.floor,
-        building: meta.building || 'C',
-        buildingName: 'Главный корпус'
+        building: bCode,
+        buildingName: BUILDING_NAMES_BY_CODE[bCode] || 'Главный корпус'
       };
     }
   }
-}
-
-try {
-  const roomsPath = path.join(ROOT, 'data', 'rooms.json');
-  roomsMeta = JSON.parse(fs.readFileSync(roomsPath, 'utf8'));
-  rebuildClassroomMap();
-  console.log(`[init] Загружено ${Object.keys(roomsMeta).length} помещений`);
-} catch (e) {
-  console.error('[init] Не удалось загрузить rooms.json:', e.message);
 }
 
 try {
@@ -162,12 +179,33 @@ try {
   console.warn('[init] Не удалось загрузить метаданные справочника:', e.message);
 }
 
+try {
+  const roomsPath = path.join(ROOT, 'data', 'rooms.json');
+  roomsMeta = JSON.parse(fs.readFileSync(roomsPath, 'utf8'));
+  rebuildClassroomMap();
+  console.log(`[init] Загружено ${Object.keys(roomsMeta).length} помещений (всего аудиторий в карте расписаний: ${Object.keys(classroomToRoomMap).length})`);
+} catch (e) {
+  console.error('[init] Не удалось загрузить rooms.json:', e.message);
+}
+
 function sanitizeEntityCacheRoomShorts(cacheObj) {
   if (!cacheObj || typeof cacheObj !== 'object') return;
+  const nonMainByShort = new Map();
+  if (raspDirectoryMeta && raspDirectoryMeta.classroomById) {
+    for (const cInfo of Object.values(raspDirectoryMeta.classroomById)) {
+      if (cInfo && cInfo.building && cInfo.building !== 'C' && cInfo.shortName) {
+        nonMainByShort.set(String(cInfo.shortName).toLowerCase(), cInfo);
+      }
+    }
+  }
+
   for (const entry of Object.values(cacheObj)) {
     if (!entry || !Array.isArray(entry.days)) continue;
     for (const day of entry.days) {
       for (const lesson of (day.lessons || [])) {
+        if (lesson.subject) {
+          lesson.subject = normalizeSubjectNameForCheatSheet(lesson.subject);
+        }
         if (lesson.roomShort === '🏀' || lesson.roomId === 'C_gym_main') {
           lesson.roomShort = 'Спортзал';
         } else if (lesson.roomId === 'C_auditori_50c' && /оптимизац/i.test(lesson.subject || '')) {
@@ -175,6 +213,29 @@ function sanitizeEntityCacheRoomShorts(cacheObj) {
         } else if (!lesson.roomShort && lesson.roomId && roomsMeta[lesson.roomId]) {
           lesson.roomShort = getRoomScheduleShortName(roomsMeta[lesson.roomId]);
         }
+
+        // Извлекаем или восстанавливаем корпус (C, L, B, F)
+        const rawShort = String(lesson.roomShort || '').trim();
+        const bldSuffixMatch = rawShort.match(/\s+([CBFLСВФЛ])$/i);
+        if (bldSuffixMatch) {
+          const ch = bldSuffixMatch[1].toUpperCase();
+          lesson.building = (ch === 'L' || ch === 'Л') ? 'L' : (ch === 'B' || ch === 'В') ? 'B' : (ch === 'F' || ch === 'Ф') ? 'F' : 'C';
+          lesson.roomShort = rawShort.replace(/\s+[CBFLСВФЛ]$/i, '').trim();
+        } else if (lesson.roomId && roomsMeta[lesson.roomId]) {
+          lesson.building = String(roomsMeta[lesson.roomId].building || 'C').toUpperCase();
+        } else if (!lesson.roomId && rawShort) {
+          const nonMain = nonMainByShort.get(rawShort.toLowerCase());
+          if (nonMain) {
+            lesson.building = nonMain.building;
+            if (lesson.floor == null && nonMain.floor != null) {
+              lesson.floor = nonMain.floor;
+            }
+          }
+        }
+        if (!lesson.building || lesson.building === 'С') {
+          lesson.building = 'C';
+        }
+        lesson.buildingName = BUILDING_NAMES_BY_CODE[lesson.building] || lesson.buildingName || 'Главный корпус';
       }
     }
   }
@@ -567,6 +628,21 @@ function rebuildScheduleIndex() {
 function getMoscowClockNow() {
   const now = new Date();
   const dayNamesByDow = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+  const monthNamesGenitive = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+  const computeTomorrowFields = (baseDateUtc) => {
+    const tmr = new Date(baseDateUtc);
+    tmr.setUTCDate(baseDateUtc.getUTCDate() + 1);
+    const tomorrowISO = tmr.toISOString().slice(0, 10);
+    const tomorrowDayName = dayNamesByDow[tmr.getUTCDay()] || 'Завтра';
+    const tomorrowDateLabel = `${tmr.getUTCDate()} ${monthNamesGenitive[tmr.getUTCMonth()] || ''}`.trim();
+    const dow = tmr.getUTCDay();
+    const diffToMon = dow === 0 ? -6 : (1 - dow);
+    const tmrMon = new Date(tmr);
+    tmrMon.setUTCDate(tmr.getUTCDate() + diffToMon);
+    const tomorrowMondayISO = tmrMon.toISOString().slice(0, 10);
+    return { tomorrowISO, tomorrowDayName, tomorrowDateLabel, tomorrowMondayISO };
+  };
+
   try {
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Europe/Moscow',
@@ -589,16 +665,19 @@ function getMoscowClockNow() {
     return {
       todayISO: `${yyyy}-${mm}-${dd}`,
       todayDayName,
-      nowMin: hh * 60 + min
+      nowMin: hh * 60 + min,
+      ...computeTomorrowFields(moscowDate)
     };
   } catch (e) {
     const yyyy = now.getFullYear();
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const dd = String(now.getDate()).padStart(2, '0');
+    const fallbackDate = new Date(`${yyyy}-${mm}-${dd}T12:00:00Z`);
     return {
       todayISO: `${yyyy}-${mm}-${dd}`,
       todayDayName: dayNamesByDow[now.getDay()],
-      nowMin: now.getHours() * 60 + now.getMinutes()
+      nowMin: now.getHours() * 60 + now.getMinutes(),
+      ...computeTomorrowFields(fallbackDate)
     };
   }
 }
@@ -889,9 +968,29 @@ async function fetchEntitySemesterBundle(type, entityObj) {
   };
 }
 
+function findAnyCachedDaysForEntity(type, entityName, preferredWeekOrDate = '') {
+  const prefix = `${type}:${entityName}:`;
+  if (preferredWeekOrDate) {
+    const direct = entityScheduleCache[`${prefix}${preferredWeekOrDate}`];
+    if (direct && Array.isArray(direct.days) && direct.days.length > 0) return direct;
+    for (const [k, v] of Object.entries(entityScheduleCache)) {
+      if (k.startsWith(prefix) && v && Array.isArray(v.days) && v.days.some(d => d && d.date === preferredWeekOrDate)) {
+        return v;
+      }
+    }
+  }
+  const { todayISO } = getMoscowClockNow();
+  for (const [k, v] of Object.entries(entityScheduleCache)) {
+    if (k.startsWith(prefix) && v && Array.isArray(v.days) && v.days.some(d => d && d.date === todayISO)) {
+      return v;
+    }
+  }
+  return null;
+}
+
 /**
  * Fetches complete group or lecturer schedule directly from rasp.rsreu.ru (supporting week date parameter)
- * and falls back cleanly to local scheduleIndex when offline.
+ * and falls back cleanly to cached entity days or local scheduleIndex when offline.
  */
 async function fetchCompleteEntitySchedule(type, entityObj, dateParam = '') {
   if (!entityObj) return null;
@@ -902,8 +1001,8 @@ async function fetchCompleteEntitySchedule(type, entityObj, dateParam = '') {
   const currentWeekCacheKey = `${type}:${entityObj.name}:${defaultWeek || 'current'}`;
   const currentWeekCachedDays = entityScheduleCache[currentWeekCacheKey]?.days || null;
 
-  const cached = entityScheduleCache[cacheKey];
-  if (cached && (Date.now() - cached.fetchedAt < ENTITY_CACHE_TTL_MS) && Array.isArray(cached.days) && cached.days.length > 0) {
+  const cached = entityScheduleCache[cacheKey] || findAnyCachedDaysForEntity(type, entityObj.name, effectiveDate);
+  if (cached && (Date.now() - (cached.fetchedAt || 0) < ENTITY_CACHE_TTL_MS) && Array.isArray(cached.days) && cached.days.length > 0) {
     ensureAllSemesterWeeksCache(type, entityObj, cached.availableWeeks || getFormattedAvailableWeeks()).catch(() => {});
     return buildEntityScheduleResponse(type, entityObj, cached.days, {
       availableWeeks: cached.availableWeeks,
@@ -977,7 +1076,7 @@ async function fetchCompleteEntitySchedule(type, entityObj, dateParam = '') {
         }
       }
     } catch (e) {
-      // Fall back to local scheduleIndex
+      // Fall back to stale entityScheduleCache or local scheduleIndex
     }
   }
 
@@ -987,11 +1086,14 @@ async function fetchCompleteEntitySchedule(type, entityObj, dateParam = '') {
     || availableWeeks[0]
     || null;
 
-  return buildEntityScheduleResponse(type, entityObj, null, {
-    availableWeeks,
-    selectedWeek,
+  const fallbackCachedDays = (cached && Array.isArray(cached.days) && cached.days.length > 0) ? cached.days : null;
+
+  return buildEntityScheduleResponse(type, entityObj, fallbackCachedDays, {
+    availableWeeks: (cached && cached.availableWeeks) || availableWeeks,
+    selectedWeek: (cached && cached.selectedWeek) || selectedWeek,
     isCurrentWeek,
-    currentWeekDays: currentWeekCachedDays
+    currentWeekDays: fallbackCachedDays || currentWeekCachedDays,
+    cheatSheetDays: type === 'group' ? getAllCachedDaysForGroup(entityObj.name, fallbackCachedDays || [], entityObj) : undefined
   });
 }
 
@@ -2528,7 +2630,23 @@ const server = http.createServer(async (req, res) => {
         const templateId = String(body.templateId || '').trim();
 
         if (mode === 'save') {
-          const updatedTpl = userStore.saveBotTemplate(templateId, body.text || '');
+          const updatedTpl = userStore.saveBotTemplate(templateId, body.text, {
+            enabled: body.enabled,
+            buttons: body.buttons
+          });
+          await userStore.pushToCloud([]).catch(() => {});
+          sendJsonCompressed(req, res, 200, {
+            ok: true,
+            template: updatedTpl,
+            botTemplates: userStore.getBotTemplatesCatalog()
+          });
+          return;
+        }
+
+        if (mode === 'toggle-enabled') {
+          const updatedTpl = userStore.saveBotTemplate(templateId, null, {
+            enabled: Boolean(body.enabled)
+          });
           await userStore.pushToCloud([]).catch(() => {});
           sendJsonCompressed(req, res, 200, {
             ok: true,
@@ -2587,7 +2705,8 @@ const server = http.createServer(async (req, res) => {
           }
 
           const rawToTest = typeof body.text === 'string' && body.text.trim() ? body.text : tplMeta.text;
-          const result = await sendAdminTelegramMessage(tgId, rawToTest, sampleVars);
+          const buttonsToTest = Array.isArray(body.buttons) ? body.buttons : tplMeta.buttons;
+          const result = await sendAdminTelegramMessage(tgId, rawToTest, sampleVars, buttonsToTest);
           sendJsonCompressed(req, res, result.ok ? 200 : 400, {
             ...result,
             telegramId: tgId
@@ -3164,31 +3283,59 @@ const server = http.createServer(async (req, res) => {
       }))
       .sort((a, b) => collator.compare(a.name, b.name));
 
-    const classrooms = Object.entries(roomsMeta)
-      .filter(([, meta]) => Boolean(meta && meta.classroom))
-      .map(([roomId, meta]) => {
-        const shortName = getRoomScheduleShortName(meta);
-        const cachedEntry = scheduleCache[roomId];
-        const lessonsCount = cachedEntry && Array.isArray(cachedEntry.days)
-          ? cachedEntry.days.reduce((acc, d) => acc + (d.lessons ? d.lessons.length : 0), 0)
-          : 0;
-        return {
-          roomId,
-          name: shortName || meta.name,
-          shortName,
-          fullName: meta.name || `Аудитория ${shortName}`,
-          floor: meta.floor,
-          building: meta.building || 'C',
-          classroom: String(meta.classroom),
-          lessonsCount
-        };
-      })
+    const seenClassroomIds = new Set();
+    const classroomsRaw = [];
+
+    for (const [roomId, meta] of Object.entries(roomsMeta)) {
+      if (!meta || !meta.classroom) continue;
+      const cid = String(meta.classroom);
+      seenClassroomIds.add(cid);
+      const shortName = getRoomScheduleShortName(meta);
+      const cachedEntry = scheduleCache[roomId];
+      const lessonsCount = cachedEntry && Array.isArray(cachedEntry.days)
+        ? cachedEntry.days.reduce((acc, d) => acc + (d.lessons ? d.lessons.length : 0), 0)
+        : 0;
+      const bCode = String(meta.building || 'C').toUpperCase();
+      classroomsRaw.push({
+        roomId,
+        name: shortName || meta.name,
+        shortName,
+        fullName: meta.name || `Аудитория ${shortName}`,
+        floor: meta.floor,
+        building: bCode,
+        buildingName: BUILDING_NAMES_BY_CODE[bCode] || 'Главный корпус',
+        classroom: cid,
+        lessonsCount
+      });
+    }
+
+    if (raspDirectoryMeta && raspDirectoryMeta.classroomById) {
+      for (const [cid, cInfo] of Object.entries(raspDirectoryMeta.classroomById)) {
+        if (!cInfo || seenClassroomIds.has(String(cid))) continue;
+        const bCode = String(cInfo.building || 'C').toUpperCase();
+        const shortBase = String(cInfo.shortName || cInfo.label || cid).replace(/\s+[CBFLСВФЛ]$/i, '').trim();
+        const displayName = bCode !== 'C' ? `${shortBase} (${bCode})` : shortBase;
+        classroomsRaw.push({
+          roomId: null,
+          name: displayName,
+          shortName: shortBase,
+          fullName: `Аудитория ${shortBase} · ${cInfo.buildingName || BUILDING_NAMES_BY_CODE[bCode] || bCode}`,
+          floor: cInfo.floor !== undefined ? cInfo.floor : null,
+          building: bCode,
+          buildingName: cInfo.buildingName || BUILDING_NAMES_BY_CODE[bCode] || 'Главный корпус',
+          classroom: String(cid),
+          lessonsCount: 0
+        });
+      }
+    }
+
+    const classrooms = classroomsRaw
       .filter(c => {
         if (!q) return true;
-        const hay = `${c.name} ${c.shortName} ${c.fullName} ауд аудитория ${c.floor} этаж`.toLowerCase().replace(/ё/g, 'е');
+        const hay = `${c.name} ${c.shortName} ${c.fullName} ${c.building} ${c.buildingName || ''} ауд аудитория ${c.floor || ''} этаж`.toLowerCase().replace(/ё/g, 'е');
         return hay.includes(q);
       })
-      .sort((a, b) => collator.compare(a.shortName, b.shortName));
+      .sort((a, b) => collator.compare(a.name, b.name));
 
     sendJsonCompressed(req, res, 200, {
       ready: cacheStatus.ready,
@@ -3252,17 +3399,25 @@ const server = http.createServer(async (req, res) => {
       }
     } else if (type === 'classroom') {
       const cleanTarget = name.replace(/^(?:ауд\.?|аудитория)\s*/i, '').trim().toLowerCase();
+      const targetWithoutBld = cleanTarget.replace(/\s*\([cbflсвфл]\)\s*$/i, '').replace(/\s+[cbflсвфл]$/i, '').trim();
+      const bldHintMatch = cleanTarget.match(/(?:\(([cbflсвфл])\)|\s+([cbflсвфл]))$/i);
+      const bldHintRaw = bldHintMatch ? (bldHintMatch[1] || bldHintMatch[2]).toUpperCase() : '';
+      const bldHint = (bldHintRaw === 'L' || bldHintRaw === 'Л') ? 'L'
+        : (bldHintRaw === 'B' || bldHintRaw === 'В') ? 'B'
+        : (bldHintRaw === 'F' || bldHintRaw === 'Ф') ? 'F'
+        : (bldHintRaw ? 'C' : '');
+
       let matchedRoomId = null;
       let matchedMeta = null;
       if (roomsMeta[name]) {
         matchedRoomId = name;
         matchedMeta = roomsMeta[name];
-      } else {
+      } else if (!bldHint || bldHint === 'C') {
         for (const [rId, m] of Object.entries(roomsMeta)) {
           if (!m || !m.classroom) continue;
           const sName = getRoomScheduleShortName(m).toLowerCase();
           const fName = String(m.name || '').toLowerCase();
-          if (sName === cleanTarget || fName === cleanTarget || String(m.classroom) === cleanTarget) {
+          if (sName === cleanTarget || sName === targetWithoutBld || fName === cleanTarget || String(m.classroom) === cleanTarget) {
             matchedRoomId = rId;
             matchedMeta = m;
             break;
@@ -3271,6 +3426,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (matchedRoomId && matchedMeta) {
         const shortName = getRoomScheduleShortName(matchedMeta);
+        const bCode = String(matchedMeta.building || 'C').toUpperCase();
+        const bName = BUILDING_NAMES_BY_CODE[bCode] || 'Главный корпус';
         const cachedRoom = scheduleCache[matchedRoomId];
         const fallbackLessons = [];
         if (cachedRoom && Array.isArray(cachedRoom.days)) {
@@ -3283,7 +3440,8 @@ const server = http.createServer(async (req, res) => {
                 roomId: matchedRoomId,
                 roomShort: shortName,
                 floor: matchedMeta.floor,
-                building: matchedMeta.building || 'C'
+                building: bCode,
+                buildingName: bName
               });
             }
           }
@@ -3293,13 +3451,38 @@ const server = http.createServer(async (req, res) => {
           name: shortName,
           shortName,
           fullName: matchedMeta.name || `Аудитория ${shortName}`,
-          regalia: `${matchedMeta.floor} этаж · Главный корпус`,
-          building: matchedMeta.building || 'C',
+          regalia: `${matchedMeta.floor} этаж · ${bName}`,
+          building: bCode,
           classroom: matchedMeta.classroom,
           floor: matchedMeta.floor,
           rooms: new Set([matchedRoomId]),
           lessons: fallbackLessons
         };
+      } else if (raspDirectoryMeta && raspDirectoryMeta.classroomById) {
+        for (const [cid, cInfo] of Object.entries(raspDirectoryMeta.classroomById)) {
+          if (!cInfo) continue;
+          const bCode = String(cInfo.building || 'C').toUpperCase();
+          if (bldHint && bCode !== bldHint) continue;
+          const shortBase = String(cInfo.shortName || cInfo.label || cid).replace(/\s+[CBFLСВФЛ]$/i, '').trim();
+          const shortLower = shortBase.toLowerCase();
+          if (String(cid) === cleanTarget || shortLower === cleanTarget || shortLower === targetWithoutBld) {
+            const bName = cInfo.buildingName || BUILDING_NAMES_BY_CODE[bCode] || 'Корпус ' + bCode;
+            const displayName = bCode !== 'C' ? `${shortBase} (${bCode})` : shortBase;
+            entityObj = {
+              roomId: null,
+              name: displayName,
+              shortName: shortBase,
+              fullName: `Аудитория ${shortBase} (${bName})`,
+              regalia: `${cInfo.floor ? cInfo.floor + ' этаж · ' : ''}${bName}`,
+              building: bCode,
+              classroom: String(cid),
+              floor: cInfo.floor !== undefined ? cInfo.floor : null,
+              rooms: new Set(),
+              lessons: []
+            };
+            break;
+          }
+        }
       }
     }
 
@@ -3644,6 +3827,54 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/community/gps-calibrate' && req.method === 'POST') {
+    try {
+      await userStore.init().catch(() => {});
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const isAdmin = isEditorAuthorized(req);
+      const userId = String(body.userId || '').trim();
+      const u = userId ? userStore.getUser(userId) : null;
+      if (!isAdmin && (!u || (!u.telegramId && !u.username))) {
+        sendJsonCompressed(req, res, 403, { ok: false, error: 'Для сохранения глобального репера войдите через Telegram или админ-панель' });
+        return;
+      }
+      const lat = Number(body.lat);
+      const lon = Number(body.lon ?? body.lng);
+      const x = Number(body.x ?? body.svgX);
+      const y = Number(body.y ?? body.svgY);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(x) || !Number.isFinite(y)) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Некорректные координаты для калибровки' });
+        return;
+      }
+      if (lon < 39.7210 || lon > 39.7300 || lat < 54.6100 || lat > 54.6180) {
+        sendJsonCompressed(req, res, 400, { ok: false, error: 'Координаты находятся слишком далеко от кампуса РГРТУ' });
+        return;
+      }
+      const roomId = String(body.roomId || '').trim();
+      const anchorId = String(body.id || (roomId ? `cal_${roomId}` : `cal_${Date.now()}`));
+      const label = String(body.label || roomId || `Точка (${Math.round(x)}, ${Math.round(y)})`);
+      const floor = Number.isFinite(Number(body.floor)) ? Number(body.floor) : 1;
+      const gpsConfig = userStore.saveGpsConfig({
+        upsertAnchor: {
+          id: anchorId,
+          label,
+          roomId,
+          building: String(body.building || 'C'),
+          floor,
+          lat,
+          lon,
+          x,
+          y
+        }
+      });
+      await userStore.pushToCloud([]).catch(() => {});
+      sendJsonCompressed(req, res, 200, { ok: true, gpsConfig });
+    } catch (e) {
+      sendJsonCompressed(req, res, 400, { ok: false, error: e.message });
+    }
+    return;
+  }
+
   if (url.pathname === '/api/community/marker' && req.method === 'POST') {
     try {
       await userStore.init().catch(() => {});
@@ -3809,14 +4040,28 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // --- API: Проверка приближающихся пар для рассылки уведомлений в Telegram ---
+  // --- API: Проверка приближающихся пар и вечерней сводки на завтра для рассылки уведомлений в Telegram ---
   if (url.pathname === '/api/internal/upcoming-notifications' && req.method === 'GET') {
     await userStore.init().catch(() => {});
-    const { todayISO, todayDayName, nowMin } = getMoscowClockNow();
+    const {
+      todayISO,
+      todayDayName,
+      nowMin,
+      tomorrowISO,
+      tomorrowDayName,
+      tomorrowDateLabel,
+      tomorrowMondayISO
+    } = getMoscowClockNow();
     const markSentImmediately = url.searchParams.get('markSent') !== '0';
+    const forceNextDay = url.searchParams.get('includeNextDay') === '1';
+    const isEveningWindow = forceNextDay || (nowMin >= 18 * 60 && nowMin <= 23 * 60 + 30);
+
+    const lessonReminderEnabled = userStore.isBotTemplateEnabled('lesson_reminder');
+    const nextDayReminderEnabled = userStore.isBotTemplateEnabled('next_day_reminder');
 
     const candidates = userStore.getUsersForNotifications();
     const notifications = [];
+    const nextDayNotifications = [];
 
     for (const u of candidates) {
       const entityType = u.role === 'lecturer' ? 'lecturer' : 'group';
@@ -3863,36 +4108,76 @@ const server = http.createServer(async (req, res) => {
       const sched = await fetchCompleteEntitySchedule(entityType, entityObj);
       if (!sched || !Array.isArray(sched.days)) continue;
 
-      const upcomingItems = findUpcomingLessonRemindersForUser({
-        user: u,
-        days: sched.days,
-        todayISO,
-        todayDayName,
-        nowMin
-      });
-
-      for (const item of upcomingItems) {
-        if (markSentImmediately) {
-          userStore.upsertUser(u.id, { lastNotifiedSlot: item.slotKey });
-        }
-        notifications.push({
-          userId: u.id,
-          telegramId: u.telegramId,
-          role: u.role,
-          targetName: u.targetName,
-          slotKey: item.slotKey,
-          minutesLeft: item.minutesLeft,
-          lesson: item.lesson
+      if (lessonReminderEnabled) {
+        const upcomingItems = findUpcomingLessonRemindersForUser({
+          user: u,
+          days: sched.days,
+          todayISO,
+          todayDayName,
+          nowMin
         });
+
+        for (const item of upcomingItems) {
+          if (markSentImmediately) {
+            userStore.upsertUser(u.id, { lastNotifiedSlot: item.slotKey });
+          }
+          notifications.push({
+            userId: u.id,
+            telegramId: u.telegramId,
+            role: u.role,
+            targetName: u.targetName,
+            slotKey: item.slotKey,
+            minutesLeft: item.minutesLeft,
+            lesson: item.lesson
+          });
+        }
+      }
+
+      if (nextDayReminderEnabled && isEveningWindow && tomorrowISO && tomorrowDayName !== 'Воскресенье') {
+        let tomorrowDaysSource = sched.days;
+        if (!tomorrowDaysSource.some(d => d && d.date === tomorrowISO) && tomorrowMondayISO) {
+          const nextWeekSched = await fetchCompleteEntitySchedule(entityType, entityObj, tomorrowMondayISO).catch(() => null);
+          if (nextWeekSched && Array.isArray(nextWeekSched.days) && nextWeekSched.days.length > 0) {
+            tomorrowDaysSource = nextWeekSched.days;
+          }
+        }
+
+        const nextDayItem = findNextDayScheduleReminderForUser({
+          user: u,
+          days: tomorrowDaysSource,
+          tomorrowISO,
+          tomorrowDayName
+        });
+
+        if (nextDayItem) {
+          if (markSentImmediately) {
+            userStore.upsertUser(u.id, { lastNotifiedSlot: nextDayItem.slotKey });
+          }
+          nextDayNotifications.push({
+            userId: u.id,
+            telegramId: u.telegramId,
+            role: u.role,
+            targetName: u.targetName,
+            slotKey: nextDayItem.slotKey,
+            date: nextDayItem.date,
+            dateLabel: nextDayItem.dateLabel || tomorrowDateLabel || nextDayItem.date,
+            dayName: nextDayItem.dayName || tomorrowDayName,
+            lessons: nextDayItem.lessons
+          });
+        }
       }
     }
 
-    sendJsonCompressed(req, res, 200, { notifications });
+    sendJsonCompressed(req, res, 200, { notifications, nextDayNotifications });
     return;
   }
 
   let urlPath = decodeURIComponent(url.pathname);
   if (urlPath === '/') urlPath = '/index.html';
+  if (urlPath === '/css/admin-v2.css') urlPath = '/css/admin.css';
+  if (urlPath === '/js/admin-v2.js') urlPath = '/js/admin.js';
+  if (urlPath === '/css/style-v2.css') urlPath = '/css/style.css';
+  if (urlPath === '/css/editor-v2.css') urlPath = '/css/editor.css';
   const filePath = path.join(ROOT, urlPath);
   if (!filePath.startsWith(ROOT)) { res.writeHead(403); res.end('Forbidden'); return; }
 

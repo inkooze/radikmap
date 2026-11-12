@@ -8,9 +8,13 @@ const {
 } = require('./js/user-store.js');
 
 const BOT_TOKEN = (process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '').trim();
-const rawWebAppUrl = (process.env.WEBAPP_URL || '').trim();
-const WEBAPP_URL = (!rawWebAppUrl || rawWebAppUrl.includes('ngrok'))
-  ? 'https://radikmap.ai.studio/'
+let rawWebAppUrl = (process.env.WEBAPP_PROXY_URL || process.env.WEBAPP_URL || '').trim();
+if (rawWebAppUrl.includes('ais-dev-')) {
+  rawWebAppUrl = rawWebAppUrl.replace('ais-dev-', 'ais-pre-');
+}
+const DEFAULT_DEPLOYED_URL = 'https://ais-pre-irnfdqzemrx7nu7xzzdevi-814881682897.us-east1.run.app/';
+const WEBAPP_URL = (!rawWebAppUrl || rawWebAppUrl.includes('ngrok') || rawWebAppUrl.includes('radikmap.ai.studio'))
+  ? DEFAULT_DEPLOYED_URL
   : rawWebAppUrl.replace(/\/+$/, '') + '/';
 const SCHEDULE_WEBAPP_URL = `${WEBAPP_URL}?view=schedule`;
 const API_BASE = `http://localhost:${process.env.PORT || 3000}`;
@@ -41,33 +45,101 @@ if (!BOT_TOKEN && require.main === module) {
 const bot = BOT_TOKEN ? new Telegraf(BOT_TOKEN, { handlerTimeout: 15000 }) : null;
 
 /**
- * Безопасная отправка ответа в контексте Telegraf с поддержкой HTML-разметки (сконвертированной из Markdown)
- * и автоматическим откатом на plain-text.
+ * Преобразует массив кнопок шаблона в объект reply_markup для Telegram Bot API.
+ */
+function buildTelegramMarkupFromTemplateButtons(buttons, fallbackExtraMarkup = {}) {
+  if (!Array.isArray(buttons)) {
+    return fallbackExtraMarkup || {};
+  }
+  if (buttons.length === 0) {
+    return {};
+  }
+
+  const inlineRows = [];
+  const replyRows = [];
+
+  for (const btn of buttons) {
+    if (!btn || !String(btn.text || '').trim()) continue;
+    const text = String(btn.text).trim();
+    const type = String(btn.type || 'callback').trim().toLowerCase();
+    const val = String(btn.value || '').trim();
+
+    if (type === 'reply') {
+      if (val && (val.startsWith('http://') || val.startsWith('https://'))) {
+        replyRows.push(Markup.button.webApp(text, val));
+      } else {
+        replyRows.push(text);
+      }
+    } else if (type === 'webapp') {
+      const targetUrl = val || WEBAPP_URL;
+      inlineRows.push([Markup.button.webApp(text, targetUrl)]);
+    } else if (type === 'url') {
+      const targetUrl = val || WEBAPP_URL;
+      inlineRows.push([Markup.button.url(text, targetUrl)]);
+    } else {
+      inlineRows.push([Markup.button.callback(text, val || 'noop')]);
+    }
+  }
+
+  if (inlineRows.length > 0) {
+    return Markup.inlineKeyboard(inlineRows);
+  }
+  if (replyRows.length > 0) {
+    const grouped = [];
+    for (let i = 0; i < replyRows.length; i += 2) {
+      grouped.push(replyRows.slice(i, i + 2));
+    }
+    return Markup.keyboard(grouped).resize().persistent();
+  }
+  return fallbackExtraMarkup || {};
+}
+
+/**
+ * Безопасная отправка ответа в контексте Telegraf с поддержкой HTML-разметки (сконвертированной из Markdown),
+ * проверкой включения шаблона, кастомными кнопками и автоматическим откатом на plain-text.
  */
 async function replyWithRenderedTemplate(ctx, templateId, variables = {}, extraMarkup = {}) {
-  const rendered = userStore.renderBotMessage(templateId, {
+  if (!userStore.isBotTemplateEnabled(templateId)) {
+    return null;
+  }
+  const fullVars = {
     webappUrl: WEBAPP_URL,
     scheduleUrl: SCHEDULE_WEBAPP_URL,
     ...variables
-  });
-  const extra = { ...(extraMarkup || {}), parse_mode: 'HTML', disable_web_page_preview: true };
+  };
+  const rendered = userStore.renderBotMessage(templateId, fullVars);
+  const hasExplicitMarkup = extraMarkup && extraMarkup.reply_markup;
+  const resolvedMarkup = Array.isArray(rendered.buttons) && rendered.buttons.length > 0
+    ? buildTelegramMarkupFromTemplateButtons(rendered.buttons, extraMarkup)
+    : (hasExplicitMarkup ? extraMarkup : {});
+
+  const extra = { ...(resolvedMarkup || {}), parse_mode: 'HTML', disable_web_page_preview: true };
   try {
     return await ctx.reply(rendered.html, extra);
   } catch (e) {
-    const fallbackExtra = { ...(extraMarkup || {}) };
+    const fallbackExtra = { ...(resolvedMarkup || {}) };
     delete fallbackExtra.parse_mode;
     return await ctx.reply(rendered.text, fallbackExtra);
   }
 }
 
 async function editMessageWithRenderedTemplate(ctx, chatId, messageId, templateId, variables = {}) {
-  const rendered = userStore.renderBotMessage(templateId, {
+  if (!userStore.isBotTemplateEnabled(templateId)) {
+    return null;
+  }
+  if (!messageId) return null;
+  const fullVars = {
     webappUrl: WEBAPP_URL,
     scheduleUrl: SCHEDULE_WEBAPP_URL,
     ...variables
-  });
+  };
+  const rendered = userStore.renderBotMessage(templateId, fullVars);
+  const resolvedMarkup = Array.isArray(rendered.buttons) && rendered.buttons.length > 0
+    ? buildTelegramMarkupFromTemplateButtons(rendered.buttons, {})
+    : {};
   try {
     return await ctx.telegram.editMessageText(chatId, messageId, null, rendered.html, {
+      ...(resolvedMarkup.reply_markup ? { reply_markup: resolvedMarkup.reply_markup } : {}),
       parse_mode: 'HTML',
       disable_web_page_preview: true
     });
@@ -86,6 +158,14 @@ const LESSON_BREAKS = {
   '18:45': '19:30–19:35',
   '18:50': '19:35–19:40',
   '20:25': '21:10–21:15'
+};
+
+const BUILDING_TITLES = {
+  C: 'Главный корпус',
+  С: 'Главный корпус',
+  L: 'Лабораторный корпус',
+  B: 'Бизнес-инкубатор',
+  F: 'Первый корпус'
 };
 
 function getTypeTagEmoji(typeRaw) {
@@ -144,8 +224,9 @@ function buildLessonReminderVariables(item = {}, { recalculateLive = false } = {
   const roomClean = String(l.roomShort || l.room || '')
     .replace(/^Ауд\.?\s*/i, '')
     .trim();
-  const buildingClean = l.buildingName ||
-    ((!l.building || l.building === 'C' || l.building === 'С') ? 'Главный корпус' : String(l.building).trim());
+  const bCode = String(l.building || '').trim().toUpperCase();
+  const buildingClean = l.buildingName || BUILDING_TITLES[bCode] ||
+    ((!bCode || bCode === 'C' || bCode === 'С') ? 'Главный корпус' : bCode);
   const floorClean = (l.floor !== undefined && l.floor !== null && l.floor !== '')
     ? String(l.floor).trim()
     : '';
@@ -169,7 +250,6 @@ function buildLessonReminderVariables(item = {}, { recalculateLive = false } = {
 
   const subgroupClean = String(l.subgroup || '').trim();
 
-  // Составная переменная без ведущего \n и без жёстко зашитых слов «Преподаватель:» / «Группа:»
   const extraParts = [];
   if (item.role === 'lecturer') {
     if (groupClean) extraParts.push(groupClean);
@@ -193,6 +273,9 @@ function buildLessonReminderVariables(item = {}, { recalculateLive = false } = {
   );
 
   return {
+    webappUrl: WEBAPP_URL,
+    scheduleUrl: SCHEDULE_WEBAPP_URL,
+    roomUrl: roomClean ? `${WEBAPP_URL}?room=${encodeURIComponent(roomClean)}` : WEBAPP_URL,
     minutesLeft: String(dynamicMinutesLeft),
     dayName: cleanDayNote,
     dayNote: cleanDayNote,
@@ -212,6 +295,50 @@ function buildLessonReminderVariables(item = {}, { recalculateLive = false } = {
     extraInfo,
     name: String(item.firstName || 'друг').trim(),
     target: String(item.targetName || '').trim()
+  };
+}
+
+function buildNextDayReminderVariables(item = {}) {
+  const lessons = Array.isArray(item.lessons) ? item.lessons : [];
+  let firstLessonTime = '';
+  if (lessons.length > 0 && lessons[0].time) {
+    const m = String(lessons[0].time).trim().match(/^(\d{1,2}:\d{2})/);
+    firstLessonTime = m ? m[1] : String(lessons[0].time).trim().split(/[–-]/)[0].trim();
+  }
+
+  const lines = lessons.map((l, idx) => {
+    const num = l.pairNumber || (idx + 1);
+    const numEmoji = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'][num - 1] || `${num}.`;
+    const timeStr = String(l.time || '').trim();
+    const typeStr = String(l.type || '').replace(/^\[|\]$/g, '').replace(/\.+$/, '').trim();
+    const subjStr = String(l.subject || 'Занятие').trim();
+    const roomClean = String(l.roomShort || l.room || '').replace(/^Ауд\.?\s*/i, '').trim();
+    const bCode = String(l.building || 'C').trim().toUpperCase();
+    const isNamedPlace = /^(спортзал|актовый|зал|библиотека|буфет|столовая|каф\.|кафедра)/i.test(roomClean);
+    const roomWithBuilding = roomClean
+      ? (isNamedPlace
+        ? roomClean
+        : (bCode && bCode !== 'C' && bCode !== 'С' && !roomClean.toUpperCase().startsWith(bCode)
+          ? `ауд. ${bCode}-${roomClean}`
+          : `ауд. ${roomClean}`))
+      : '';
+    const whoStr = item.role === 'lecturer'
+      ? (l.group ? `гр. ${l.group}` : '')
+      : (l.lecturer || '');
+    const details = [roomWithBuilding, whoStr].filter(Boolean).join(', ');
+    return `${numEmoji} \`${timeStr}\` — *${typeStr ? typeStr + '. ' : ''}${subjStr}*${details ? ` _(${details})_` : ''}`;
+  });
+
+  return {
+    webappUrl: WEBAPP_URL,
+    scheduleUrl: SCHEDULE_WEBAPP_URL,
+    dayName: String(item.dayName || 'Завтра').trim(),
+    date: String(item.date || '').trim(),
+    target: String(item.targetName || '').trim(),
+    lessonsCount: String(item.lessonsCount || lessons.length || 0),
+    firstLessonTime,
+    lessonsList: lines.join('\n'),
+    name: String(item.firstName || 'друг').trim()
   };
 }
 
@@ -379,7 +506,40 @@ if (bot) {
     return replyWithRenderedTemplate(ctx, 'map_command', { name }, mainReplyKeyboard);
   });
 
-  bot.command('schedule', (ctx) => {
+  bot.command('schedule', async (ctx) => {
+    const text = (ctx.message?.text || '').trim();
+    const arg = text.replace(/^\/schedule\s*/i, '').trim();
+    const u = userStore.getUserByTelegramId(ctx.from.id);
+    const target = arg || (u && u.targetName) || '';
+
+    if (target) {
+      try {
+        const type = (u && u.role === 'lecturer') ? 'lecturer' : 'group';
+        const res = await fetch(`${API_BASE}/api/entity-schedule?type=${type}&name=${encodeURIComponent(target)}`);
+        if (res.ok) {
+          const data = await res.json();
+          const days = data.days || [];
+          if (days.length > 0) {
+            let msg = `📅 *Расписание для ${data.fullName || target}:*\n`;
+            let hasLessons = false;
+            days.slice(0, 3).forEach(d => {
+              if (d.lessons && d.lessons.length > 0) {
+                hasLessons = true;
+                msg += `\n*${d.dayName} (${d.date}):*\n`;
+                d.lessons.forEach(l => {
+                  const roomStr = l.roomShort || l.room || '';
+                  msg += `• \`${l.time || ''}\` ${l.subject || ''} _(${l.type || ''})_ ${roomStr ? 'ауд. ' + roomStr : ''}\n`;
+                });
+              }
+            });
+            if (hasLessons) {
+              return ctx.replyWithMarkdown(msg, mainReplyKeyboard);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
     const name = ctx.from?.first_name || 'друг';
     return replyWithRenderedTemplate(ctx, 'schedule_command', { name }, mainReplyKeyboard);
   });
@@ -483,26 +643,38 @@ async function sendPngToTelegramUser(telegramId, pngBuffer, filename = 'schedule
   }
 }
 
-async function sendAdminTelegramMessage(telegramId, markdownText, variables = {}) {
+async function sendAdminTelegramMessage(telegramId, markdownText, variables = {}, customButtons = null) {
   if (!bot) return { ok: false, error: 'BOT_TOKEN не настроен на сервере' };
   const raw = String(markdownText || '').trim();
   if (!telegramId || !raw) {
     return { ok: false, error: 'Не указан Telegram ID или текст сообщения' };
   }
-  const html = renderTelegramMarkdownToHtml(raw, {
+  const fullVars = {
     webappUrl: WEBAPP_URL,
     scheduleUrl: SCHEDULE_WEBAPP_URL,
     ...variables
-  });
-  const plain = renderTelegramPlainText(raw, {
-    webappUrl: WEBAPP_URL,
-    scheduleUrl: SCHEDULE_WEBAPP_URL,
-    ...variables
-  });
+  };
+  const html = renderTelegramMarkdownToHtml(raw, fullVars);
+  const plain = renderTelegramPlainText(raw, fullVars);
+
+  let resolvedMarkup = mainReplyKeyboard;
+  if (Array.isArray(customButtons)) {
+    const renderedBtns = customButtons.map(b => ({
+      text: renderTelegramPlainText(b.text || '', fullVars),
+      type: b.type || 'callback',
+      value: renderTelegramPlainText(b.value || '', fullVars)
+    })).filter(b => b.text);
+    if (renderedBtns.length > 0) {
+      resolvedMarkup = buildTelegramMarkupFromTemplateButtons(renderedBtns, mainReplyKeyboard);
+    } else {
+      resolvedMarkup = {};
+    }
+  }
+
   try {
     await paceTelegramSend();
     await bot.telegram.sendMessage(telegramId, html, {
-      ...mainReplyKeyboard,
+      ...(resolvedMarkup || {}),
       parse_mode: 'HTML',
       disable_web_page_preview: true
     });
@@ -514,7 +686,7 @@ async function sendAdminTelegramMessage(telegramId, markdownText, variables = {}
     }
     try {
       await paceTelegramSend();
-      await bot.telegram.sendMessage(telegramId, plain, mainReplyKeyboard);
+      await bot.telegram.sendMessage(telegramId, plain, resolvedMarkup || mainReplyKeyboard);
       return { ok: true, renderedHtml: html, renderedText: plain, fallbackPlain: true };
     } catch (e2) {
       return { ok: false, error: e2.message || 'Ошибка отправки в Telegram' };
@@ -532,65 +704,114 @@ async function checkUpcomingLessonNotifications() {
     const res = await fetch(`${API_BASE}/api/internal/upcoming-notifications?markSent=0`);
     if (!res.ok) return;
     const data = await res.json();
-    if (!Array.isArray(data.notifications) || !data.notifications.length) return;
 
-    for (const item of data.notifications) {
-      if (!item.telegramId || !item.lesson) continue;
-      const u = item.userId ? userStore.getUser(item.userId) : userStore.getUserByTelegramId(item.telegramId);
-      if (u && item.slotKey && Array.isArray(u.notifiedSlots) && u.notifiedSlots.includes(item.slotKey)) {
-        continue;
-      }
+    // 1. Уведомления за 15 минут до начала пары
+    if (Array.isArray(data.notifications) && data.notifications.length > 0 && userStore.isBotTemplateEnabled('lesson_reminder')) {
+      for (const item of data.notifications) {
+        if (!item.telegramId || !item.lesson) continue;
+        const u = item.userId ? userStore.getUser(item.userId) : userStore.getUserByTelegramId(item.telegramId);
+        if (u && item.slotKey && Array.isArray(u.notifiedSlots)) {
+          if (u.notifiedSlots.some(s => s === item.slotKey || String(s).startsWith(item.slotKey + '|'))) {
+            continue;
+          }
+        }
 
-      await paceTelegramSend();
+        await paceTelegramSend();
 
-      // Пересчитываем {{minutesLeft}} непосредственно перед отправкой конкретному пользователю,
-      // чтобы при большой очереди и рейтлимитах Telegram каждый получал актуальное время до пары.
-      let vars = buildLessonReminderVariables(
-        {
-          ...item,
-          firstName: (u && u.firstName) || '',
-          targetName: (u && u.targetName) || item.targetName || ''
-        },
-        { recalculateLive: true }
-      );
-      let rendered = userStore.renderBotMessage('lesson_reminder', vars);
+        let vars = buildLessonReminderVariables(
+          {
+            ...item,
+            firstName: (u && u.firstName) || '',
+            targetName: (u && u.targetName) || item.targetName || ''
+          },
+          { recalculateLive: true }
+        );
+        let rendered = userStore.renderBotMessage('lesson_reminder', vars);
+        const markup = Array.isArray(rendered.buttons) && rendered.buttons.length > 0
+          ? buildTelegramMarkupFromTemplateButtons(rendered.buttons, mainReplyKeyboard)
+          : mainReplyKeyboard;
 
-      try {
         try {
-          await bot.telegram.sendMessage(item.telegramId, rendered.html, {
-            ...mainReplyKeyboard,
-            parse_mode: 'HTML',
-            disable_web_page_preview: true
-          });
-        } catch (err) {
-          const retryAfter = err?.response?.parameters?.retry_after || err?.parameters?.retry_after;
-          if (retryAfter) {
-            await sleepMs((Number(retryAfter) + 1) * 1000);
-            await paceTelegramSend();
-            // После ожидания кд Telegram повторно пересчитываем актуальные минуты до начала пары
-            vars = buildLessonReminderVariables(
-              {
-                ...item,
-                firstName: (u && u.firstName) || '',
-                targetName: (u && u.targetName) || item.targetName || ''
-              },
-              { recalculateLive: true }
-            );
-            rendered = userStore.renderBotMessage('lesson_reminder', vars);
+          try {
             await bot.telegram.sendMessage(item.telegramId, rendered.html, {
-              ...mainReplyKeyboard,
+              ...(markup || {}),
               parse_mode: 'HTML',
               disable_web_page_preview: true
             });
-          } else {
-            await bot.telegram.sendMessage(item.telegramId, rendered.text, mainReplyKeyboard);
+          } catch (err) {
+            const retryAfter = err?.response?.parameters?.retry_after || err?.parameters?.retry_after;
+            if (retryAfter) {
+              await sleepMs((Number(retryAfter) + 1) * 1000);
+              await paceTelegramSend();
+              vars = buildLessonReminderVariables(
+                {
+                  ...item,
+                  firstName: (u && u.firstName) || '',
+                  targetName: (u && u.targetName) || item.targetName || ''
+                },
+                { recalculateLive: true }
+              );
+              rendered = userStore.renderBotMessage('lesson_reminder', vars);
+              await bot.telegram.sendMessage(item.telegramId, rendered.html, {
+                ...(markup || {}),
+                parse_mode: 'HTML',
+                disable_web_page_preview: true
+              });
+            } else {
+              await bot.telegram.sendMessage(item.telegramId, rendered.text, markup || mainReplyKeyboard);
+            }
           }
+          if (item.userId && item.slotKey) {
+            userStore.upsertUser(item.userId, { lastNotifiedSlot: item.slotKey });
+          }
+        } catch (sendErr) {
+          console.warn(`[bot/notify] Не удалось отправить уведомление ${item.telegramId}:`, sendErr.message);
         }
-        if (item.userId && item.slotKey) {
-          userStore.upsertUser(item.userId, { lastNotifiedSlot: item.slotKey });
+      }
+    }
+
+    // 2. Вечерние уведомления о занятиях следующего дня
+    if (Array.isArray(data.nextDayNotifications) && data.nextDayNotifications.length > 0 && userStore.isBotTemplateEnabled('next_day_reminder')) {
+      for (const item of data.nextDayNotifications) {
+        if (!item.telegramId || !Array.isArray(item.lessons) || !item.lessons.length) continue;
+        const u = item.userId ? userStore.getUser(item.userId) : userStore.getUserByTelegramId(item.telegramId);
+        if (u && item.slotKey && Array.isArray(u.notifiedSlots) && u.notifiedSlots.includes(item.slotKey)) {
+          continue;
         }
-      } catch (sendErr) {
-        console.warn(`[bot/notify] Не удалось отправить уведомление ${item.telegramId}:`, sendErr.message);
+
+        await paceTelegramSend();
+
+        const vars = buildNextDayReminderVariables({
+          ...item,
+          firstName: (u && u.firstName) || '',
+          targetName: (u && u.targetName) || item.targetName || ''
+        });
+        const rendered = userStore.renderBotMessage('next_day_reminder', vars);
+        const markup = Array.isArray(rendered.buttons) && rendered.buttons.length > 0
+          ? buildTelegramMarkupFromTemplateButtons(rendered.buttons, mainReplyKeyboard)
+          : mainReplyKeyboard;
+
+        try {
+          try {
+            await bot.telegram.sendMessage(item.telegramId, rendered.html, {
+              ...(markup || {}),
+              parse_mode: 'HTML',
+              disable_web_page_preview: true
+            });
+          } catch (err) {
+            const retryAfter = err?.response?.parameters?.retry_after || err?.parameters?.retry_after;
+            if (retryAfter) {
+              await sleepMs((Number(retryAfter) + 1) * 1000);
+              await paceTelegramSend();
+            }
+            await bot.telegram.sendMessage(item.telegramId, rendered.text, markup || mainReplyKeyboard);
+          }
+          if (item.userId && item.slotKey) {
+            userStore.upsertUser(item.userId, { lastNotifiedSlot: item.slotKey });
+          }
+        } catch (sendErr) {
+          console.warn(`[bot/next-day] Не удалось отправить вечернее уведомление ${item.telegramId}:`, sendErr.message);
+        }
       }
     }
   } catch (e) {
@@ -664,6 +885,7 @@ module.exports = {
   startBot,
   getBotUsername,
   buildLessonReminderVariables,
+  buildNextDayReminderVariables,
   checkUpcomingLessonNotifications,
   sendPngToTelegramUser,
   sendAdminTelegramMessage

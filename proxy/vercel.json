@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "https://ais-pre-irnfdqzemrx7nu7xzzdevi-814881682897.us-east1.run.app/$1"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rgrtu-map-v1.4.7';
+const CACHE_NAME = 'rgrtu-map-v1.5.0';
 
 const LOCAL_PRECACHE_URLS = [
   '/',
@@ -26,12 +26,9 @@ const LOCAL_PRECACHE_URLS = [
   '/api/schedule-directory'
 ];
 
-const CDN_PRECACHE_URLS = [];
-
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
-      // Кэшируем локальные файлы без зависимости от сторонних CDN
       await Promise.allSettled(
         LOCAL_PRECACHE_URLS.map((url) => cache.add(url).catch((err) => console.warn('[sw] Precache local failed:', url, err)))
       );
@@ -57,7 +54,21 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  // 1. Навигационные запросы (открытие главной страницы браузером)
+  // Никогда не перехватываем и не кэшируем админ-панель, редактор графа и их скрипты/стили/API
+  if (
+    url.pathname.startsWith('/admin') ||
+    url.pathname.startsWith('/editor') ||
+    url.pathname.startsWith('/js/admin') ||
+    url.pathname.startsWith('/css/admin') ||
+    url.pathname.startsWith('/js/editor') ||
+    url.pathname.startsWith('/css/editor') ||
+    url.pathname.startsWith('/api/admin') ||
+    url.pathname.startsWith('/api/editor')
+  ) {
+    return;
+  }
+
+  // 1. Навигационные запросы (открытие главной страницы браузером) — Network-first
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
@@ -69,7 +80,6 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(async () => {
-          // При отсутствии интернета открываем закэшированную оболочку index.html
           return (
             (await caches.match(event.request, { ignoreSearch: true })) ||
             (await caches.match('/index.html')) ||
@@ -80,7 +90,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 2. Внешние CDN библиотеки (Leaflet, шрифты, иконки MDI, Telegram WebApp)
+  // 2. Внешние CDN библиотеки (шрифты, иконки, Telegram WebApp)
   const isCdn =
     url.hostname === 'unpkg.com' ||
     url.hostname === 'cdn.jsdelivr.net' ||
@@ -106,37 +116,38 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 3. Запросы к нашему домену (JS, CSS, SVG, JSON, API)
+  // 3. Запросы к нашему домену (JS, CSS, SVG, JSON, API) — Network-first для актуальности кода
   if (url.origin === self.location.origin) {
-    const isStaticAsset =
+    const isCodeOrDataAsset =
       url.pathname.endsWith('.js') ||
       url.pathname.endsWith('.css') ||
-      url.pathname.endsWith('.svg') ||
       url.pathname.endsWith('.json') ||
+      url.pathname.endsWith('.svg') ||
       url.pathname.endsWith('.ttf') ||
+      url.pathname.endsWith('.woff2') ||
       url.pathname.endsWith('.png');
 
-    if (isStaticAsset) {
-      // Stale-while-revalidate с игнорированием версионных хэшей в query (?v=...)
+    if (isCodeOrDataAsset) {
       event.respondWith(
-        caches.match(event.request, { ignoreSearch: true }).then((cachedResponse) => {
-          const fetchPromise = fetch(event.request)
-            .then((networkResponse) => {
-              if (networkResponse && networkResponse.status === 200) {
-                const clone = networkResponse.clone();
-                caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-              }
-              return networkResponse;
-            })
-            .catch(() => cachedResponse);
-
-          return cachedResponse || fetchPromise;
-        })
+        fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              const clone = networkResponse.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            }
+            return networkResponse;
+          })
+          .catch(async () => {
+            return (
+              (await caches.match(event.request)) ||
+              (await caches.match(event.request, { ignoreSearch: true }))
+            );
+          })
       );
       return;
     }
 
-    // Для API данных расписания и комнат: Network-first с откатом на кэш с точным поиском по query
+    // Для API данных расписания и комнат: Network-first с откатом на кэш
     const isScheduleApi =
       url.pathname === '/api/schedule' ||
       url.pathname === '/api/entity-schedule' ||
@@ -154,65 +165,23 @@ self.addEventListener('fetch', (event) => {
             return response;
           })
           .catch(async () => {
-            // 1. Точный поиск по URL с query-параметрами
             const exact = await caches.match(event.request);
             if (exact) return exact;
-
-            // 2. Если конкретная неделя не была закэширована, ищем любую сохранённую неделю этой же сущности
-            if (url.pathname === '/api/entity-schedule') {
-              const reqType = url.searchParams.get('type');
-              const reqName = url.searchParams.get('name');
-              if (reqType && reqName) {
-                const cache = await caches.open(CACHE_NAME);
-                const keys = await cache.keys();
-                for (const k of keys) {
-                  const u = new URL(k.url);
-                  if (
-                    u.pathname === '/api/entity-schedule' &&
-                    u.searchParams.get('type') === reqType &&
-                    u.searchParams.get('name') === reqName
-                  ) {
-                    const fallback = await cache.match(k);
-                    if (fallback) return fallback;
-                  }
-                }
+            const byPath = await caches.match(event.request, { ignoreSearch: true });
+            if (byPath) return byPath;
+            return new Response(
+              JSON.stringify({
+                offline: true,
+                error: 'Нет подключения к сети, и это расписание ещё не сохранено в офлайн-кэше.'
+              }),
+              {
+                status: 503,
+                headers: { 'Content-Type': 'application/json; charset=utf-8' }
               }
-            }
-
-            // 3. Для расписания конкретной аудитории
-            if (url.pathname === '/api/schedule') {
-              const classroom = url.searchParams.get('classroom');
-              if (classroom) {
-                const cache = await caches.open(CACHE_NAME);
-                const keys = await cache.keys();
-                for (const k of keys) {
-                  const u = new URL(k.url);
-                  if (u.pathname === '/api/schedule' && u.searchParams.get('classroom') === classroom) {
-                    const fallback = await cache.match(k);
-                    if (fallback) return fallback;
-                  }
-                }
-              }
-            }
-
-            return await caches.match(event.request, { ignoreSearch: true });
+            );
           })
       );
       return;
     }
-
-    // Для остальных API запросов
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => caches.match(event.request))
-    );
   }
 });
-

@@ -14,6 +14,15 @@
       document.documentElement.dataset.theme = 'light';
       document.documentElement.dataset.themePref = 'system';
     }
+    try {
+      const APP_SW_VER = '1.5.1';
+      if (localStorage.getItem('radikmap_sw_ver') !== APP_SW_VER && 'caches' in window) {
+        caches.keys().then(function (keys) {
+          keys.forEach(function (k) { caches.delete(k); });
+        });
+        localStorage.setItem('radikmap_sw_ver', APP_SW_VER);
+      }
+    } catch (e) {}
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Карта РГРТУ — Интерактивная навигация и расписание</title>
@@ -27,7 +36,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="vendor/mdi/css/materialdesignicons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=1.4.7">
+  <link rel="stylesheet" href="css/style.css?v=1.5.1">
   <script src="vendor/telegram/telegram-web-app.js"></script>
 </head>
 <body>
@@ -205,8 +214,54 @@
       <div id="map-gps-banner" class="map-gps-banner hidden" role="status" aria-live="polite">
         <i class="mdi mdi-crosshairs-gps" style="color:#2563eb;font-size:16px;flex-shrink:0"></i>
         <span id="map-gps-banner-text" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">Определение позиции…</span>
+        <button type="button" id="map-gps-diag-btn" class="map-gps-banner-btn" title="Живая диагностика сигнала GPS и калибровка по аудитории">Диагностика</button>
         <button type="button" id="map-gps-refine-btn" class="map-gps-banner-btn" title="Указать точку на коридоре вручную">Уточнить</button>
         <button type="button" id="map-gps-close-btn" class="map-gps-banner-btn" title="Отключить GPS" aria-label="Закрыть">✕</button>
+      </div>
+
+      <!-- Панель живой диагностики сигнала GPS и полевой калибровки в 1 клик по аудитории -->
+      <div id="map-gps-diag-panel" class="map-gps-diag-panel hidden" role="dialog" aria-label="Диагностика GPS и калибровка">
+        <div class="map-gps-diag-header">
+          <div class="map-gps-diag-title">Диагностика GPS и калибровка</div>
+          <button type="button" id="map-gps-diag-close" class="map-gps-diag-close" aria-label="Закрыть">✕</button>
+        </div>
+        <div class="map-gps-diag-grid tabular-nums">
+          <div class="map-gps-diag-row">
+            <span class="map-gps-diag-label">Статус</span>
+            <span class="map-gps-diag-val" id="gps-diag-status">Ожидание сигнала…</span>
+          </div>
+          <div class="map-gps-diag-row">
+            <span class="map-gps-diag-label">WGS84 (lat, lon)</span>
+            <span class="map-gps-diag-val">
+              <span id="gps-diag-latlon">—</span>
+              <button type="button" id="gps-diag-copy-btn" class="map-gps-diag-mini-btn" title="Скопировать координаты">Копировать</button>
+            </span>
+          </div>
+          <div class="map-gps-diag-row">
+            <span class="map-gps-diag-label">Точность · до стен</span>
+            <span class="map-gps-diag-val" id="gps-diag-accuracy">—</span>
+          </div>
+          <div class="map-gps-diag-row">
+            <span class="map-gps-diag-label">План SVG (X, Y)</span>
+            <span class="map-gps-diag-val" id="gps-diag-svgxy">—</span>
+          </div>
+          <div class="map-gps-diag-row">
+            <span class="map-gps-diag-label">Рядом на этаже</span>
+            <span class="map-gps-diag-val" id="gps-diag-room">—</span>
+          </div>
+        </div>
+        <div class="map-gps-diag-calib">
+          <label for="gps-diag-room-input" class="map-gps-diag-calib-label">Полевая калибровка в 1 клик по аудитории</label>
+          <div class="map-gps-diag-calib-bar">
+            <input type="text" id="gps-diag-room-input" class="map-gps-diag-input" list="gps-diag-room-datalist" placeholder="Аудитория (напр. 106а, 130, 225)…" autocomplete="off">
+            <datalist id="gps-diag-room-datalist"></datalist>
+            <button type="button" id="gps-diag-calibrate-room-btn" class="map-gps-diag-primary-btn">Я здесь</button>
+          </div>
+          <div class="map-gps-diag-calib-actions">
+            <button type="button" id="gps-diag-pick-map-btn" class="map-gps-diag-sec-btn">Указать точку на карте</button>
+            <button type="button" id="gps-diag-reset-offset-btn" class="map-gps-diag-sec-btn">Сбросить поправку</button>
+          </div>
+        </div>
       </div>
     </div>
     <aside id="panel"></aside>
@@ -260,6 +315,6 @@
   </div>
 
   <script src="vendor/leaflet/leaflet.js"></script>
-  <script src="js/app.js?v=1.4.7"></script>
+  <script src="js/app.js?v=1.5.1"></script>
 </body>
 </html>

@@ -3509,13 +3509,39 @@ function computeNowStatus(data) {
   return { type: 'free', untilText: 'до конца недели' };
 }
 
+function resolveLessonBuildingCode(lesson) {
+  if (!lesson) return 'C';
+  const rawBld = String(lesson.building || '').trim().toUpperCase().replace(/С/g, 'C');
+  if (rawBld && rawBld !== 'C') return rawBld;
+  const bName = String(lesson.buildingName || '').toLowerCase();
+  if (bName.includes('бизнес') || bName.includes('инкубатор')) return 'B';
+  if (bName.includes('лаборат')) return 'L';
+  if (bName.includes('перв')) return 'F';
+  const roomText = `${lesson.room || ''} ${lesson.roomShort || ''}`;
+  if (/(?:корп\.?\s*B|бизнес|\(B\)|\sB$)/i.test(roomText)) return 'B';
+  if (/(?:корп\.?\s*L|лаб\.?\s*корп|лабораторн|\(L\)|\sL$)/i.test(roomText)) return 'L';
+  if (/(?:корп\.?\s*F|1\s*корп|перв|\(F\)|\sF$)/i.test(roomText)) return 'F';
+  if (lesson.roomId && typeof roomsMeta === 'object' && roomsMeta && roomsMeta[lesson.roomId]?.building) {
+    return String(roomsMeta[lesson.roomId].building).toUpperCase().replace(/С/g, 'C');
+  }
+  return rawBld || 'C';
+}
+
+function formatRoomWithBuildingSuffix(cleanRoomShort, bldCode) {
+  const clean = String(cleanRoomShort || '').replace(/\s*\([CСBLF]\)\s*$/i, '').trim();
+  if (!clean) return '';
+  const bld = String(bldCode || 'C').toUpperCase().replace(/С/g, 'C');
+  if (new RegExp(`\\s+${bld}$`, 'i').test(clean)) return clean;
+  return `${clean} ${bld}`;
+}
+
 function formatStatusRoomLabelClient(lesson) {
   if (!lesson) return '';
   const raw = lesson.roomShort === '🏀' ? 'Спортзал' : String(lesson.roomShort || '').trim();
   if (!raw) return '';
   if (/^(спортзал|спортивный зал|зал|стадион|бассейн|каф)/i.test(raw)) return raw;
-  const bld = lesson.building || 'С';
-  const withBld = String(raw).endsWith(` ${bld}`) ? raw : `${raw} ${bld}`;
+  const bld = resolveLessonBuildingCode(lesson);
+  const withBld = formatRoomWithBuildingSuffix(raw, bld);
   return `ауд. ${withBld}`;
 }
 
@@ -4402,12 +4428,11 @@ function buildWeeklyScheduleTableHtml(days = [], { mode = 'group' } = {}) {
             const cleanRoomShort = l.roomShort === '🏀' ? 'Спортзал' : (l.roomShort || '');
             const isNamedVenue = /^(спортзал|спортивный зал|зал|стадион|бассейн|каф)/i.test(cleanRoomShort);
             const prefix = isNamedVenue ? '' : 'ауд. ';
-            const bld = l.building || 'С';
+            const bld = resolveLessonBuildingCode(l);
+            const shortDisp = isNamedVenue ? cleanRoomShort : formatRoomWithBuildingSuffix(cleanRoomShort, bld);
             if (l.roomId) {
-              const shortDisp = String(cleanRoomShort).endsWith(` ${bld}`) ? cleanRoomShort : `${cleanRoomShort} ${bld}`;
-              roomLinkHtml = `${prefix}<button type="button" class="wt-room-link" data-room-id="${escapeHtml(l.roomId)}" title="Открыть ${escapeHtml(cleanRoomShort)} (${l.floor ?? ''} этаж) на карте">${escapeHtml(shortDisp)}</button>`;
+              roomLinkHtml = `${prefix}<button type="button" class="wt-room-link" data-room-id="${escapeHtml(l.roomId)}" title="Открыть ${escapeHtml(shortDisp)} (${l.floor ?? ''} этаж) на карте">${escapeHtml(shortDisp)}</button>`;
             } else if (cleanRoomShort) {
-              const shortDisp = String(cleanRoomShort).endsWith(` ${bld}`) ? cleanRoomShort : `${cleanRoomShort} ${bld}`;
               roomLinkHtml = `<span class="wt-room-unmapped">${prefix}${escapeHtml(shortDisp)}</span>`;
             }
           }
@@ -4912,80 +4937,100 @@ async function loadCampusFullScheduleCache() {
   }
 }
 
+function getRoomScheduleShortName(meta) {
+  if (!meta) return '';
+  const type = String(meta.type || '').toLowerCase();
+  const rawName = String(meta.name || meta.shortName || '').trim();
+  if (type === 'gym' || /спортзал|спортивный зал|бассейн|стадион/i.test(rawName)) {
+    return 'Спортзал';
+  }
+  const numMatch = rawName.match(/(?:^|\b)(?:ауд\.?|аудитория|каб\.?)?\s*(\d{2,4}[а-яa-z0-9/-]*)/i);
+  if (numMatch && numMatch[1]) {
+    return numMatch[1].replace(/\s+/g, '');
+  }
+  return rawName.replace(/^(аудитория|ауд\.?)\s*/i, '').trim() || String(meta.classroom || '');
+}
+
 function buildEntityScheduleFromCampusCache(type, name, weekDate = selectedScheduleWeekDate) {
   if (!campusScheduleCache) return null;
-  const targetNorm = String(name || '').toLowerCase().replace(/ё/g, 'е').trim();
-  const daysMap = new Map();
+  try {
+    const targetNorm = String(name || '').toLowerCase().replace(/ё/g, 'е').trim();
+    const daysMap = new Map();
 
-  for (const [roomId, roomEntry] of Object.entries(campusScheduleCache)) {
-    if (!roomEntry || !Array.isArray(roomEntry.days)) continue;
-    const meta = roomsMeta[roomId] || {};
-    const shortName = getRoomScheduleShortName(meta) || meta.classroom || roomId;
+    for (const [roomId, roomEntry] of Object.entries(campusScheduleCache)) {
+      if (!roomEntry || !Array.isArray(roomEntry.days)) continue;
+      const meta = (typeof roomsMeta === 'object' && roomsMeta && roomsMeta[roomId]) || {};
+      const shortName = getRoomScheduleShortName(meta) || meta.classroom || roomId;
+      const bldCode = String(meta.building || 'C').toUpperCase().replace(/С/g, 'C');
 
-    for (const d of roomEntry.days) {
-      if (!daysMap.has(d.date)) {
-        daysMap.set(d.date, { date: d.date, dayName: d.dayName, lessons: [] });
-      }
-      const dayObj = daysMap.get(d.date);
-
-      for (const l of (d.lessons || [])) {
-        let matches = false;
-        if (type === 'group') {
-          if (Array.isArray(l.groups) && l.groups.some(g => String(g).toLowerCase().trim() === targetNorm)) {
-            matches = true;
-          } else if (String(l.group || '').toLowerCase().includes(targetNorm)) {
-            matches = true;
-          }
-        } else if (type === 'lecturer') {
-          const lecStr = String(l.lecturer || '').toLowerCase().replace(/ё/g, 'е');
-          if (lecStr.includes(targetNorm)) {
-            matches = true;
-          }
-        } else if (type === 'classroom') {
-          if (roomId === name || String(meta.classroom) === targetNorm || String(shortName).toLowerCase() === targetNorm) {
-            matches = true;
-          }
+      for (const d of roomEntry.days) {
+        if (!daysMap.has(d.date)) {
+          daysMap.set(d.date, { date: d.date, dayName: d.dayName, lessons: [] });
         }
+        const dayObj = daysMap.get(d.date);
 
-        if (matches) {
-          dayObj.lessons.push({
-            ...l,
-            roomId,
-            roomShort: shortName,
-            floor: meta.floor,
-            buildingName: BUILDINGS[meta.building || 'C']?.name || 'Главный корпус'
-          });
+        for (const l of (d.lessons || [])) {
+          let matches = false;
+          if (type === 'group') {
+            if (Array.isArray(l.groups) && l.groups.some(g => String(g).toLowerCase().trim() === targetNorm)) {
+              matches = true;
+            } else if (String(l.group || '').toLowerCase().includes(targetNorm)) {
+              matches = true;
+            }
+          } else if (type === 'lecturer') {
+            const lecStr = String(l.lecturer || '').toLowerCase().replace(/ё/g, 'е');
+            if (lecStr.includes(targetNorm)) {
+              matches = true;
+            }
+          } else if (type === 'classroom') {
+            if (roomId === name || String(meta.classroom) === targetNorm || String(shortName).toLowerCase() === targetNorm) {
+              matches = true;
+            }
+          }
+
+          if (matches) {
+            dayObj.lessons.push({
+              ...l,
+              roomId,
+              roomShort: shortName,
+              floor: meta.floor,
+              building: l.building || bldCode,
+              buildingName: l.buildingName || BUILDINGS[bldCode]?.name || 'Главный корпус'
+            });
+          }
         }
       }
     }
+
+    let days = [...daysMap.values()]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(d => {
+        d.lessons.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+        return d;
+      });
+
+    const hasAnyLessons = days.some(d => d.lessons.length > 0);
+    if (!hasAnyLessons) return null;
+
+    if (weekDate) {
+      days = adaptScheduleDaysToTargetMonday(days, weekDate);
+    }
+
+    return {
+      entityType: type,
+      name,
+      fullName: type === 'group' ? `Группа ${name}` : name,
+      days,
+      availableWeeks: availableScheduleWeeks.length > 0 ? availableScheduleWeeks : undefined,
+      selectedWeekDate: weekDate,
+      isOfflineCopy: true
+    };
+  } catch (err) {
+    return null;
   }
-
-  let days = [...daysMap.values()]
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map(d => {
-      d.lessons.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-      return d;
-    });
-
-  const hasAnyLessons = days.some(d => d.lessons.length > 0);
-  if (!hasAnyLessons) return null;
-
-  if (weekDate) {
-    days = adaptScheduleDaysToTargetMonday(days, weekDate);
-  }
-
-  return {
-    entityType: type,
-    name,
-    fullName: type === 'group' ? `Группа ${name}` : name,
-    days,
-    availableWeeks: availableScheduleWeeks.length > 0 ? availableScheduleWeeks : undefined,
-    selectedWeekDate: weekDate,
-    isOfflineCopy: true
-  };
 }
 
-const OFFLINE_SCHEDULE_CACHE_PREFIX = 'radikmap_offline_schedule_';
+const OFFLINE_SCHEDULE_CACHE_PREFIX = 'radikmap_offline_schedule_v2_';
 
 function saveEntityScheduleToOfflineStorage(type, name, weekDate, data) {
   try {
@@ -6033,8 +6078,8 @@ function exportScheduleToPng() {
         mctx.font = '500 11px Onest, sans-serif';
         g.items.forEach(it => {
           const cleanRoom = it.roomShort === '🏀' ? 'Спортзал' : (it.roomShort || '');
-          const bld = it.building || 'С';
-          const roomDisp = cleanRoom ? (/^(спортзал|зал)/i.test(cleanRoom) ? cleanRoom : (String(cleanRoom).endsWith(` ${bld}`) ? `ауд. ${cleanRoom}` : `ауд. ${cleanRoom} ${bld}`)) : '';
+          const bld = resolveLessonBuildingCode(it);
+          const roomDisp = cleanRoom ? (/^(спортзал|зал)/i.test(cleanRoom) ? cleanRoom : `ауд. ${formatRoomWithBuildingSuffix(cleanRoom, bld)}`) : '';
           const line = [formatSubgroupDisplay(it.subgroup), it.lecturer || it.group, roomDisp].filter(Boolean).join(', ');
           const detLines = wrapCanvasLines(mctx, line, colW - 20);
           cellH += Math.max(16, detLines.length * 15) + 3;
@@ -6182,8 +6227,8 @@ function exportScheduleToPng() {
         ctx.font = '500 11px Onest, sans-serif';
         g.items.forEach(it => {
           const cleanRoom = it.roomShort === '🏀' ? 'Спортзал' : (it.roomShort || '');
-          const bld = it.building || 'С';
-          const roomDisp = cleanRoom ? (/^(спортзал|зал)/i.test(cleanRoom) ? cleanRoom : (String(cleanRoom).endsWith(` ${bld}`) ? `ауд. ${cleanRoom}` : `ауд. ${cleanRoom} ${bld}`)) : '';
+          const bld = resolveLessonBuildingCode(it);
+          const roomDisp = cleanRoom ? (/^(спортзал|зал)/i.test(cleanRoom) ? cleanRoom : `ауд. ${formatRoomWithBuildingSuffix(cleanRoom, bld)}`) : '';
           const line = [formatSubgroupDisplay(it.subgroup), it.lecturer || it.group, roomDisp].filter(Boolean).join(', ');
           const detLines = wrapCanvasLines(ctx, line, colW - 20);
           detLines.forEach((ln, lnIdx) => {
@@ -7986,57 +8031,295 @@ function openAddPoiMarkerModal(svgX, svgY) {
   );
 }
 
-// ================ ГИБРИДНЫЙ GPS + WI-FI / BLE FUSION + MAP-MATCHING ПО КОРИДОРАМ ================
+// ================ ГИБРИДНЫЙ GPS + WI-FI / BLE FUSION + AFFINE MAP-MATCHING ПО КОРИДОРАМ ================
 
-function projectLatLonToSvgFloor(lat, lon, building = currentBuilding) {
+const DEFAULT_CLIENT_RSREU_ANCHORS = [
+  { id: 'r_106a', label: 'Аудитория 106а (правое крыло, 1 эт.)', roomId: 'C_auditori_106a', building: 'C', floor: 1, lat: 54.614420, lon: 39.724645, x: 2065, y: 599 },
+  { id: 'r_wardrobe_r', label: 'Вход и гардероб правого крыла', roomId: 'C_wardrobe_f1_r', building: 'C', floor: 1, lat: 54.614309, lon: 39.724223, x: 1844, y: 683 },
+  { id: 'r_102m', label: 'Край правого крыла (лаб. 102м)', roomId: 'C_spec_iibmt_lab_102m', building: 'C', floor: 1, lat: 54.614678, lon: 39.724924, x: 2371, y: 711 },
+  { id: 'c_main_entrance', label: 'Главный вход (центральный двор)', roomId: 'C_spec_ohrana', building: 'C', floor: 1, lat: 54.613595, lon: 39.723980, x: 1229, y: 238 },
+  { id: 'l_wardrobe_l', label: 'Вход и гардероб левого крыла', roomId: 'C_wardrobe_f1_l', building: 'C', floor: 1, lat: 54.613639, lon: 39.722954, x: 806, y: 657 },
+  { id: 'l_130', label: 'Аудитория 130 (левое крыло, 1 эт.)', roomId: 'C_auditori_130', building: 'C', floor: 1, lat: 54.613410, lon: 39.722760, x: 546, y: 583 },
+  { id: 'l_gym', label: 'Край левого крыла (Спортзал)', roomId: 'C_gym_main', building: 'C', floor: 1, lat: 54.613136, lon: 39.722043, x: 20, y: 634 },
+  { id: 'b_sw_153b', label: 'Юго-восточный фасад (левая часть, 153б)', roomId: 'C_spec_153b', building: 'C', floor: 1, lat: 54.613074, lon: 39.723438, x: 606, y: 12 },
+  { id: 'b_ne_125a', label: 'Юго-восточный фасад (правая часть, 125а)', roomId: 'C_auditori_125a', building: 'C', floor: 1, lat: 54.613860, lon: 39.724908, x: 1790, y: 12 }
+];
+
+const GPS_LOCAL_OFFSET_KEY = 'radikmap_gps_offset_v2';
+
+function getStoredLocalGpsOffset() {
+  try {
+    const raw = localStorage.getItem(GPS_LOCAL_OFFSET_KEY);
+    if (!raw) return { dx: 0, dy: 0 };
+    const parsed = JSON.parse(raw);
+    const dx = Number(parsed?.dx);
+    const dy = Number(parsed?.dy);
+    if (Number.isFinite(dx) && Number.isFinite(dy) && Math.hypot(dx, dy) < 1200) {
+      return { dx, dy, roomId: parsed.roomId || '', updatedAt: parsed.updatedAt || 0 };
+    }
+  } catch (e) {}
+  return { dx: 0, dy: 0 };
+}
+
+function setStoredLocalGpsOffset(dx, dy, roomId = '') {
+  try {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) {
+      localStorage.removeItem(GPS_LOCAL_OFFSET_KEY);
+      gpsState.localOffsetSvg = { dx: 0, dy: 0 };
+      return;
+    }
+    const payload = {
+      dx: Math.round(dx * 10) / 10,
+      dy: Math.round(dy * 10) / 10,
+      roomId: String(roomId || ''),
+      updatedAt: Date.now()
+    };
+    localStorage.setItem(GPS_LOCAL_OFFSET_KEY, JSON.stringify(payload));
+    gpsState.localOffsetSvg = payload;
+  } catch (e) {}
+}
+
+function getEffectiveGpsBuildingConfig(building = currentBuilding) {
   const cfg = communityState.gpsConfig || {};
-  const bCfg = (cfg.buildings && cfg.buildings[building]) || {
-    centerLat: 54.61435,
-    centerLon: 39.70825,
-    rotationDeg: -18,
-    scaleMetersPerSvgUnit: 0.10,
-    anchors: []
-  };
+  const bCfg = (cfg.buildings && cfg.buildings[building]) || cfg || {};
 
-  const anchors = Array.isArray(bCfg.anchors) ? bCfg.anchors.filter(a => Number.isFinite(Number(a.lat)) && Number.isFinite(Number(a.lon))) : [];
-  if (anchors.length >= 2) {
-    // Используем ближайшие калибровочные опорные точки (реперы) для точной локальной интерполяции
-    let bestA = anchors[0];
-    let minD = Infinity;
-    for (const a of anchors) {
-      const d = Math.hypot((a.lat - lat) * 111320, (a.lon - lon) * 111320 * Math.cos((lat * Math.PI) / 180));
-      if (d < minD) {
-        minD = d;
-        bestA = a;
+  let centerLat = Number(bCfg.centerLat ?? cfg.centerLat ?? 54.613783);
+  let centerLon = Number(bCfg.centerLon ?? bCfg.centerLng ?? cfg.centerLon ?? cfg.centerLng ?? 39.723850);
+  let rotationDeg = Number(bCfg.rotationDeg ?? cfg.rotationDeg ?? 42.72);
+  let scale = Number(bCfg.scaleMetersPerSvgUnit ?? bCfg.metersPerSvgUnit ?? cfg.scaleMetersPerSvgUnit ?? cfg.metersPerSvgUnit ?? 0.1065);
+
+  if (!Number.isFinite(centerLat) || centerLat < 54.6110 || centerLat > 54.6170) centerLat = 54.613783;
+  if (!Number.isFinite(centerLon) || centerLon < 39.7215 || centerLon > 39.7275) centerLon = 39.723850;
+  if (!Number.isFinite(rotationDeg) || Math.abs(rotationDeg - (-18)) < 1) rotationDeg = 42.72;
+  if (!Number.isFinite(scale) || scale < 0.02 || scale > 0.5) scale = 0.1065;
+
+  const rawAnchors = [
+    ...(Array.isArray(bCfg.anchors) ? bCfg.anchors : []),
+    ...(Array.isArray(cfg.anchors) ? cfg.anchors : [])
+  ];
+
+  const anchorMap = new Map();
+  for (const defA of DEFAULT_CLIENT_RSREU_ANCHORS) {
+    anchorMap.set(defA.id, { ...defA });
+  }
+  for (const a of rawAnchors) {
+    if (!a || typeof a !== 'object') continue;
+    const lat = Number(a.lat);
+    const lon = Number(a.lon ?? a.lng);
+    const x = Number(a.x ?? a.svgX);
+    const y = Number(a.y ?? a.svgY);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (lon < 39.7210 || lon > 39.7300 || lat < 54.6100 || lat > 54.6180) continue;
+    const id = String(a.id || a.roomId || `a_${anchorMap.size + 1}`);
+    anchorMap.set(id, {
+      id,
+      label: String(a.label || id),
+      roomId: String(a.roomId || ''),
+      building: String(a.building || building || 'C'),
+      floor: Number.isFinite(Number(a.floor)) ? Number(a.floor) : 1,
+      lat,
+      lon,
+      x,
+      y
+    });
+  }
+
+  return {
+    centerLat,
+    centerLon,
+    rotationDeg,
+    scaleMetersPerSvgUnit: scale,
+    anchors: Array.from(anchorMap.values())
+  };
+}
+
+function solveLinear3x3(A, B) {
+  const m = A.map((row, idx) => [...row, B[idx]]);
+  for (let i = 0; i < 3; i++) {
+    let maxRow = i;
+    for (let k = i + 1; k < 3; k++) {
+      if (Math.abs(m[k][i]) > Math.abs(m[maxRow][i])) maxRow = k;
+    }
+    if (Math.abs(m[maxRow][i]) < 1e-9) return null;
+    [m[i], m[maxRow]] = [m[maxRow], m[i]];
+    for (let k = i + 1; k < 3; k++) {
+      const f = m[k][i] / m[i][i];
+      for (let j = i; j <= 3; j++) {
+        m[k][j] -= f * m[i][j];
       }
     }
-    const latRef = Number(bestA.lat);
-    const lonRef = Number(bestA.lon);
+  }
+  const res = [0, 0, 0];
+  for (let i = 2; i >= 0; i--) {
+    let sum = m[i][3];
+    for (let j = i + 1; j < 3; j++) sum -= m[i][j] * res[j];
+    res[i] = sum / m[i][i];
+  }
+  return res;
+}
+
+function computeMetersBetweenLatLon(lat1, lon1, lat2, lon2) {
+  const cosLat = Math.cos(((lat1 + lat2) * 0.5 * Math.PI) / 180);
+  const dNorth = (lat2 - lat1) * 111320;
+  const dEast = (lon2 - lon1) * 111320 * cosLat;
+  return Math.hypot(dEast, dNorth);
+}
+
+function projectLatLonToSvgFloor(lat, lon, building = currentBuilding, { applyLocalOffset = true } = {}) {
+  const bCfg = getEffectiveGpsBuildingConfig(building);
+  const anchors = bCfg.anchors;
+
+  let basePt = null;
+
+  // 1. Аффинная проекция по методу наименьших квадратов (МНК) + локальная коррекция невязок (IDW)
+  if (anchors.length >= 3) {
+    const lat0 = bCfg.centerLat;
+    const lon0 = bCfg.centerLon;
+    let Sxx = 0, Sxy = 0, Sx1 = 0, Syy = 0, Sy1 = 0, S11 = anchors.length;
+    let SxX = 0, SyX = 0, S1X = 0, SxY = 0, SyY = 0, S1Y = 0;
+
+    for (const a of anchors) {
+      const u = (a.lat - lat0) * 1e4;
+      const v = (a.lon - lon0) * 1e4;
+      Sxx += u * u;
+      Sxy += u * v;
+      Sx1 += u;
+      Syy += v * v;
+      Sy1 += v;
+      SxX += u * a.x;
+      SyX += v * a.x;
+      S1X += a.x;
+      SxY += u * a.y;
+      SyY += v * a.y;
+      S1Y += a.y;
+    }
+
+    const mat = [
+      [Sxx, Sxy, Sx1],
+      [Sxy, Syy, Sy1],
+      [Sx1, Sy1, S11]
+    ];
+    const cx = solveLinear3x3(mat, [SxX, SyX, S1X]);
+    const cy = solveLinear3x3(mat, [SxY, SyY, S1Y]);
+
+    if (cx && cy) {
+      const u = (lat - lat0) * 1e4;
+      const v = (lon - lon0) * 1e4;
+      let affX = cx[0] * u + cx[1] * v + cx[2];
+      let affY = cy[0] * u + cy[1] * v + cy[2];
+
+      // Локальная поправка по обратному расстоянию (IDW) к реперам корпуса
+      let sumW = 0;
+      let corrX = 0;
+      let corrY = 0;
+      let minAnchorDistM = Infinity;
+      for (const a of anchors) {
+        const ua = (a.lat - lat0) * 1e4;
+        const va = (a.lon - lon0) * 1e4;
+        const predAx = cx[0] * ua + cx[1] * va + cx[2];
+        const predAy = cy[0] * ua + cy[1] * va + cy[2];
+        const resX = a.x - predAx;
+        const resY = a.y - predAy;
+        const distM = computeMetersBetweenLatLon(lat, lon, a.lat, a.lon);
+        if (distM < minAnchorDistM) minAnchorDistM = distM;
+        const w = 1 / (distM * distM + 25);
+        sumW += w;
+        corrX += w * resX;
+        corrY += w * resY;
+      }
+
+      if (sumW > 0 && minAnchorDistM < 180) {
+        const blend = Math.max(0, Math.min(1, 1 - (minAnchorDistM - 60) / 120));
+        affX += (corrX / sumW) * blend;
+        affY += (corrY / sumW) * blend;
+      }
+
+      basePt = { x: affX, y: affY };
+    }
+  }
+
+  // 2. Резервная тригонометрическая проекция вдоль фасада РГРТУ (азимут +42.72° СВ, ось Y к ул. Гагарина СЗ)
+  if (!basePt) {
+    const { W, H } = currentSvgViewBox;
+    const latRef = bCfg.centerLat;
+    const lonRef = bCfg.centerLon;
     const eastM = (lon - lonRef) * 111320 * Math.cos((latRef * Math.PI) / 180);
     const northM = (lat - latRef) * 111320;
-    const rotRad = ((Number(bCfg.rotationDeg) || 0) * Math.PI) / 180;
-    const localX = eastM * Math.cos(rotRad) - northM * Math.sin(rotRad);
-    const localY = -(eastM * Math.sin(rotRad) + northM * Math.cos(rotRad));
-    const scale = Math.max(0.01, Number(bCfg.scaleMetersPerSvgUnit) || 0.10);
-    return {
-      x: Number(bestA.x || 0) + localX / scale,
-      y: Number(bestA.y || 0) + localY / scale
+    const azimuthRad = ((Number(bCfg.rotationDeg) || 42.72) * Math.PI) / 180;
+    // Ось X чертежа идёт с юго-запада (спортзал) на северо-восток (правое крыло, 106а)
+    const alongFacadeM = eastM * Math.cos(azimuthRad) + northM * Math.sin(azimuthRad);
+    // Ось Y чертежа (вниз, к y=714) идёт на северо-запад (к ул. Гагарина)
+    const towardsGagarinaM = -eastM * Math.sin(azimuthRad) + northM * Math.cos(azimuthRad);
+    const scale = Math.max(0.02, Number(bCfg.scaleMetersPerSvgUnit) || 0.1065);
+    basePt = {
+      x: (W || 2374) * 0.52 + alongFacadeM / scale,
+      y: (H || 714) * 0.45 + towardsGagarinaM / scale
     };
   }
 
-  const { W, H } = currentSvgViewBox;
-  const latRef = Number(bCfg.centerLat) || 54.61435;
-  const lonRef = Number(bCfg.centerLon) || 39.70825;
-  const eastM = (lon - lonRef) * 111320 * Math.cos((latRef * Math.PI) / 180);
-  const northM = (lat - latRef) * 111320;
-  const rotRad = ((Number(bCfg.rotationDeg) || 0) * Math.PI) / 180;
-  const localX = eastM * Math.cos(rotRad) - northM * Math.sin(rotRad);
-  const localY = -(eastM * Math.sin(rotRad) + northM * Math.cos(rotRad));
-  const scale = Math.max(0.01, Number(bCfg.scaleMetersPerSvgUnit) || 0.10);
-  return {
-    x: (W || 1200) / 2 + localX / scale,
-    y: (H || 800) / 2 + localY / scale
+  if (applyLocalOffset && gpsState.localOffsetSvg) {
+    return {
+      x: basePt.x + (Number(gpsState.localOffsetSvg.dx) || 0),
+      y: basePt.y + (Number(gpsState.localOffsetSvg.dy) || 0)
+    };
+  }
+
+  return basePt;
+}
+
+function evaluateCampusGeofence(lat, lon, rawSvgPt, accuracyMeters = 25, building = currentBuilding) {
+  const bCfg = getEffectiveGpsBuildingConfig(building);
+  const W = currentSvgViewBox.W || 2374;
+  const H = currentSvgViewBox.H || 714;
+  const scale = Math.max(0.05, Number(bCfg.scaleMetersPerSvgUnit) || 0.1065);
+
+  // Расстояние в единицах SVG до прямоугольника плана корпуса [0..W, 0..H]
+  const outX = rawSvgPt.x < 0 ? -rawSvgPt.x : (rawSvgPt.x > W ? rawSvgPt.x - W : 0);
+  const outY = rawSvgPt.y < 0 ? -rawSvgPt.y : (rawSvgPt.y > H ? rawSvgPt.y - H : 0);
+  const distOutsideMeters = Math.hypot(outX, outY) * scale;
+
+  // Расстояние от геометрического центра корпуса РГРТУ
+  const distCenterMeters = computeMetersBetweenLatLon(lat, lon, bCfg.centerLat, bCfg.centerLon);
+
+  // Внутри здания погрешность по сотовым вышкам и Wi-Fi часто составляет 40–150 м.
+  // Учитываем радиус точности телефона + запас на переотражения сигнала от стен.
+  const effAcc = Math.max(15, Math.min(260, Number(accuracyMeters) || 35));
+  const allowedOutsideMeters = Math.max(110, effAcc * 1.45 + 65);
+
+  const inCampus = (distOutsideMeters <= allowedOutsideMeters) || (distCenterMeters <= 250 + effAcc);
+
+  // Мягко ограничиваем точку в пределах чертежа корпуса, чтобы привязка к коридору работала без вылетов
+  const clampedPt = {
+    x: Math.max(8, Math.min(W - 8, rawSvgPt.x)),
+    y: Math.max(8, Math.min(H - 8, rawSvgPt.y))
   };
+
+  return {
+    inCampus,
+    distOutsideMeters: Math.round(distOutsideMeters),
+    distCenterMeters: Math.round(distCenterMeters),
+    clampedPt
+  };
+}
+
+function findNearestRoomOnFloor(svgPt, building = currentBuilding, floor = currentFloor) {
+  let bestRoomId = null;
+  let bestRoomMeta = null;
+  let bestDist = Infinity;
+
+  for (const [id, meta] of Object.entries(roomsMeta || {})) {
+    if (!meta || (meta.building || 'C') !== building || Number(meta.floor) !== Number(floor)) continue;
+    const c = getShapeCentroidSvg(id);
+    if (!c) continue;
+    const d = Math.hypot(c.x - svgPt.x, c.y - svgPt.y);
+    if (d < bestDist) {
+      bestDist = d;
+      bestRoomId = id;
+      bestRoomMeta = meta;
+    }
+  }
+
+  return bestRoomId ? { roomId: bestRoomId, meta: bestRoomMeta, distanceSvg: bestDist } : null;
 }
 
 function snapSvgPointToCorridor(rawPt, building = currentBuilding, floor = currentFloor) {
@@ -8086,30 +8369,104 @@ function snapSvgPointToCorridor(rawPt, building = currentBuilding, floor = curre
   return { x: bestX, y: bestY, nearestNodeId, distance: bestDist };
 }
 
-function updateGpsPositionFromSvg(svgPt, accuracyMeters = 12, sourceLabel = 'GPS + Wi-Fi/BLE') {
+function updateGpsDiagnosticPanel() {
+  const statusEl = document.getElementById('gps-diag-status');
+  const latLonEl = document.getElementById('gps-diag-latlon');
+  const accEl = document.getElementById('gps-diag-accuracy');
+  const svgXyEl = document.getElementById('gps-diag-svgxy');
+  const roomEl = document.getElementById('gps-diag-room');
+  const roomInput = document.getElementById('gps-diag-room-input');
+
+  if (statusEl) {
+    statusEl.textContent = gpsState.statusText || (gpsState.active ? 'Активно' : 'Отключено');
+  }
+  if (latLonEl) {
+    if (Number.isFinite(gpsState.rawLat) && Number.isFinite(gpsState.rawLon)) {
+      latLonEl.textContent = `${gpsState.rawLat.toFixed(6)}, ${gpsState.rawLon.toFixed(6)}`;
+    } else {
+      latLonEl.textContent = 'Нет спутниковых данных';
+    }
+  }
+  if (accEl) {
+    const accStr = gpsState.accuracy ? `±${Math.round(gpsState.accuracy)} м` : '—';
+    const wallStr = Number.isFinite(gpsState.distOutsideMeters)
+      ? (gpsState.distOutsideMeters === 0 ? 'внутри контура' : `${gpsState.distOutsideMeters} м от стены`)
+      : '';
+    accEl.textContent = [accStr, wallStr].filter(Boolean).join(' · ') || '—';
+  }
+  if (svgXyEl) {
+    if (gpsState.snapped) {
+      const offsetTag = (gpsState.localOffsetSvg && (gpsState.localOffsetSvg.dx || gpsState.localOffsetSvg.dy))
+        ? ' (с поправкой)'
+        : '';
+      svgXyEl.textContent = `X: ${Math.round(gpsState.snapped.x)}, Y: ${Math.round(gpsState.snapped.y)}${offsetTag}`;
+    } else {
+      svgXyEl.textContent = '—';
+    }
+  }
+  if (roomEl) {
+    if (gpsState.nearestRoom && gpsState.nearestRoom.meta) {
+      const rName = gpsState.nearestRoom.meta.shortName || formatRoomName(gpsState.nearestRoom.meta.name);
+      roomEl.textContent = `${rName} (${currentFloor} эт.)`;
+      if (roomInput && !roomInput.value && document.activeElement !== roomInput) {
+        roomInput.value = gpsState.nearestRoom.meta.shortName || rName;
+      }
+    } else {
+      roomEl.textContent = `${currentFloor} этаж`;
+    }
+  }
+}
+
+function populateGpsDiagnosticRoomsDatalist() {
+  const datalist = document.getElementById('gps-diag-room-datalist');
+  if (!datalist || !roomsMeta) return;
+  const items = [];
+  for (const [id, meta] of Object.entries(roomsMeta)) {
+    if (!meta || !meta.name) continue;
+    const short = String(meta.shortName || '').trim();
+    const label = short ? `${short} — ${meta.name} (${meta.floor} эт.)` : `${meta.name} (${meta.floor} эт.)`;
+    items.push({ value: short || meta.name, label, floor: meta.floor || 1 });
+  }
+  items.sort((a, b) => String(a.value).localeCompare(String(b.value), 'ru', { numeric: true }));
+  datalist.innerHTML = items
+    .slice(0, 400)
+    .map(it => `<option value="${escapeHtml(it.value)}">${escapeHtml(it.label)}</option>`)
+    .join('');
+}
+
+function updateGpsPositionFromSvg(svgPt, accuracyMeters = 12, sourceLabel = 'GPS + Wi-Fi') {
   gpsState.building = currentBuilding;
   gpsState.floor = currentFloor;
   gpsState.accuracy = accuracyMeters;
+  gpsState.statusText = sourceLabel;
 
-  // Экспоненциальное сглаживание скачков сигнала внутри здания
-  if (gpsState.lastSvgPos) {
+  // Взвешенное сглаживание по точности: чем выше погрешность (например ±80 м в бетонных стенах),
+  // тем плавнее фильтр, чтобы синяя точка не прыгала сквозь стены
+  if (gpsState.lastSvgPos && !gpsState.skipNextSmoothing) {
+    const acc = Math.max(5, Number(accuracyMeters) || 20);
+    const alpha = acc <= 15 ? 0.72 : (acc <= 40 ? 0.50 : (acc <= 90 ? 0.32 : 0.20));
     svgPt = {
-      x: gpsState.lastSvgPos.x * 0.35 + svgPt.x * 0.65,
-      y: gpsState.lastSvgPos.y * 0.35 + svgPt.y * 0.65
+      x: gpsState.lastSvgPos.x * (1 - alpha) + svgPt.x * alpha,
+      y: gpsState.lastSvgPos.y * (1 - alpha) + svgPt.y * alpha
     };
   }
+  gpsState.skipNextSmoothing = false;
   gpsState.lastSvgPos = svgPt;
   gpsState.snapped = snapSvgPointToCorridor(svgPt, currentBuilding, currentFloor);
+  gpsState.nearestRoom = findNearestRoomOnFloor(gpsState.snapped, currentBuilding, currentFloor);
 
   const banner = document.getElementById('map-gps-banner');
   const bannerText = document.getElementById('map-gps-banner-text');
   if (banner && bannerText && gpsState.active) {
     banner.classList.remove('hidden');
-    const nearNode = gpsState.snapped?.nearestNodeId ? graph.nodes[gpsState.snapped.nearestNodeId] : null;
     const accStr = accuracyMeters ? `±${Math.round(accuracyMeters)} м` : '';
-    bannerText.textContent = `${sourceLabel} ${accStr} · привязка к коридору ${currentFloor} эт.${nearNode ? '' : ''}`.trim();
+    const nearRoomLabel = gpsState.nearestRoom?.meta
+      ? `Рядом: ${gpsState.nearestRoom.meta.shortName ? 'ауд. ' + gpsState.nearestRoom.meta.shortName : formatRoomName(gpsState.nearestRoom.meta.name)}`
+      : `${currentFloor} эт.`;
+    bannerText.textContent = [nearRoomLabel, accStr, sourceLabel].filter(Boolean).join(' · ');
   }
 
+  updateGpsDiagnosticPanel();
   renderGpsPositionOnMap();
 
   if (routeState.fromRoomId === '__GPS__' && routeState.toRoomId) {
@@ -8128,6 +8485,23 @@ function renderGpsPositionOnMap() {
 
   const pt = gpsState.snapped;
   const latlng = L.latLng(H - pt.y, pt.x);
+
+  // Отрисовываем мягкий круг радиуса точности в масштабе SVG
+  const bCfg = getEffectiveGpsBuildingConfig(currentBuilding);
+  const scale = Math.max(0.05, Number(bCfg.scaleMetersPerSvgUnit) || 0.1065);
+  const accMeters = Math.max(6, Math.min(65, Number(gpsState.accuracy) || 15));
+  const radiusSvg = accMeters / scale;
+  L.circle(latlng, {
+    pane: 'gpsPane',
+    radius: radiusSvg,
+    color: '#3b82f6',
+    weight: 1,
+    opacity: 0.35,
+    fillColor: '#3b82f6',
+    fillOpacity: 0.10,
+    interactive: false
+  }).addTo(gpsLayer);
+
   const icon = L.divIcon({
     className: 'gps-user-dot-wrap',
     html: `<div class="gps-user-pulse"></div><div class="gps-user-dot"></div>`,
@@ -8137,19 +8511,66 @@ function renderGpsPositionOnMap() {
   L.marker(latlng, { pane: 'gpsPane', icon, interactive: false }).addTo(gpsLayer);
 }
 
+function handleIncomingGeolocationCoords(coords, sourceTag = 'GPS + Wi-Fi') {
+  if (!coords) return;
+  const latitude = Number(coords.latitude);
+  const longitude = Number(coords.longitude);
+  const accuracy = Number(coords.accuracy) || 25;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+  gpsState.rawLat = latitude;
+  gpsState.rawLon = longitude;
+  gpsState.accuracy = accuracy;
+  gpsState.lastFixAt = Date.now();
+
+  const rawSvgPt = projectLatLonToSvgFloor(latitude, longitude, currentBuilding, { applyLocalOffset: true });
+  gpsState.rawSvgPt = rawSvgPt;
+
+  const fence = evaluateCampusGeofence(latitude, longitude, rawSvgPt, accuracy, currentBuilding);
+  gpsState.distOutsideMeters = fence.distOutsideMeters;
+  gpsState.distCenterMeters = fence.distCenterMeters;
+
+  if (fence.inCampus) {
+    gpsState.outOfBoundsNotified = false;
+    const label = fence.distOutsideMeters > 15
+      ? `В корпусе (погрешность стен ±${Math.round(accuracy)} м)`
+      : sourceTag;
+    updateGpsPositionFromSvg(fence.clampedPt, accuracy, label);
+    if (!gpsState.hasCenteredInitialFix) {
+      gpsState.hasCenteredInitialFix = true;
+    }
+  } else {
+    // Пользователь действительно далеко от кампуса РГРТУ (> 250–300 м с учётом погрешности)
+    const distStr = fence.distCenterMeters >= 1000
+      ? `${(fence.distCenterMeters / 1000).toFixed(1)} км от вуза`
+      : `${fence.distCenterMeters} м от вуза`;
+    if (!gpsState.outOfBoundsNotified) {
+      gpsState.outOfBoundsNotified = true;
+      showToast(`Геопозиция вне кампуса РГРТУ (${distStr}). Если вы в корпусе — нажмите «Диагностика» → «Я здесь»`);
+    }
+    const { W, H } = currentSvgViewBox;
+    const fallbackPt = gpsState.lastSvgPos || fence.clampedPt || { x: (W || 2374) / 2, y: (H || 714) / 2 };
+    updateGpsPositionFromSvg(fallbackPt, accuracy, `Вне кампуса (${distStr}) · нажмите «Диагностика»`);
+  }
+}
+
 async function startGpsTracking({ useForRoute = false } = {}) {
   const gpsBtn = document.getElementById('map-gps-btn');
   const banner = document.getElementById('map-gps-banner');
   const bannerText = document.getElementById('map-gps-banner-text');
 
   gpsState.active = true;
+  gpsState.localOffsetSvg = getStoredLocalGpsOffset();
+  populateGpsDiagnosticRoomsDatalist();
+
   if (gpsBtn) gpsBtn.classList.add('active');
   if (banner) banner.classList.remove('hidden');
   if (bannerText) {
-    bannerText.textContent = 'Поиск сигнала (включите Wi-Fi и Bluetooth для точности внутри корпуса)…';
+    bannerText.textContent = 'Определение позиции в корпусе (GPS + Wi-Fi)…';
   }
+  updateGpsDiagnosticPanel();
 
-  // Подключаем компас и шагомер (PDR Dead Reckoning) для плавного смещения по коридору при слабом спутниковом сигнале
+  // Подключаем компас и шагомер (PDR Dead Reckoning) для плавного смещения по коридору
   if (!gpsState.orientationHandler && typeof window.DeviceOrientationEvent !== 'undefined') {
     gpsState.orientationHandler = (ev) => {
       const heading = ev.webkitCompassHeading ?? (ev.alpha != null ? (360 - ev.alpha) % 360 : null);
@@ -8170,63 +8591,103 @@ async function startGpsTracking({ useForRoute = false } = {}) {
       const now = Date.now();
       if (mag > 12.6 && now - lastStepTs > 460) {
         lastStepTs = now;
-        const bCfg = communityState.gpsConfig?.buildings?.[currentBuilding] || {};
-        const rotDeg = Number(bCfg.rotationDeg) || -18;
-        const angleRad = (((gpsState.headingDeg - rotDeg) || 0) * Math.PI) / 180;
-        const stepSvgUnits = 6.5; // ~0.65 м шаг
+        const bCfg = getEffectiveGpsBuildingConfig(currentBuilding);
+        const azimuthDeg = Number(bCfg.rotationDeg) || 42.72;
+        const headingRad = ((Number(gpsState.headingDeg) || 0) * Math.PI) / 180;
+        const eastStepM = Math.sin(headingRad) * 0.68;
+        const northStepM = Math.cos(headingRad) * 0.68;
+        const azRad = (azimuthDeg * Math.PI) / 180;
+        const scale = Math.max(0.05, Number(bCfg.scaleMetersPerSvgUnit) || 0.1065);
+        const dSvgX = (eastStepM * Math.cos(azRad) + northStepM * Math.sin(azRad)) / scale;
+        const dSvgY = (-eastStepM * Math.sin(azRad) + northStepM * Math.cos(azRad)) / scale;
         const nextPt = {
-          x: gpsState.lastSvgPos.x + Math.sin(angleRad) * stepSvgUnits,
-          y: gpsState.lastSvgPos.y - Math.cos(angleRad) * stepSvgUnits
+          x: gpsState.lastSvgPos.x + dSvgX,
+          y: gpsState.lastSvgPos.y + dSvgY
         };
-        updateGpsPositionFromSvg(nextPt, gpsState.accuracy || 10, 'Инерциальный шаг + коридор');
+        updateGpsPositionFromSvg(nextPt, gpsState.accuracy || 12, 'Шагомер + коридор');
       }
     };
     window.addEventListener('devicemotion', gpsState.motionHandler, true);
   }
 
+  // Поддержка Telegram WebApp LocationManager (если доступно в клиенте Telegram)
+  try {
+    const tgLoc = window.Telegram?.WebApp?.LocationManager;
+    if (tgLoc && typeof tgLoc.init === 'function') {
+      tgLoc.init(() => {
+        if (tgLoc.isLocationAvailable && typeof tgLoc.getLocation === 'function') {
+          tgLoc.getLocation((locData) => {
+            if (locData && Number.isFinite(locData.latitude) && Number.isFinite(locData.longitude)) {
+              handleIncomingGeolocationCoords({
+                latitude: locData.latitude,
+                longitude: locData.longitude,
+                accuracy: locData.horizontal_accuracy || 20
+              }, 'Telegram GPS');
+            }
+          });
+        }
+      });
+    }
+  } catch (e) {}
+
   if ('geolocation' in navigator) {
     if (gpsState.watchId != null) {
       navigator.geolocation.clearWatch(gpsState.watchId);
+      gpsState.watchId = null;
     }
     gpsState.outOfBoundsNotified = false;
-    gpsState.watchId = navigator.geolocation.watchPosition(
+
+    // Фаза 1: Быстрый первичный фикс по Wi-Fi / сотовым вышкам без ожидания спутников (внутри здания срабатывает за < 1 сек)
+    navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const { latitude, longitude, accuracy } = pos.coords;
-        const svgPt = projectLatLonToSvgFloor(latitude, longitude, currentBuilding);
-        const { W, H } = currentSvgViewBox;
-        // Проверяем, попадают ли координаты в пределы плана вуза
-        const inBounds = svgPt.x >= -250 && svgPt.x <= (W || 1500) + 250 && svgPt.y >= -250 && svgPt.y <= (H || 1200) + 250;
-        if (inBounds) {
-          gpsState.outOfBoundsNotified = false;
-          updateGpsPositionFromSvg(svgPt, accuracy, 'GPS + Wi-Fi/BLE');
-        } else {
-          // Если координаты вне плана РГРТУ — показываем уведомление и статус в плашке
-          if (!gpsState.outOfBoundsNotified) {
-            gpsState.outOfBoundsNotified = true;
-            showToast('Вы не на территории РГРТУ');
-          }
-          const fallbackPt = gpsState.lastSvgPos || { x: (W || 1000) / 2, y: (H || 800) / 2 };
-          updateGpsPositionFromSvg(fallbackPt, accuracy, 'Вы не на территории РГРТУ (нажмите «Уточнить»)');
-        }
+        if (!gpsState.active) return;
+        handleIncomingGeolocationCoords(pos.coords, 'Wi-Fi / Сеть');
       },
-      () => {
-        const { W, H } = currentSvgViewBox;
-        const fallbackPt = gpsState.lastSvgPos || { x: (W || 1000) / 2, y: (H || 800) / 2 };
-        updateGpsPositionFromSvg(fallbackPt, 15, 'Ручной режим по коридорам');
-        showToast('Спутниковый сигнал слабый — нажмите «Уточнить» и укажите точку на коридоре');
-      },
-      { enableHighAccuracy: true, maximumAge: 1500, timeout: 8000 }
+      () => {},
+      { enableHighAccuracy: false, maximumAge: 60000, timeout: 6000 }
     );
+
+    // Фаза 2: Непрерывное высокоточное отслеживание с автоматическим резервом при слабом сигнале в помещении
+    const startWatch = (highAccuracy = true) => {
+      if (!gpsState.active) return;
+      if (gpsState.watchId != null) {
+        navigator.geolocation.clearWatch(gpsState.watchId);
+      }
+      gpsState.watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          handleIncomingGeolocationCoords(pos.coords, highAccuracy ? 'GPS + Wi-Fi' : 'Сеть внутри корпуса');
+        },
+        (err) => {
+          // Если в помещении истёк таймаут спутникового GPS (code 3) или недоступна позиция (code 2),
+          // переключаемся на мягкий режим Wi-Fi/сотовой сети без обрыва навигации
+          if (highAccuracy && (err.code === 3 || err.code === 2)) {
+            startWatch(false);
+            return;
+          }
+          if (!gpsState.lastSvgPos) {
+            const { W, H } = currentSvgViewBox;
+            const fallbackPt = { x: (W || 2374) / 2, y: (H || 714) / 2 };
+            updateGpsPositionFromSvg(fallbackPt, 20, 'Ручной режим · укажите аудиторию');
+            showToast('Сигнал GPS слабый — нажмите «Диагностика» и выберите вашу аудиторию');
+          }
+        },
+        {
+          enableHighAccuracy: highAccuracy,
+          maximumAge: highAccuracy ? 2500 : 10000,
+          timeout: highAccuracy ? 20000 : 25000
+        }
+      );
+    };
+
+    startWatch(true);
   } else {
     const { W, H } = currentSvgViewBox;
-    updateGpsPositionFromSvg({ x: (W || 1000) / 2, y: (H || 800) / 2 }, 15, 'Ориентир по коридору');
+    updateGpsPositionFromSvg({ x: (W || 2374) / 2, y: (H || 714) / 2 }, 15, 'Ориентир по коридору');
   }
 
-  if (useForRoute) {
+  if (useForRoute && !gpsState.snapped) {
     const { W, H } = currentSvgViewBox;
-    if (!gpsState.snapped) {
-      updateGpsPositionFromSvg({ x: (W || 1000) / 2, y: (H || 800) / 2 }, 12, 'Старт по коридору');
-    }
+    updateGpsPositionFromSvg({ x: (W || 2374) / 2, y: (H || 714) / 2 }, 15, 'Старт по коридору');
   }
 }
 
@@ -8239,18 +8700,144 @@ function stopGpsTracking() {
   }
   const gpsBtn = document.getElementById('map-gps-btn');
   const banner = document.getElementById('map-gps-banner');
+  const diagPanel = document.getElementById('map-gps-diag-panel');
   if (gpsBtn) gpsBtn.classList.remove('active', 'calibrating');
   if (banner) banner.classList.add('hidden');
+  if (diagPanel) diagPanel.classList.add('hidden');
   if (gpsLayer) gpsLayer.clearLayers();
+}
+
+async function calibrateGpsByRoomQuery(queryStr) {
+  const q = String(queryStr || '').trim().toLowerCase().replace(/ё/g, 'е');
+  if (!q) {
+    showToast('Введите номер аудитории (например: 106а)');
+    return;
+  }
+
+  let matchedId = null;
+  let matchedMeta = null;
+
+  // 1. Точное совпадение по shortName или ID
+  for (const [id, meta] of Object.entries(roomsMeta || {})) {
+    if (!meta) continue;
+    const sName = String(meta.shortName || '').trim().toLowerCase().replace(/ё/g, 'е');
+    const fullName = String(meta.name || '').trim().toLowerCase().replace(/ё/g, 'е');
+    if (id.toLowerCase() === q || sName === q || fullName === q || sName === q.replace(/^ауд\.?\s*/i, '')) {
+      matchedId = id;
+      matchedMeta = meta;
+      break;
+    }
+  }
+
+  // 2. Частичное совпадение
+  if (!matchedId) {
+    for (const [id, meta] of Object.entries(roomsMeta || {})) {
+      if (!meta) continue;
+      const sName = String(meta.shortName || '').trim().toLowerCase().replace(/ё/g, 'е');
+      const fullName = String(meta.name || '').trim().toLowerCase().replace(/ё/g, 'е');
+      if (sName.includes(q) || fullName.includes(q)) {
+        matchedId = id;
+        matchedMeta = meta;
+        break;
+      }
+    }
+  }
+
+  if (!matchedId || !matchedMeta) {
+    showToast(`Аудитория «${queryStr}» не найдена на схеме`);
+    return;
+  }
+
+  const targetBuilding = matchedMeta.building || 'C';
+  const targetFloor = Number(matchedMeta.floor ?? 1);
+  if (targetBuilding !== currentBuilding || targetFloor !== Number(currentFloor)) {
+    await showFloor(targetBuilding, targetFloor);
+  }
+
+  let centroid = getShapeCentroidSvg(matchedId);
+  if (!centroid) {
+    centroid = await fetchSvgCentroid(targetBuilding, targetFloor, matchedId);
+  }
+  if (!centroid) {
+    showToast('Не удалось определить координаты выбранной аудитории на чертеже');
+    return;
+  }
+
+  if (!gpsState.active) {
+    await startGpsTracking();
+  }
+
+  // Если телефон уже отдаёт реальные координаты WGS84 — вычисляем и сохраняем поправку (и глобальный репер)
+  if (Number.isFinite(gpsState.rawLat) && Number.isFinite(gpsState.rawLon)) {
+    const baseProj = projectLatLonToSvgFloor(gpsState.rawLat, gpsState.rawLon, targetBuilding, { applyLocalOffset: false });
+    const dx = centroid.x - baseProj.x;
+    const dy = centroid.y - baseProj.y;
+    setStoredLocalGpsOffset(dx, dy, matchedId);
+
+    // Пытаемся также сохранить точку как глобальный репер в БД сервера (если пользователь авторизован или админ)
+    try {
+      const editorToken = localStorage.getItem('rgrtu_editor_token') || '';
+      const res = await fetch('/api/community/gps-calibrate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(editorToken ? { 'X-Editor-Token': editorToken } : {})
+        },
+        body: JSON.stringify({
+          userId: currentUserProfile?.id || '',
+          id: `cal_${matchedId}`,
+          roomId: matchedId,
+          label: `${matchedMeta.name || matchedId} (${targetFloor} эт.)`,
+          building: targetBuilding,
+          floor: targetFloor,
+          lat: gpsState.rawLat,
+          lon: gpsState.rawLon,
+          x: Math.round(centroid.x),
+          y: Math.round(centroid.y)
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.gpsConfig) {
+          communityState.gpsConfig = data.gpsConfig;
+          // Поскольку репер теперь в глобальной матрице, обнуляем локальный сдвиг
+          setStoredLocalGpsOffset(0, 0);
+        }
+      }
+    } catch (e) {}
+  }
+
+  gpsState.skipNextSmoothing = true;
+  const rLabel = matchedMeta.shortName || formatRoomName(matchedMeta.name);
+  updateGpsPositionFromSvg({ x: centroid.x, y: centroid.y }, 3, `Откалибровано: ${rLabel}`);
+
+  if (map && currentSvgViewBox.H) {
+    const pt = gpsState.snapped || centroid;
+    map.flyTo(L.latLng(currentSvgViewBox.H - pt.y, pt.x), Math.max(map.getZoom(), 1), {
+      animate: true,
+      duration: 0.65
+    });
+  }
+
+  showToast(`Геопозиция привязана к «${matchedMeta.name}» (${targetFloor} этаж)`);
 }
 
 function setupHybridGpsTracking() {
   const togglePoiBtn = document.getElementById('map-toggle-poi-btn');
   const gpsBtn = document.getElementById('map-gps-btn');
   const refineBtn = document.getElementById('map-gps-refine-btn');
+  const diagBtn = document.getElementById('map-gps-diag-btn');
   const closeBtn = document.getElementById('map-gps-close-btn');
   const addPoiBtn = document.getElementById('map-add-poi-btn');
+  const diagPanel = document.getElementById('map-gps-diag-panel');
+  const diagCloseBtn = document.getElementById('map-gps-diag-close');
+  const diagCopyBtn = document.getElementById('gps-diag-copy-btn');
+  const diagCalibrateBtn = document.getElementById('gps-diag-calibrate-room-btn');
+  const diagRoomInput = document.getElementById('gps-diag-room-input');
+  const diagPickMapBtn = document.getElementById('gps-diag-pick-map-btn');
+  const diagResetOffsetBtn = document.getElementById('gps-diag-reset-offset-btn');
 
+  gpsState.localOffsetSvg = getStoredLocalGpsOffset();
   updatePoiToggleBtnUI();
 
   if (togglePoiBtn) {
@@ -8289,12 +8876,84 @@ function setupHybridGpsTracking() {
           centerMapOnUserPosition();
           showToast('Перемещение к вашему местоположению');
         } else {
-          showToast('Определяем координаты...');
+          showToast('Определяем координаты…');
         }
       } else {
         startGpsTracking();
-        showToast('Включите Wi-Fi и Bluetooth на телефоне — браузер использует их для точной привязки к коридорам');
       }
+    });
+  }
+
+  if (diagBtn && diagPanel) {
+    diagBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      populateGpsDiagnosticRoomsDatalist();
+      diagPanel.classList.toggle('hidden');
+      updateGpsDiagnosticPanel();
+    });
+  }
+
+  if (diagCloseBtn && diagPanel) {
+    diagCloseBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      diagPanel.classList.add('hidden');
+    });
+  }
+
+  if (diagCopyBtn) {
+    diagCopyBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!Number.isFinite(gpsState.rawLat) || !Number.isFinite(gpsState.rawLon)) {
+        showToast('Координаты GPS ещё не получены');
+        return;
+      }
+      const text = `${gpsState.rawLat.toFixed(6)}, ${gpsState.rawLon.toFixed(6)}`;
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast(`Скопировано: ${text}`);
+      } catch (err) {
+        showToast(text);
+      }
+    });
+  }
+
+  if (diagCalibrateBtn && diagRoomInput) {
+    diagCalibrateBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      calibrateGpsByRoomQuery(diagRoomInput.value);
+    });
+    diagRoomInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        calibrateGpsByRoomQuery(diagRoomInput.value);
+      }
+    });
+  }
+
+  if (diagPickMapBtn) {
+    diagPickMapBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      gpsState.calibratingClick = true;
+      if (gpsBtn) gpsBtn.classList.add('calibrating');
+      if (diagPanel) diagPanel.classList.add('hidden');
+      showToast('Нажмите на место или аудиторию на карте, где вы сейчас находитесь');
+    });
+  }
+
+  if (diagResetOffsetBtn) {
+    diagResetOffsetBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setStoredLocalGpsOffset(0, 0);
+      if (Number.isFinite(gpsState.rawLat) && Number.isFinite(gpsState.rawLon)) {
+        gpsState.skipNextSmoothing = true;
+        handleIncomingGeolocationCoords({
+          latitude: gpsState.rawLat,
+          longitude: gpsState.rawLon,
+          accuracy: gpsState.accuracy || 15
+        }, 'GPS + Wi-Fi');
+      }
+      updateGpsDiagnosticPanel();
+      showToast('Пользовательская поправка GPS сброшена к эталонной сетке корпуса');
     });
   }
 
@@ -8303,7 +8962,7 @@ function setupHybridGpsTracking() {
       e.stopPropagation();
       gpsState.calibratingClick = true;
       if (gpsBtn) gpsBtn.classList.add('calibrating');
-      showToast('Коснитесь коридора на карте, где вы сейчас находитесь');
+      showToast('Коснитесь коридора или аудитории на карте, где вы сейчас находитесь');
     });
   }
 
@@ -8348,9 +9007,13 @@ function setupHybridGpsTracking() {
     if (gpsState.active && gpsState.calibratingClick) {
       gpsState.calibratingClick = false;
       if (gpsBtn) gpsBtn.classList.remove('calibrating');
-      gpsState.lastSvgPos = null;
+      if (Number.isFinite(gpsState.rawLat) && Number.isFinite(gpsState.rawLon)) {
+        const baseProj = projectLatLonToSvgFloor(gpsState.rawLat, gpsState.rawLon, currentBuilding, { applyLocalOffset: false });
+        setStoredLocalGpsOffset(svgX - baseProj.x, svgY - baseProj.y);
+      }
+      gpsState.skipNextSmoothing = true;
       updateGpsPositionFromSvg({ x: svgX, y: svgY }, 3, 'Точка уточнена вручную');
-      showToast('Местоположение привязано к выбранному коридору');
+      showToast('Местоположение привязано к выбранной точке коридора');
     }
   });
 }

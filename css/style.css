@@ -3156,6 +3156,8 @@ body.schedule-is-open .floor-switcher-wrap {
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
+  font-family: 'Onest', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
 }
 
 .weekly-schedule-table th,
@@ -3163,6 +3165,14 @@ body.schedule-is-open .floor-switcher-wrap {
   border-bottom: 1px solid var(--border);
   border-right: 1px solid var(--border);
   vertical-align: top;
+  font-family: 'Onest', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-theme="light"] .weekly-schedule-table th,
+[data-theme="light"] .weekly-schedule-table td {
+  border-bottom-color: #e2e8f0;
+  border-right-color: #e2e8f0;
 }
 
 .weekly-schedule-table th:last-child,
@@ -3175,12 +3185,18 @@ body.schedule-is-open .floor-switcher-wrap {
 }
 
 .weekly-schedule-table thead th {
-  background: var(--lesson-bg);
+  background: #1f2229;
   padding: 13px 14px;
   text-align: left;
   font-size: 12.5px;
   font-weight: 700;
   color: var(--text-bright);
+  border-bottom: 1px solid var(--border);
+}
+
+[data-theme="light"] .weekly-schedule-table thead th {
+  background: #f1f5f9;
+  border-bottom: 1px solid #cbd5e1;
 }
 
 .weekly-schedule-table thead th.time-col {
@@ -3196,12 +3212,22 @@ body.schedule-is-open .floor-switcher-wrap {
   position: sticky;
   left: 0;
   z-index: 5;
-  background: var(--lesson-bg);
+  background: #1f2229;
+}
+
+[data-theme="light"] .weekly-schedule-table thead th.time-col {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .weekly-schedule-table thead th.today-col {
-  background: rgba(37, 99, 235, 0.1);
+  background: rgba(37, 99, 235, 0.12);
   color: var(--text-accent);
+  border-bottom: 2px solid var(--btn-flr-active);
+}
+
+[data-theme="light"] .weekly-schedule-table thead th.today-col {
+  background: #eff6ff;
   border-bottom: 2px solid var(--btn-flr-active);
 }
 
@@ -3246,11 +3272,15 @@ body.schedule-is-open .floor-switcher-wrap {
   width: 96px;
   padding: 11px 6px;
   text-align: center;
-  background: var(--panel-bg);
+  background: #22242a;
   position: sticky;
   left: 0;
   z-index: 3;
   vertical-align: middle;
+}
+
+[data-theme="light"] .weekly-schedule-table td.time-col {
+  background: #f8fafc;
 }
 
 .wt-pair-num {
@@ -4385,6 +4415,8 @@ body.schedule-is-open .floor-switcher-wrap {
   table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
+  font-family: 'Onest', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
 }
 
 .cheatsheet-table th,
@@ -4393,6 +4425,13 @@ body.schedule-is-open .floor-switcher-wrap {
   border-bottom: 1px solid var(--border);
   vertical-align: top;
   text-align: left;
+  font-family: 'Onest', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-theme="light"] .cheatsheet-table th,
+[data-theme="light"] .cheatsheet-table td {
+  border-bottom-color: #e2e8f0;
 }
 
 .cheatsheet-table tbody tr:last-child td {
@@ -4400,12 +4439,19 @@ body.schedule-is-open .floor-switcher-wrap {
 }
 
 .cheatsheet-table thead th {
-  background: var(--lesson-bg);
+  background: #1f2229;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+[data-theme="light"] .cheatsheet-table thead th {
+  background: #f1f5f9;
+  color: #475569;
+  border-bottom: 1px solid #cbd5e1;
 }
 
 .cheatsheet-table .cs-col-subject {
@@ -4814,6 +4860,194 @@ body.schedule-is-open .floor-switcher-wrap {
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.map-gps-banner-btn:hover {
+  background: var(--btn-hover);
+}
+
+/* Панель живой диагностики сигнала GPS и полевой калибровки в 1 клик */
+.map-gps-diag-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 68px;
+  transform: translateX(-50%);
+  z-index: 960;
+  width: min(390px, calc(100vw - 24px));
+  background: var(--ctrl-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: var(--dropdown-shadow);
+  color: var(--text);
+  font-family: 'Onest', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@media (max-width: 768px) {
+  .map-gps-diag-panel {
+    bottom: calc(122px + var(--kb-offset, 0px));
+    left: 12px;
+    transform: none;
+    width: calc(100vw - 24px);
+  }
+}
+
+.map-gps-diag-panel.hidden {
+  display: none !important;
+}
+
+.map-gps-diag-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.map-gps-diag-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.map-gps-diag-close {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.map-gps-diag-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-gps-diag-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.map-gps-diag-label {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.map-gps-diag-val {
+  color: var(--text-bright);
+  font-weight: 600;
+  text-align: right;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-gps-diag-mini-btn {
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-accent);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.map-gps-diag-calib {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.map-gps-diag-calib-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.map-gps-diag-calib-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-gps-diag-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: 12.5px;
+}
+
+.map-gps-diag-primary-btn {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: none;
+  background: #2563eb;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.map-gps-diag-primary-btn:hover {
+  background: #1d4ed8;
+}
+
+.map-gps-diag-calib-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-gps-diag-sec-btn {
+  flex: 1;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.map-gps-diag-sec-btn:hover {
+  background: var(--btn-hover);
+  color: var(--text-bright);
 }
 
 /* Маркер пользователя GPS на карте */

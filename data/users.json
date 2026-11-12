@@ -27,15 +27,16 @@
       "notificationsEnabled": true,
       "theme": "light",
       "createdAt": 1793634767503,
-      "updatedAt": 1794086575504,
-      "lastNotifiedSlot": null,
+      "updatedAt": 1794498718236,
+      "lastNotifiedSlot": "2026-11-11|09:55–11:30|ЭВМ и периферийные устройства|C_auditori_346",
       "favorites": [
+        "group:546М",
         "group:546"
       ],
       "recentViews": {
         "group:546": {
-          "count": 12,
-          "lastViewedAt": 1794086575400
+          "count": 34,
+          "lastViewedAt": 1794498675714
         },
         "group:546М": {
           "count": 7,
@@ -52,18 +53,265 @@
         "lecturer:проф. Перепелкин Д.А.": {
           "count": 2,
           "lastViewedAt": 1794082840495
+        },
+        "classroom:358": {
+          "count": 1,
+          "lastViewedAt": 1794087655184
+        },
+        "lecturer:доц. Гринченко Н.Н.": {
+          "count": 1,
+          "lastViewedAt": 1794088847819
         }
       },
-      "notifiedSlots": [],
+      "notifiedSlots": [
+        "2026-11-09|11:40–13:15|Интеллектуальные методы оптимизации|C_auditori_301",
+        "2026-11-10|08:10–09:45|Иностранный язык, Иностранный язык|C_auditori_322",
+        "2026-11-11|09:55–11:30|ЭВМ и периферийные устройства|C_auditori_346"
+      ],
       "lessonNotes": {
         "Понедельник|09:55–11:30|Высшая математика": "может быть проверка ргр-2",
         "Понедельник|13:35–15:10|Интеллектуальные методы оптимизации": "сделать домашку, которую он дал по обиде"
       }
+    },
+    "tg_5004342622": {
+      "id": "tg_5004342622",
+      "telegramId": 5004342622,
+      "firstName": "Степа",
+      "username": "stepan_matveev",
+      "role": "student",
+      "targetName": "",
+      "notificationsEnabled": true,
+      "theme": "system",
+      "favorites": [
+        "group:546",
+        "group:5425"
+      ],
+      "recentViews": {
+        "group:5425": {
+          "count": 9,
+          "lastViewedAt": 1794468734314
+        }
+      },
+      "lessonNotes": {},
+      "createdAt": 1794127259993,
+      "updatedAt": 1794468734197,
+      "lastNotifiedSlot": null,
+      "notifiedSlots": []
+    },
+    "tg_641598805": {
+      "id": "tg_641598805",
+      "telegramId": 641598805,
+      "firstName": "Ivan",
+      "username": "VinGP",
+      "role": "student",
+      "targetName": "",
+      "notificationsEnabled": true,
+      "theme": "system",
+      "favorites": [],
+      "recentViews": {},
+      "lessonNotes": {},
+      "createdAt": 1794140271074,
+      "updatedAt": 1794140271075,
+      "lastNotifiedSlot": null,
+      "notifiedSlots": []
+    },
+    "tg_1905570949": {
+      "id": "tg_1905570949",
+      "telegramId": 1905570949,
+      "firstName": "Артём",
+      "username": "Artimchulay",
+      "role": "student",
+      "targetName": "546",
+      "notificationsEnabled": false,
+      "theme": "system",
+      "favorites": [
+        "group:546"
+      ],
+      "recentViews": {
+        "group:546": {
+          "count": 3,
+          "lastViewedAt": 1793793644738
+        },
+        "lecturer:доц. Сюсюкалов А.И.": {
+          "count": 4,
+          "lastViewedAt": 1794154845204
+        },
+        "lecturer:доц. Устюков Д.И.": {
+          "count": 1,
+          "lastViewedAt": 1793793555596
+        },
+        "group:5ПОДГОТОВИТЕЛЬНЫЕ КУРСЫ": {
+          "count": 1,
+          "lastViewedAt": 1793793573942
+        }
+      },
+      "lessonNotes": {},
+      "createdAt": 1794148971833,
+      "updatedAt": 1794336088585,
+      "lastNotifiedSlot": null,
+      "notifiedSlots": []
+    },
+    "tg_1075622011": {
+      "id": "tg_1075622011",
+      "telegramId": 1075622011,
+      "firstName": "𝑢𝑔𝑙𝑦.𝑞𝑢𝑖𝑛𝑞𝑢𝑒",
+      "username": "escapefromurself",
+      "role": "student",
+      "targetName": "",
+      "notificationsEnabled": true,
+      "theme": "system",
+      "favorites": [],
+      "recentViews": {},
+      "lessonNotes": {},
+      "createdAt": 1794169206453,
+      "updatedAt": 1794169206455,
+      "lastNotifiedSlot": null,
+      "notifiedSlots": []
+    },
+    "tg_768894877": {
+      "id": "tg_768894877",
+      "telegramId": 768894877,
+      "firstName": "mc Flesh 🍚",
+      "username": "morgen_shteron",
+      "role": "student",
+      "targetName": "546",
+      "notificationsEnabled": true,
+      "theme": "system",
+      "favorites": [],
+      "recentViews": {
+        "group:546": {
+          "count": 1,
+          "lastViewedAt": 1794213384635
+        }
+      },
+      "lessonNotes": {},
+      "createdAt": 1794213167042,
+      "updatedAt": 1794379172263,
+      "lastNotifiedSlot": "2026-11-11|09:55–11:30|ЭВМ и периферийные устройства|C_auditori_346",
+      "notifiedSlots": [
+        "2026-11-09|11:40–13:15|Интеллектуальные методы оптимизации|C_auditori_301",
+        "2026-11-11|09:55–11:30|ЭВМ и периферийные устройства|C_auditori_346"
+      ]
+    },
+    "web_9wa6w12hymw22d66r": {
+      "id": "web_9wa6w12hymw22d66r",
+      "telegramId": null,
+      "firstName": "",
+      "username": "",
+      "role": "student",
+      "targetName": "",
+      "notificationsEnabled": true,
+      "theme": "system",
+      "favorites": [],
+      "recentViews": {
+        "group:1ПОДГОТОВИТЕЛЬНЫЕ КУРСЫ": {
+          "count": 2,
+          "lastViewedAt": 1793793565844
+        },
+        "group:5ПОДГОТОВИТЕЛЬНЫЕ КУРСЫ": {
+          "count": 1,
+          "lastViewedAt": 1793793589597
+        },
+        "lecturer:доц. Устюков Д.И.": {
+          "count": 5,
+          "lastViewedAt": 1793794759544
+        },
+        "group:3413": {
+          "count": 1,
+          "lastViewedAt": 1793793660558
+        },
+        "group:546М": {
+          "count": 2,
+          "lastViewedAt": 1793794778899
+        },
+        "group:546": {
+          "count": 10,
+          "lastViewedAt": 1794218301719
+        }
+      },
+      "lessonNotes": {},
+      "createdAt": 1794218298056,
+      "updatedAt": 1794218301833,
+      "lastNotifiedSlot": null,
+      "notifiedSlots": []
+    },
+    "web_hqzucz0aomw9pl9c7": {
+      "id": "web_hqzucz0aomw9pl9c7",
+      "telegramId": null,
+      "firstName": "",
+      "username": "",
+      "role": "student",
+      "targetName": "",
+      "notificationsEnabled": true,
+      "theme": "system",
+      "favorites": [
+        "group:344"
+      ],
+      "recentViews": {
+        "group:546": {
+          "count": 3,
+          "lastViewedAt": 1794256227193
+        }
+      },
+      "lessonNotes": {},
+      "createdAt": 1794256193962,
+      "updatedAt": 1794256262709,
+      "lastNotifiedSlot": null,
+      "notifiedSlots": []
+    },
+    "tg_7162411918": {
+      "id": "tg_7162411918",
+      "telegramId": 7162411918,
+      "firstName": "Кузнецов",
+      "username": "TPPKoncdi",
+      "role": "student",
+      "targetName": "",
+      "notificationsEnabled": true,
+      "theme": "system",
+      "favorites": [],
+      "recentViews": {},
+      "lessonNotes": {},
+      "createdAt": 1794288112051,
+      "updatedAt": 1794288112052,
+      "lastNotifiedSlot": null,
+      "notifiedSlots": []
+    },
+    "web_8ntncu0zomw4m24v2": {
+      "id": "web_8ntncu0zomw4m24v2",
+      "telegramId": null,
+      "firstName": "",
+      "username": "",
+      "role": "student",
+      "targetName": "",
+      "notificationsEnabled": true,
+      "theme": "system",
+      "favorites": [],
+      "recentViews": {
+        "group:546": {
+          "count": 3,
+          "lastViewedAt": 1794300302088
+        },
+        "lecturer:ст. преп. Кутузова И.В.": {
+          "count": 1,
+          "lastViewedAt": 1793947581152
+        },
+        "lecturer:доц. Нелюхин С.А.": {
+          "count": 1,
+          "lastViewedAt": 1793951060717
+        }
+      },
+      "lessonNotes": {},
+      "createdAt": 1794300301792,
+      "updatedAt": 1794300301793,
+      "lastNotifiedSlot": null,
+      "notifiedSlots": []
     }
   },
   "authCodes": {},
   "authSessions": {},
-  "botTemplates": {},
+  "botTemplates": {
+    "start_welcome": "Приветствую, *{{name}}*! У нас:\n- 🗺️ интерактивная карта;\n- 🗓️ полное расписание семестра;\n- ⚡️ свободные и занятые аудитории сейчас;\n- 🔔 уведомления о своих парах;\n- 📝 заметки к парам;\n- 📍 маршруты и геолокация;\n- ☕️ метки Wi-Fi, кофе, зарядок и пр.\n> 🛜 Оффлайн-доступ: хотя бы раз зайдите на сайт с интернетом - после этого можно смело пользоваться без него!"
+  },
   "mapMarkers": [
     {
       "id": "poi_1794083920273_57d421",

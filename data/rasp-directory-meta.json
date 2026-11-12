@@ -6004,5 +6004,1799 @@
       "label": "21.12.2026",
       "isDefault": false
     }
-  ]
+  ],
+  "classroomById": {
+    "83": {
+      "classroomId": "83",
+      "label": "423а L",
+      "shortName": "423а",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "84": {
+      "classroomId": "84",
+      "label": "417 L",
+      "shortName": "417",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "85": {
+      "classroomId": "85",
+      "label": "423 L",
+      "shortName": "423",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "86": {
+      "classroomId": "86",
+      "label": "415 L",
+      "shortName": "415",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "87": {
+      "classroomId": "87",
+      "label": "413 L",
+      "shortName": "413",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "88": {
+      "classroomId": "88",
+      "label": "503 L",
+      "shortName": "503",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "90": {
+      "classroomId": "90",
+      "label": "508 L",
+      "shortName": "508",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "91": {
+      "classroomId": "91",
+      "label": "516 L",
+      "shortName": "516",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "92": {
+      "classroomId": "92",
+      "label": "517 L",
+      "shortName": "517",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "93": {
+      "classroomId": "93",
+      "label": "509 L",
+      "shortName": "509",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "94": {
+      "classroomId": "94",
+      "label": "510 L",
+      "shortName": "510",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "95": {
+      "classroomId": "95",
+      "label": "507 L",
+      "shortName": "507",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "97": {
+      "classroomId": "97",
+      "label": "438 C",
+      "shortName": "438",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "98": {
+      "classroomId": "98",
+      "label": "Стадион РГРТУ C",
+      "shortName": "Стадион РГРТУ",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": null
+    },
+    "99": {
+      "classroomId": "99",
+      "label": "324 C",
+      "shortName": "324",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "100": {
+      "classroomId": "100",
+      "label": "111а C",
+      "shortName": "111а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "101": {
+      "classroomId": "101",
+      "label": "345 C",
+      "shortName": "345",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "102": {
+      "classroomId": "102",
+      "label": "465 C",
+      "shortName": "465",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "103": {
+      "classroomId": "103",
+      "label": "358 C",
+      "shortName": "358",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "104": {
+      "classroomId": "104",
+      "label": "451 C",
+      "shortName": "451",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "105": {
+      "classroomId": "105",
+      "label": "261а C",
+      "shortName": "261а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "106": {
+      "classroomId": "106",
+      "label": "307а C",
+      "shortName": "307а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "108": {
+      "classroomId": "108",
+      "label": "463 C",
+      "shortName": "463",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "109": {
+      "classroomId": "109",
+      "label": "402 C",
+      "shortName": "402",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "110": {
+      "classroomId": "110",
+      "label": "316 C",
+      "shortName": "316",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "111": {
+      "classroomId": "111",
+      "label": "443 C",
+      "shortName": "443",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "112": {
+      "classroomId": "112",
+      "label": "437 C",
+      "shortName": "437",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "113": {
+      "classroomId": "113",
+      "label": "130 C",
+      "shortName": "130",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "114": {
+      "classroomId": "114",
+      "label": "111 C",
+      "shortName": "111",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "115": {
+      "classroomId": "115",
+      "label": "405 C",
+      "shortName": "405",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "116": {
+      "classroomId": "116",
+      "label": "424 C",
+      "shortName": "424",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "117": {
+      "classroomId": "117",
+      "label": "442 C",
+      "shortName": "442",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "118": {
+      "classroomId": "118",
+      "label": "342 C",
+      "shortName": "342",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "119": {
+      "classroomId": "119",
+      "label": "353 C",
+      "shortName": "353",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "120": {
+      "classroomId": "120",
+      "label": "344 C",
+      "shortName": "344",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "122": {
+      "classroomId": "122",
+      "label": "322 C",
+      "shortName": "322",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "123": {
+      "classroomId": "123",
+      "label": "441 C",
+      "shortName": "441",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "124": {
+      "classroomId": "124",
+      "label": "457 C",
+      "shortName": "457",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "125": {
+      "classroomId": "125",
+      "label": "301 C",
+      "shortName": "301",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "126": {
+      "classroomId": "126",
+      "label": "502 L",
+      "shortName": "502",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "127": {
+      "classroomId": "127",
+      "label": "422 C",
+      "shortName": "422",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "129": {
+      "classroomId": "129",
+      "label": "515 L",
+      "shortName": "515",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "130": {
+      "classroomId": "130",
+      "label": "423 C",
+      "shortName": "423",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "131": {
+      "classroomId": "131",
+      "label": "406 C",
+      "shortName": "406",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "132": {
+      "classroomId": "132",
+      "label": "307 C",
+      "shortName": "307",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "133": {
+      "classroomId": "133",
+      "label": "448 C",
+      "shortName": "448",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "134": {
+      "classroomId": "134",
+      "label": "346 C",
+      "shortName": "346",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "135": {
+      "classroomId": "135",
+      "label": "103а L",
+      "shortName": "103а",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "136": {
+      "classroomId": "136",
+      "label": "444 C",
+      "shortName": "444",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "137": {
+      "classroomId": "137",
+      "label": "525 L",
+      "shortName": "525",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "139": {
+      "classroomId": "139",
+      "label": "368 C",
+      "shortName": "368",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "140": {
+      "classroomId": "140",
+      "label": "318 C",
+      "shortName": "318",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "141": {
+      "classroomId": "141",
+      "label": "518 L",
+      "shortName": "518",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "142": {
+      "classroomId": "142",
+      "label": "415 C",
+      "shortName": "415",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "143": {
+      "classroomId": "143",
+      "label": "446 C",
+      "shortName": "446",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "144": {
+      "classroomId": "144",
+      "label": "203 C",
+      "shortName": "203",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "145": {
+      "classroomId": "145",
+      "label": "461 C",
+      "shortName": "461",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "146": {
+      "classroomId": "146",
+      "label": "404 C",
+      "shortName": "404",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "147": {
+      "classroomId": "147",
+      "label": "501 L",
+      "shortName": "501",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "148": {
+      "classroomId": "148",
+      "label": "22 B",
+      "shortName": "22",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 2
+    },
+    "149": {
+      "classroomId": "149",
+      "label": "333 C",
+      "shortName": "333",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "150": {
+      "classroomId": "150",
+      "label": "519 L",
+      "shortName": "519",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "151": {
+      "classroomId": "151",
+      "label": "310 C",
+      "shortName": "310",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "153": {
+      "classroomId": "153",
+      "label": "505 L",
+      "shortName": "505",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "154": {
+      "classroomId": "154",
+      "label": "520 L",
+      "shortName": "520",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "155": {
+      "classroomId": "155",
+      "label": "408 L",
+      "shortName": "408",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "156": {
+      "classroomId": "156",
+      "label": "418 C",
+      "shortName": "418",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "157": {
+      "classroomId": "157",
+      "label": "511 L",
+      "shortName": "511",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "158": {
+      "classroomId": "158",
+      "label": "521 L",
+      "shortName": "521",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "159": {
+      "classroomId": "159",
+      "label": "412 L",
+      "shortName": "412",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "160": {
+      "classroomId": "160",
+      "label": "504 L",
+      "shortName": "504",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 5
+    },
+    "161": {
+      "classroomId": "161",
+      "label": "307 L",
+      "shortName": "307",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 3
+    },
+    "162": {
+      "classroomId": "162",
+      "label": "406 L",
+      "shortName": "406",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "163": {
+      "classroomId": "163",
+      "label": "23 B",
+      "shortName": "23",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 2
+    },
+    "164": {
+      "classroomId": "164",
+      "label": "302 C",
+      "shortName": "302",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "165": {
+      "classroomId": "165",
+      "label": "267 C",
+      "shortName": "267",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "166": {
+      "classroomId": "166",
+      "label": "407 C",
+      "shortName": "407",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "167": {
+      "classroomId": "167",
+      "label": "403 C",
+      "shortName": "403",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "169": {
+      "classroomId": "169",
+      "label": "350 C",
+      "shortName": "350",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "170": {
+      "classroomId": "170",
+      "label": "258 C",
+      "shortName": "258",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "171": {
+      "classroomId": "171",
+      "label": "304 C",
+      "shortName": "304",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "172": {
+      "classroomId": "172",
+      "label": "419 C",
+      "shortName": "419",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "173": {
+      "classroomId": "173",
+      "label": "306 C",
+      "shortName": "306",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "174": {
+      "classroomId": "174",
+      "label": "320 C",
+      "shortName": "320",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "175": {
+      "classroomId": "175",
+      "label": "411 L",
+      "shortName": "411",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "178": {
+      "classroomId": "178",
+      "label": "412 C",
+      "shortName": "412",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "179": {
+      "classroomId": "179",
+      "label": "132 C",
+      "shortName": "132",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "180": {
+      "classroomId": "180",
+      "label": "212 L",
+      "shortName": "212",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "181": {
+      "classroomId": "181",
+      "label": "103б L",
+      "shortName": "103б",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "182": {
+      "classroomId": "182",
+      "label": "214 L",
+      "shortName": "214",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "183": {
+      "classroomId": "183",
+      "label": "215 L",
+      "shortName": "215",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "184": {
+      "classroomId": "184",
+      "label": "42 C",
+      "shortName": "42",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "186": {
+      "classroomId": "186",
+      "label": "038а C",
+      "shortName": "038а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 0
+    },
+    "187": {
+      "classroomId": "187",
+      "label": "209 L",
+      "shortName": "209",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "188": {
+      "classroomId": "188",
+      "label": "113 L",
+      "shortName": "113",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "189": {
+      "classroomId": "189",
+      "label": "155 C",
+      "shortName": "155",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "190": {
+      "classroomId": "190",
+      "label": "50 C",
+      "shortName": "50",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 5
+    },
+    "191": {
+      "classroomId": "191",
+      "label": "157а C",
+      "shortName": "157а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "192": {
+      "classroomId": "192",
+      "label": "50а C",
+      "shortName": "50а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 5
+    },
+    "193": {
+      "classroomId": "193",
+      "label": "445 C",
+      "shortName": "445",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "194": {
+      "classroomId": "194",
+      "label": "449 C",
+      "shortName": "449",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "195": {
+      "classroomId": "195",
+      "label": "430 C",
+      "shortName": "430",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "196": {
+      "classroomId": "196",
+      "label": "440 C",
+      "shortName": "440",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "198": {
+      "classroomId": "198",
+      "label": "323 C",
+      "shortName": "323",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "199": {
+      "classroomId": "199",
+      "label": "338 C",
+      "shortName": "338",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "200": {
+      "classroomId": "200",
+      "label": "331 C",
+      "shortName": "331",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "201": {
+      "classroomId": "201",
+      "label": "325 C",
+      "shortName": "325",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "202": {
+      "classroomId": "202",
+      "label": "127 C",
+      "shortName": "127",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "203": {
+      "classroomId": "203",
+      "label": "118 C",
+      "shortName": "118",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "204": {
+      "classroomId": "204",
+      "label": "125а C",
+      "shortName": "125а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "205": {
+      "classroomId": "205",
+      "label": "213а C",
+      "shortName": "213а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "206": {
+      "classroomId": "206",
+      "label": "117 C",
+      "shortName": "117",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "207": {
+      "classroomId": "207",
+      "label": "215 C",
+      "shortName": "215",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "209": {
+      "classroomId": "209",
+      "label": "328 C",
+      "shortName": "328",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "210": {
+      "classroomId": "210",
+      "label": "426 C",
+      "shortName": "426",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "211": {
+      "classroomId": "211",
+      "label": "32 B",
+      "shortName": "32",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 3
+    },
+    "212": {
+      "classroomId": "212",
+      "label": "122 C",
+      "shortName": "122",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "213": {
+      "classroomId": "213",
+      "label": "02/2 B",
+      "shortName": "02/2",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 0
+    },
+    "214": {
+      "classroomId": "214",
+      "label": "02/1 B",
+      "shortName": "02/1",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 0
+    },
+    "215": {
+      "classroomId": "215",
+      "label": "314 C",
+      "shortName": "314",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "216": {
+      "classroomId": "216",
+      "label": "450 C",
+      "shortName": "450",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "217": {
+      "classroomId": "217",
+      "label": "117 L",
+      "shortName": "117",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "218": {
+      "classroomId": "218",
+      "label": "107 L",
+      "shortName": "107",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "219": {
+      "classroomId": "219",
+      "label": "110 L",
+      "shortName": "110",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "220": {
+      "classroomId": "220",
+      "label": "206-2 C",
+      "shortName": "206-2",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "221": {
+      "classroomId": "221",
+      "label": "206-1 C",
+      "shortName": "206-1",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "222": {
+      "classroomId": "222",
+      "label": "313 L",
+      "shortName": "313",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 3
+    },
+    "223": {
+      "classroomId": "223",
+      "label": "106 C",
+      "shortName": "106",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "224": {
+      "classroomId": "224",
+      "label": "319 L",
+      "shortName": "319",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 3
+    },
+    "225": {
+      "classroomId": "225",
+      "label": "410а L",
+      "shortName": "410а",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "227": {
+      "classroomId": "227",
+      "label": "106а C",
+      "shortName": "106а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "228": {
+      "classroomId": "228",
+      "label": "57 C",
+      "shortName": "57",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 5
+    },
+    "229": {
+      "classroomId": "229",
+      "label": "51 C",
+      "shortName": "51",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 5
+    },
+    "230": {
+      "classroomId": "230",
+      "label": "218 L",
+      "shortName": "218",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "231": {
+      "classroomId": "231",
+      "label": "321 L",
+      "shortName": "321",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 3
+    },
+    "232": {
+      "classroomId": "232",
+      "label": "108 L",
+      "shortName": "108",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "233": {
+      "classroomId": "233",
+      "label": "227 L",
+      "shortName": "227",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "234": {
+      "classroomId": "234",
+      "label": "111 L",
+      "shortName": "111",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "235": {
+      "classroomId": "235",
+      "label": "128 C",
+      "shortName": "128",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "236": {
+      "classroomId": "236",
+      "label": "325 L",
+      "shortName": "325",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 3
+    },
+    "237": {
+      "classroomId": "237",
+      "label": "414 C",
+      "shortName": "414",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "239": {
+      "classroomId": "239",
+      "label": "252 C",
+      "shortName": "252",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "240": {
+      "classroomId": "240",
+      "label": "121 C",
+      "shortName": "121",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "241": {
+      "classroomId": "241",
+      "label": "321 C",
+      "shortName": "321",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "242": {
+      "classroomId": "242",
+      "label": "115 L",
+      "shortName": "115",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "243": {
+      "classroomId": "243",
+      "label": "315 C",
+      "shortName": "315",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "244": {
+      "classroomId": "244",
+      "label": "424а C",
+      "shortName": "424а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "245": {
+      "classroomId": "245",
+      "label": "209 C",
+      "shortName": "209",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "246": {
+      "classroomId": "246",
+      "label": "114 L",
+      "shortName": "114",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "247": {
+      "classroomId": "247",
+      "label": "326 C",
+      "shortName": "326",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "248": {
+      "classroomId": "248",
+      "label": "112 L",
+      "shortName": "112",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "249": {
+      "classroomId": "249",
+      "label": "210 C",
+      "shortName": "210",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "250": {
+      "classroomId": "250",
+      "label": "102л C",
+      "shortName": "102л",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "251": {
+      "classroomId": "251",
+      "label": "306 L",
+      "shortName": "306",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 3
+    },
+    "252": {
+      "classroomId": "252",
+      "label": "317 L",
+      "shortName": "317",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 3
+    },
+    "253": {
+      "classroomId": "253",
+      "label": "204 C",
+      "shortName": "204",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "254": {
+      "classroomId": "254",
+      "label": "202 C",
+      "shortName": "202",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "255": {
+      "classroomId": "255",
+      "label": "021а C",
+      "shortName": "021а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 0
+    },
+    "256": {
+      "classroomId": "256",
+      "label": "31 B",
+      "shortName": "31",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 3
+    },
+    "257": {
+      "classroomId": "257",
+      "label": "265 C",
+      "shortName": "265",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "258": {
+      "classroomId": "258",
+      "label": "117а C",
+      "shortName": "117а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "260": {
+      "classroomId": "260",
+      "label": "304 L",
+      "shortName": "304",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 3
+    },
+    "261": {
+      "classroomId": "261",
+      "label": "254 C",
+      "shortName": "254",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "262": {
+      "classroomId": "262",
+      "label": "341 C",
+      "shortName": "341",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "263": {
+      "classroomId": "263",
+      "label": "340 C",
+      "shortName": "340",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "264": {
+      "classroomId": "264",
+      "label": "206-4 C",
+      "shortName": "206-4",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "265": {
+      "classroomId": "265",
+      "label": "106 L",
+      "shortName": "106",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "267": {
+      "classroomId": "267",
+      "label": "216 L",
+      "shortName": "216",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "268": {
+      "classroomId": "268",
+      "label": "109 L",
+      "shortName": "109",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 1
+    },
+    "269": {
+      "classroomId": "269",
+      "label": "213 L",
+      "shortName": "213",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "285": {
+      "classroomId": "285",
+      "label": "102к C",
+      "shortName": "102к",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "286": {
+      "classroomId": "286",
+      "label": "021 C",
+      "shortName": "021",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 0
+    },
+    "287": {
+      "classroomId": "287",
+      "label": "134а C",
+      "shortName": "134а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "288": {
+      "classroomId": "288",
+      "label": "337 C",
+      "shortName": "337",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "289": {
+      "classroomId": "289",
+      "label": "116 C",
+      "shortName": "116",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "290": {
+      "classroomId": "290",
+      "label": "110 C",
+      "shortName": "110",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "291": {
+      "classroomId": "291",
+      "label": "103 C",
+      "shortName": "103",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 1
+    },
+    "292": {
+      "classroomId": "292",
+      "label": "409 C",
+      "shortName": "409",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "293": {
+      "classroomId": "293",
+      "label": "223 L",
+      "shortName": "223",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "294": {
+      "classroomId": "294",
+      "label": "206-3 C",
+      "shortName": "206-3",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "295": {
+      "classroomId": "295",
+      "label": "421 L",
+      "shortName": "421",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "296": {
+      "classroomId": "296",
+      "label": "260 C",
+      "shortName": "260",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "297": {
+      "classroomId": "297",
+      "label": "355 C",
+      "shortName": "355",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "298": {
+      "classroomId": "298",
+      "label": "364 C",
+      "shortName": "364",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "423": {
+      "classroomId": "423",
+      "label": "21 B",
+      "shortName": "21",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 2
+    },
+    "424": {
+      "classroomId": "424",
+      "label": "266а C",
+      "shortName": "266а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "425": {
+      "classroomId": "425",
+      "label": "308 C",
+      "shortName": "308",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 3
+    },
+    "426": {
+      "classroomId": "426",
+      "label": "268 C",
+      "shortName": "268",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "427": {
+      "classroomId": "427",
+      "label": "270 C",
+      "shortName": "270",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "428": {
+      "classroomId": "428",
+      "label": "266 C",
+      "shortName": "266",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "429": {
+      "classroomId": "429",
+      "label": "264 C",
+      "shortName": "264",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "430": {
+      "classroomId": "430",
+      "label": "Спортзал C",
+      "shortName": "Спортзал",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": null
+    },
+    "431": {
+      "classroomId": "431",
+      "label": "46 C",
+      "shortName": "46",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    },
+    "432": {
+      "classroomId": "432",
+      "label": "218 C",
+      "shortName": "218",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "433": {
+      "classroomId": "433",
+      "label": "001 C",
+      "shortName": "001",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 0
+    },
+    "434": {
+      "classroomId": "434",
+      "label": "Зал самбо C",
+      "shortName": "Зал самбо",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": null
+    },
+    "435": {
+      "classroomId": "435",
+      "label": "120 F",
+      "shortName": "120",
+      "building": "F",
+      "buildingName": "Первый корпус",
+      "floor": 1
+    },
+    "436": {
+      "classroomId": "436",
+      "label": "019 C",
+      "shortName": "019",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 0
+    },
+    "437": {
+      "classroomId": "437",
+      "label": "Зал тяжелой атлетики C",
+      "shortName": "Зал тяжелой атлетики",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": null
+    },
+    "438": {
+      "classroomId": "438",
+      "label": "203а C",
+      "shortName": "203а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "439": {
+      "classroomId": "439",
+      "label": "210 L",
+      "shortName": "210",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "440": {
+      "classroomId": "440",
+      "label": "ВК F",
+      "shortName": "ВК",
+      "building": "F",
+      "buildingName": "Первый корпус",
+      "floor": null
+    },
+    "441": {
+      "classroomId": "441",
+      "label": "112 F",
+      "shortName": "112",
+      "building": "F",
+      "buildingName": "Первый корпус",
+      "floor": 1
+    },
+    "442": {
+      "classroomId": "442",
+      "label": "221 L",
+      "shortName": "221",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 2
+    },
+    "443": {
+      "classroomId": "443",
+      "label": "12 B",
+      "shortName": "12",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 1
+    },
+    "444": {
+      "classroomId": "444",
+      "label": "038б C",
+      "shortName": "038б",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 0
+    },
+    "445": {
+      "classroomId": "445",
+      "label": "114 F",
+      "shortName": "114",
+      "building": "F",
+      "buildingName": "Первый корпус",
+      "floor": 1
+    },
+    "446": {
+      "classroomId": "446",
+      "label": "323 L",
+      "shortName": "323",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 3
+    },
+    "447": {
+      "classroomId": "447",
+      "label": "315 L",
+      "shortName": "315",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 3
+    },
+    "448": {
+      "classroomId": "448",
+      "label": "25 B",
+      "shortName": "25",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 2
+    },
+    "456": {
+      "classroomId": "456",
+      "label": "038 а C",
+      "shortName": "038 а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 0
+    },
+    "463": {
+      "classroomId": "463",
+      "label": "204а C",
+      "shortName": "204а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "464": {
+      "classroomId": "464",
+      "label": "414 L",
+      "shortName": "414",
+      "building": "L",
+      "buildingName": "Лабораторный корпус",
+      "floor": 4
+    },
+    "472": {
+      "classroomId": "472",
+      "label": "256а C",
+      "shortName": "256а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 2
+    },
+    "482": {
+      "classroomId": "482",
+      "label": "ВК1 F",
+      "shortName": "ВК1",
+      "building": "F",
+      "buildingName": "Первый корпус",
+      "floor": null
+    },
+    "483": {
+      "classroomId": "483",
+      "label": "ВК2 F",
+      "shortName": "ВК2",
+      "building": "F",
+      "buildingName": "Первый корпус",
+      "floor": null
+    },
+    "486": {
+      "classroomId": "486",
+      "label": "55а C",
+      "shortName": "55а",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 5
+    },
+    "487": {
+      "classroomId": "487",
+      "label": "33 B",
+      "shortName": "33",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 3
+    },
+    "488": {
+      "classroomId": "488",
+      "label": "038 б C",
+      "shortName": "038 б",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 0
+    },
+    "489": {
+      "classroomId": "489",
+      "label": "34 B",
+      "shortName": "34",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 3
+    },
+    "490": {
+      "classroomId": "490",
+      "label": "55 C",
+      "shortName": "55",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 5
+    },
+    "502": {
+      "classroomId": "502",
+      "label": "BK1 F",
+      "shortName": "BK1",
+      "building": "F",
+      "buildingName": "Первый корпус",
+      "floor": null
+    },
+    "507": {
+      "classroomId": "507",
+      "label": "27Т B",
+      "shortName": "27Т",
+      "building": "B",
+      "buildingName": "Бизнес-инкубатор",
+      "floor": 2
+    },
+    "509": {
+      "classroomId": "509",
+      "label": "44 C",
+      "shortName": "44",
+      "building": "C",
+      "buildingName": "Главный корпус",
+      "floor": 4
+    }
+  }
 }

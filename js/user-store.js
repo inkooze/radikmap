@@ -31,7 +31,12 @@ const DEFAULT_BOT_TEMPLATES = {
       '• 🟢 свободные аудитории прямо сейчас\n' +
       '• 🔔 уведомления за 15 минут до начала твоих пар\n' +
       '• 🔑 код для быстрого входа на сайте: `{{code}}`\n\n' +
-      'Кнопки *«🗺 Карта»* и *«📅 Расписание»* закреплены внизу чата.'
+      'Кнопки *«🗺 Карта»* и *«📅 Расписание»* закреплены внизу чата.',
+    defaultButtons: [
+      { text: '🗺 Карта', type: 'webapp', value: '{{webappUrl}}' },
+      { text: '📅 Расписание', type: 'webapp', value: '{{scheduleUrl}}' },
+      { text: '👤 Мой профиль', type: 'reply', value: '👤 Мой профиль' }
+    ]
   },
   start_menu_prompt: {
     id: 'start_menu_prompt',
@@ -42,7 +47,12 @@ const DEFAULT_BOT_TEMPLATES = {
     variables: [
       { key: 'name', label: 'Имя пользователя', sample: 'Алексей' }
     ],
-    defaultText: 'Выбери действие ниже или напиши любой вопрос *ИИ\'шке* прямо в чат:'
+    defaultText: 'Выбери действие ниже или напиши любой вопрос *ИИ\'шке* прямо в чат:',
+    defaultButtons: [
+      { text: '🔑 Получить код входа для сайта', type: 'callback', value: 'get_login_code' },
+      { text: '👤 Моё расписание и уведомления', type: 'callback', value: 'my_profile' },
+      { text: '🟢 Свободные аудитории', type: 'callback', value: 'free_now' }
+    ]
   },
   start_webauth_success: {
     id: 'start_webauth_success',
@@ -53,11 +63,17 @@ const DEFAULT_BOT_TEMPLATES = {
     variables: [
       { key: 'name', label: 'Имя пользователя', sample: 'Алексей' },
       { key: 'username', label: 'Telegram @username', sample: 'alex_rsreu' },
-      { key: 'webappUrl', label: 'Ссылка на карту', sample: 'https://radikmap.ai.studio/' }
+      { key: 'webappUrl', label: 'Ссылка на карту', sample: 'https://radikmap.ai.studio/' },
+      { key: 'scheduleUrl', label: 'Ссылка на расписание', sample: 'https://radikmap.ai.studio/?view=schedule' }
     ],
     defaultText:
       '✅ Привет, *{{name}}*! Вход на сайте Карты РГРТУ подтверждён.\n\n' +
-      'Можешь вернуться в браузер — твой профиль и настройки расписания уже подключены автоматически.'
+      'Можешь вернуться в браузер — твой профиль и настройки расписания уже подключены автоматически.',
+    defaultButtons: [
+      { text: '🗺 Карта', type: 'webapp', value: '{{webappUrl}}' },
+      { text: '📅 Расписание', type: 'webapp', value: '{{scheduleUrl}}' },
+      { text: '👤 Мой профиль', type: 'reply', value: '👤 Мой профиль' }
+    ]
   },
   start_webauth_manage_prompt: {
     id: 'start_webauth_manage_prompt',
@@ -68,7 +84,10 @@ const DEFAULT_BOT_TEMPLATES = {
     variables: [
       { key: 'name', label: 'Имя пользователя', sample: 'Алексей' }
     ],
-    defaultText: 'Управление профилем:'
+    defaultText: 'Управление профилем:',
+    defaultButtons: [
+      { text: '👤 Мой профиль и уведомления', type: 'callback', value: 'my_profile' }
+    ]
   },
   login_command: {
     id: 'login_command',
@@ -84,7 +103,10 @@ const DEFAULT_BOT_TEMPLATES = {
     defaultText:
       '🔑 *Твой одноразовый код для входа на сайте:*\n\n' +
       '`{{code}}`\n\n' +
-      'Открой меню профиля (👤) в правом верхнем углу на сайте и введи этот код _(действует 10 минут)_.'
+      'Открой меню профиля (👤) в правом верхнем углу на сайте и введи этот код _(действует 10 минут)_.',
+    defaultButtons: [
+      { text: '🗺 Открыть сайт Карты РГРТУ', type: 'webapp', value: '{{webappUrl}}' }
+    ]
   },
   login_callback: {
     id: 'login_callback',
@@ -98,7 +120,8 @@ const DEFAULT_BOT_TEMPLATES = {
     ],
     defaultText:
       '🔑 Одноразовый код для входа на сайте: `{{code}}`\n' +
-      'Введи его в меню профиля (👤) на сайте Карты РГРТУ.'
+      'Введи его в меню профиля (👤) на сайте Карты РГРТУ.',
+    defaultButtons: []
   },
   profile_card: {
     id: 'profile_card',
@@ -110,7 +133,7 @@ const DEFAULT_BOT_TEMPLATES = {
       { key: 'name', label: 'Имя пользователя', sample: 'Алексей' },
       { key: 'username', label: 'Telegram @username', sample: 'alex_rsreu' },
       { key: 'role', label: 'Роль (Студент / Преподаватель)', sample: 'Студент' },
-      { key: 'target', label: 'Выбранная группа или ФИО', sample: '546М' },
+      { key: 'target', label: 'Выбранная группа или ФИО', sample: '546' },
       { key: 'notifStatus', label: 'Статус уведомлений', sample: 'Включены ✅' },
       { key: 'webappUrl', label: 'Ссылка на карту', sample: 'https://radikmap.ai.studio/' }
     ],
@@ -119,34 +142,40 @@ const DEFAULT_BOT_TEMPLATES = {
       '• Статус: *{{role}}*\n' +
       '• Целевое расписание: *{{target}}*\n' +
       '• Уведомления за 15 мин до пары: *{{notifStatus}}*\n\n' +
-      'Ты можешь выбрать свою группу или ФИО преподавателя на сайте в меню профиля (👤).'
+      'Ты можешь выбрать свою группу или ФИО преподавателя на сайте в меню профиля (👤).',
+    defaultButtons: [
+      { text: '🔔 Уведомления о парах (Вкл/Выкл)', type: 'callback', value: 'toggle_notif' },
+      { text: '📅 Настроить расписание на сайте', type: 'webapp', value: '{{webappUrl}}' }
+    ]
   },
   lesson_reminder: {
     id: 'lesson_reminder',
     title: 'Уведомление за 15 минут до начала пары',
     category: 'Профиль и уведомления',
     trigger: 'Автоматическое напоминание за 15 мин до пары и тест из админки',
-    description: 'Шаблон уведомления о предстоящем занятии. Все переменные содержат только чистый переменный текст (без встроенных слов «Преподаватель», скобок и переносов строк \\n). Переменная {{minutesLeft}} пересчитывается индивидуально в момент фактической доставки каждому пользователю с учётом очереди Telegram.',
+    description: 'Шаблон уведомления о предстоящем занятии. Если пара разделена на подгруппы или ведётся несколькими преподавателями, переменная {{lecturer}} автоматически объединяет всех преподавателей.',
     variables: [
       { key: 'minutesLeft', label: 'Точное число минут до начала пары в момент отправки', sample: '15' },
-      { key: 'typeTagEmoji', label: 'Эмодзи типа пары (📖 / ✒️ / 🔬 / 💬 / ✅ / 🎓)', sample: '📖' },
-      { key: 'typeTag', label: 'Тип занятия без скобок (Лек. / Упр. / Лаб. / Конс. / Зач. / Экз.)', sample: 'Лек.' },
-      { key: 'type', label: 'Тип занятия (синоним typeTag)', sample: 'Лек.' },
-      { key: 'subject', label: 'Название дисциплины', sample: 'Интеллектуальные информационные системы' },
-      { key: 'time', label: 'Время начала и конца пары', sample: '09:55–11:30' },
-      { key: 'breakTime', label: 'Время 5-минутного перерыва внутри пары', sample: '10:40–10:45' },
-      { key: 'room', label: 'Номер или название аудитории (отдельно)', sample: '337' },
+      { key: 'typeTagEmoji', label: 'Эмодзи типа пары (📖 / ✒️ / 🔬 / 💬 / ✅ / 🎓)', sample: '🔬' },
+      { key: 'typeTag', label: 'Тип занятия без скобок (Лек. / Упр. / Лаб. / Конс. / Зач. / Экз.)', sample: 'Лаб.' },
+      { key: 'type', label: 'Тип занятия (синоним typeTag)', sample: 'Лаб.' },
+      { key: 'subject', label: 'Название дисциплины', sample: 'Базы данных' },
+      { key: 'time', label: 'Время начала и конца пары', sample: '11:40–13:15' },
+      { key: 'breakTime', label: 'Время 5-минутного перерыва внутри пары', sample: '12:25–12:30' },
+      { key: 'room', label: 'Номер или название аудитории (отдельно)', sample: '210' },
       { key: 'building', label: 'Название корпуса (отдельно)', sample: 'Главный корпус' },
-      { key: 'floor', label: 'Номер этажа (отдельно)', sample: '3' },
-      { key: 'lecturer', label: 'ФИО преподавателя (чистый текст без подписи)', sample: 'проф. Скворцов С.В.' },
-      { key: 'group', label: 'Номер учебной группы (чистый текст без подписи)', sample: '546М' },
-      { key: 'subgroup', label: 'Подгруппа (чистый текст без подписи)', sample: 'п.г. 1' },
-      { key: 'dayName', label: 'День недели занятия (чистый текст)', sample: 'Понедельник' },
-      { key: 'dayNote', label: 'Пометка дня (чистый текст без скобок)', sample: 'Понедельник' },
-      { key: 'locationLine', label: 'Составная локация (аудитория, корпус, этаж)', sample: '337, Главный корпус, 3 этаж' },
-      { key: 'extraInfo', label: 'Составная строка (преподаватель, группа, подгруппа без \\n и без подписей)', sample: 'проф. Скворцов С.В., 546М, п.г. 1' },
+      { key: 'floor', label: 'Номер этажа (отдельно)', sample: '2' },
+      { key: 'lecturer', label: 'ФИО преподавателя или нескольких преподавателей по подгруппам', sample: 'асс. Федосова Е.Б. (п.г. 1), доц. Гринченко Н.Н. (п.г. 2)' },
+      { key: 'group', label: 'Номер учебной группы (чистый текст без подписи)', sample: '546' },
+      { key: 'subgroup', label: 'Подгруппа (чистый текст без подписи)', sample: 'п.г. 1, п.г. 2' },
+      { key: 'dayName', label: 'День недели занятия (чистый текст)', sample: 'Среда' },
+      { key: 'dayNote', label: 'Пометка дня (чистый текст без скобок)', sample: 'Среда' },
+      { key: 'locationLine', label: 'Составная локация (аудитория, корпус, этаж)', sample: '210, Главный корпус, 2 этаж' },
+      { key: 'extraInfo', label: 'Составная строка (преподаватель, группа, подгруппа)', sample: 'асс. Федосова Е.Б. (п.г. 1), доц. Гринченко Н.Н. (п.г. 2), 546' },
       { key: 'name', label: 'Имя получателя', sample: 'Алексей' },
-      { key: 'target', label: 'Целевая группа или ФИО профиля', sample: '546М' }
+      { key: 'target', label: 'Целевая группа или ФИО профиля', sample: '546' },
+      { key: 'roomUrl', label: 'Ссылка на аудиторию на карте', sample: 'https://radikmap.ai.studio/?room=c_f2_210' },
+      { key: 'scheduleUrl', label: 'Ссылка на расписание', sample: 'https://radikmap.ai.studio/?view=schedule' }
     ],
     defaultText:
       '🔔 *Через {{minutesLeft}} мин начнётся пара!*\n\n' +
@@ -154,7 +183,47 @@ const DEFAULT_BOT_TEMPLATES = {
       '📍 Аудитория: {{room}} ({{building}}, {{floor}} этаж)\n' +
       '🕒 Время: `{{time}}` (перерыв `{{breakTime}}`)\n' +
       '👤 Преподаватель: {{lecturer}}\n' +
-      '👥 Группа: {{group}} {{subgroup}}'
+      '👥 Группа: {{group}} {{subgroup}}',
+    defaultButtons: [
+      { text: '🗺 Показать ауд. {{room}} на карте', type: 'webapp', value: '{{roomUrl}}' },
+      { text: '📅 Открыть расписание', type: 'webapp', value: '{{scheduleUrl}}' }
+    ]
+  },
+  next_day_reminder: {
+    id: 'next_day_reminder',
+    title: 'Уведомление на завтра (за день до занятий)',
+    category: 'Профиль и уведомления',
+    trigger: 'Автоматическое вечернее уведомление за день до пар (после 18:00 МСК) и тест из админки',
+    description: 'Отправляется вечером накануне учебного дня со сводкой всех занятий следующего дня.',
+    variables: [
+      { key: 'name', label: 'Имя получателя', sample: 'Алексей' },
+      { key: 'target', label: 'Целевая группа или ФИО профиля', sample: '546' },
+      { key: 'dayName', label: 'День недели завтра', sample: 'Четверг' },
+      { key: 'date', label: 'Дата завтрашнего дня', sample: '13 ноября' },
+      { key: 'lessonsCount', label: 'Количество пар завтра', sample: '3' },
+      { key: 'firstLessonTime', label: 'Время начала первой пары', sample: '08:10' },
+      {
+        key: 'lessonsList',
+        label: 'Полный список пар на завтра',
+        sample:
+          '1️⃣ `08:10–09:45` — ✒️ *Упр. Иностранный язык*\n' +
+          '   📍 Ауд. 322 (Главный корпус, 3 этаж) • 👤 ст. преп. Конькова Д.П.\n' +
+          '2️⃣ `09:55–11:30` — 📖 *Лек. Базы данных*\n' +
+          '   📍 Ауд. 358 (Главный корпус, 3 этаж) • 👤 доц. Гринченко Н.Н.\n' +
+          '3️⃣ `11:40–13:15` — 🔬 *Лаб. Базы данных*\n' +
+          '   📍 Ауд. 210 (Главный корпус, 2 этаж) • 👤 асс. Федосова Е.Б. (п.г. 1), доц. Гринченко Н.Н. (п.г. 2)'
+      },
+      { key: 'scheduleUrl', label: 'Ссылка на расписание', sample: 'https://radikmap.ai.studio/?view=schedule' },
+      { key: 'webappUrl', label: 'Ссылка на карту', sample: 'https://radikmap.ai.studio/' }
+    ],
+    defaultText:
+      '🌙 *Расписание на завтра ({{dayName}}, {{date}})*\n' +
+      '👥 Профиль: *{{target}}* • Всего пар: *{{lessonsCount}}* (к `{{firstLessonTime}}`)\n\n' +
+      '{{lessonsList}}',
+    defaultButtons: [
+      { text: '📅 Открыть расписание на завтра', type: 'webapp', value: '{{scheduleUrl}}' },
+      { text: '🗺 Открыть карту корпусов', type: 'webapp', value: '{{webappUrl}}' }
+    ]
   },
   help_command: {
     id: 'help_command',
@@ -174,7 +243,8 @@ const DEFAULT_BOT_TEMPLATES = {
       '/map — открыть карту\n' +
       '/schedule — открыть расписание\n' +
       '/free — свободные аудитории сейчас\n' +
-      '/help — список команд'
+      '/help — список команд',
+    defaultButtons: []
   },
   map_command: {
     id: 'map_command',
@@ -186,7 +256,10 @@ const DEFAULT_BOT_TEMPLATES = {
       { key: 'name', label: 'Имя пользователя', sample: 'Алексей' },
       { key: 'webappUrl', label: 'Ссылка на карту', sample: 'https://radikmap.ai.studio/' }
     ],
-    defaultText: 'Открой карту по кнопке *«🗺 Карта»* внизу экрана:'
+    defaultText: 'Открой карту по кнопке *«🗺 Карта»* внизу экрана:',
+    defaultButtons: [
+      { text: '🗺 Открыть карту', type: 'webapp', value: '{{webappUrl}}' }
+    ]
   },
   schedule_command: {
     id: 'schedule_command',
@@ -198,7 +271,10 @@ const DEFAULT_BOT_TEMPLATES = {
       { key: 'name', label: 'Имя пользователя', sample: 'Алексей' },
       { key: 'scheduleUrl', label: 'Ссылка на расписание', sample: 'https://radikmap.ai.studio/?view=schedule' }
     ],
-    defaultText: 'Открой расписание по кнопке *«📅 Расписание»* внизу экрана:'
+    defaultText: 'Открой расписание по кнопке *«📅 Расписание»* внизу экрана:',
+    defaultButtons: [
+      { text: '📅 Открыть расписание', type: 'webapp', value: '{{scheduleUrl}}' }
+    ]
   },
   free_loading: {
     id: 'free_loading',
@@ -209,7 +285,8 @@ const DEFAULT_BOT_TEMPLATES = {
     variables: [
       { key: 'name', label: 'Имя пользователя', sample: 'Алексей' }
     ],
-    defaultText: '⏳ Загружаю список…'
+    defaultText: '⏳ Загружаю список…',
+    defaultButtons: []
   },
   free_warming: {
     id: 'free_warming',
@@ -220,7 +297,8 @@ const DEFAULT_BOT_TEMPLATES = {
     variables: [
       { key: 'name', label: 'Имя пользователя', sample: 'Алексей' }
     ],
-    defaultText: '⏳ Кэш ещё прогревается. Попробуй через 1–2 минуты.'
+    defaultText: '⏳ Кэш ещё прогревается. Попробуй через 1–2 минуты.',
+    defaultButtons: []
   },
   free_empty: {
     id: 'free_empty',
@@ -233,7 +311,8 @@ const DEFAULT_BOT_TEMPLATES = {
     ],
     defaultText:
       '😔 *Свободных аудиторий сейчас нет.*\n' +
-      'Открой карту по кнопке «🗺 Карта» внизу экрана, чтобы увидеть занятые.'
+      'Открой карту по кнопке «🗺 Карта» внизу экрана, чтобы увидеть занятые.',
+    defaultButtons: []
   },
   free_list: {
     id: 'free_list',
@@ -248,7 +327,8 @@ const DEFAULT_BOT_TEMPLATES = {
     ],
     defaultText:
       '🟢 *Свободно в Главном корпусе: {{totalCount}}*\n\n' +
-      '{{roomsList}}\n\n{{moreFooter}}'
+      '{{roomsList}}\n\n{{moreFooter}}',
+    defaultButtons: []
   },
   free_callback_hint: {
     id: 'free_callback_hint',
@@ -259,7 +339,8 @@ const DEFAULT_BOT_TEMPLATES = {
     variables: [
       { key: 'name', label: 'Имя пользователя', sample: 'Алексей' }
     ],
-    defaultText: 'Используй /free'
+    defaultText: 'Используй /free',
+    defaultButtons: []
   }
 };
 
@@ -271,16 +352,32 @@ function escapeTelegramHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-/**
- * Конвертирует удобный Markdown (жирный **текст** или *текст*, курсив _текст_, подчёркнутый __текст__,
- * зачёркнутый ~~текст~~, спойлер ||текст||, моноширинный `код`, блок ```код```, цитаты > и ссылки [текст](url))
- * в безопасный Telegram HTML (parse_mode: 'HTML').
- */
+const SUBSCRIPT_MAP = {
+  '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+  '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
+  'a': 'ₐ', 'e': 'ₑ', 'h': 'ₕ', 'i': 'ᵢ', 'j': 'ⱼ', 'k': 'ₖ', 'l': 'ₗ', 'm': 'ₘ', 'n': 'ₙ', 'o': 'ₒ',
+  'p': 'ₚ', 'r': 'ᵣ', 's': 'ₛ', 't': 'ₜ', 'u': 'ᵤ', 'v': 'ᵥ', 'x': 'ₓ'
+};
+
+const SUPERSCRIPT_MAP = {
+  '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+  '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾', 'n': 'ⁿ', 'i': 'ⁱ'
+};
+
+function toUnicodeSubscript(text) {
+  return String(text || '').split('').map(ch => SUBSCRIPT_MAP[ch] || SUBSCRIPT_MAP[ch.toLowerCase()] || ch).join('');
+}
+
+function toUnicodeSuperscript(text) {
+  return String(text || '').split('').map(ch => SUPERSCRIPT_MAP[ch] || SUPERSCRIPT_MAP[ch.toLowerCase()] || ch).join('');
+}
+
 function cleanInterpolatedLines(str) {
   return String(str || '')
     .split('\n')
     .map(line => line
       .replace(/\(\s*перерыв\s*(?:<code><\/code>|``)?\s*\)/gi, '')
+      .replace(/\s*\(\s*к\s*(?:<code><\/code>|``)?\s*\)/gi, '')
       .replace(/\(\s*,\s*(\d+\s*этаж)\)/gi, '($1)')
       .replace(/\(\s*([^,()]+),\s*этаж\)/gi, '($1)')
       .replace(/\(\s*,?\s*этаж\s*\)/gi, '')
@@ -296,20 +393,47 @@ function cleanInterpolatedLines(str) {
     .trim();
 }
 
+function formatVariableTelegramMarkdown(escapedVal) {
+  let v = String(escapedVal || '');
+  if (!v) return '';
+  const codes = [];
+  v = v.replace(/`([^`\n]+)`/g, (_, c) => {
+    const idx = codes.length;
+    codes.push(`<code>${c}</code>`);
+    return `ZXVVARCODE${idx}VXZ`;
+  });
+  v = v.replace(/\*\*([^\n*]+)\*\*/g, '<b>$1</b>');
+  v = v.replace(/__([^\n_]+)__/g, '<u>$1</u>');
+  v = v.replace(/~~([^\n~]+)~~/g, '<s>$1</s>');
+  v = v.replace(/\|\|([^\n|]+)\|\|/g, '<tg-spoiler>$1</tg-spoiler>');
+  v = v.replace(/(^|[\s(>«"'—–-])\*([^\n*]+)\*(?=$|[\s).,!?:;»"'<—–-])/gm, '$1<b>$2</b>');
+  v = v.replace(/(^|[\s(>«"'—–-])_([^\n_]+)_(?=$|[\s).,!?:;»"'<—–-])/gm, '$1<i>$2</i>');
+  v = v.replace(/ZXVVARCODE(\d+)VXZ/g, (_, idx) => codes[Number(idx)] || '');
+  return v;
+}
+
+/**
+ * Конвертирует расширенный Telegram Markdown (Заголовки H1–H6, цитаты >, выносные/сворачиваемые цитаты >> / **>,
+ * жирный **текст** / *текст*, курсив _текст_, подчёркнутый __текст__, зачёркнутый ~~текст~~,
+ * скрытый/спойлер ||текст||, выделенный ==текст==, подстрочный ~{текст}, надстрочный ^{текст},
+ * мелкий шрифт <small>...</small>, разделитель ---, списки, чек-листы, сворачиваемые блоки и ссылки)
+ * в безопасный Telegram HTML (parse_mode: 'HTML').
+ */
 function renderTelegramMarkdownToHtml(markdownText, variables = {}) {
   const raw = String(markdownText == null ? '' : markdownText);
   if (!raw) return '';
 
-  // 1. Заменяем переменные {{key}} на уникальные токены до парсинга Markdown,
-  //    чтобы символы внутри переменных (напр. подчёркивания в @username или скобки в названии предмета)
-  //    никогда не ломали разметку сообщения.
+  const richMarkdownKeys = new Set(['lessonsList', 'roomsList']);
+
+  // 1. Заменяем переменные {{key}} на уникальные токены до парсинга Markdown
   const varTokens = [];
   const withVarTokens = raw.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, key) => {
     const val = Object.prototype.hasOwnProperty.call(variables, key)
       ? String(variables[key] == null ? '' : variables[key])
       : '';
     const idx = varTokens.length;
-    varTokens.push(escapeTelegramHtml(val));
+    const escaped = escapeTelegramHtml(val);
+    varTokens.push(richMarkdownKeys.has(key) ? formatVariableTelegramMarkdown(escaped) : escaped);
     return `ZXVVARTOKEN${idx}VXZ`;
   });
 
@@ -331,47 +455,108 @@ function renderTelegramMarkdownToHtml(markdownText, variables = {}) {
     return `ZXVINLINECODE${idx}VXZ`;
   });
 
-  // 4. Ссылки [текст](https://...)
+  // 4. Сворачиваемые блоки :::collapse ... ::: или [collapse]...[/collapse]
+  text = text.replace(/:::collapse\s*\n?([\s\S]*?)\n?:::/gi, (_, inner) => {
+    return `<blockquote expandable>${inner.trim()}</blockquote>`;
+  });
+
+  // 5. Ссылки [текст](https://...)
   text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => {
     return `<a href="${url}">${label}</a>`;
   });
 
-  // 5. Цитаты (строки, начинающиеся с &gt; )
+  // 6. Построчная обработка: Заголовки H1-H6, Разделители, Чек-листы, Цитаты и Выносные/Сворачиваемые цитаты
   const lines = text.split('\n');
   const processedLines = [];
   let quoteBuffer = [];
-  const flushQuote = () => {
+  let expandableQuoteBuffer = [];
+
+  const flushQuotes = () => {
     if (quoteBuffer.length > 0) {
       processedLines.push(`<blockquote>${quoteBuffer.join('\n')}</blockquote>`);
       quoteBuffer = [];
     }
-  };
-  for (const line of lines) {
-    if (/^&gt;\s?(.*)$/.test(line)) {
-      quoteBuffer.push(line.replace(/^&gt;\s?/, ''));
-    } else {
-      flushQuote();
-      processedLines.push(line);
+    if (expandableQuoteBuffer.length > 0) {
+      processedLines.push(`<blockquote expandable>${expandableQuoteBuffer.join('\n')}</blockquote>`);
+      expandableQuoteBuffer = [];
     }
+  };
+
+  for (let line of lines) {
+    // Выносная / сворачиваемая цитата (**> или >>)
+    if (/^(?:\*\*&gt;|&gt;&gt;)\s?(.*)$/.test(line)) {
+      if (quoteBuffer.length > 0) flushQuotes();
+      expandableQuoteBuffer.push(line.replace(/^(?:\*\*&gt;|&gt;&gt;)\s?/, ''));
+      continue;
+    }
+    // Обычная цитата (> )
+    if (/^&gt;\s?(.*)$/.test(line)) {
+      if (expandableQuoteBuffer.length > 0) flushQuotes();
+      quoteBuffer.push(line.replace(/^&gt;\s?/, ''));
+      continue;
+    }
+
+    flushQuotes();
+
+    // Разделитель (--- или *** или ___)
+    if (/^\s*(?:---+|───+|\*\*\*+)\s*$/.test(line)) {
+      processedLines.push('──────────────────');
+      continue;
+    }
+
+    // Заголовки H1..H6 (# .. ######)
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const content = headingMatch[2].trim();
+      if (level <= 2) {
+        processedLines.push(`<b>${content.toUpperCase()}</b>`);
+      } else if (level <= 4) {
+        processedLines.push(`<b>${content}</b>`);
+      } else {
+        processedLines.push(`<b><i>${content}</i></b>`);
+      }
+      continue;
+    }
+
+    // Контрольный список (чек-лист): - [x] или - [ ] или [x] / [ ]
+    line = line
+      .replace(/^(\s*(?:[-*•]\s+)?)\[\s*[xXхХ✓✔]\s*\]\s+/, '$1☑️ ')
+      .replace(/^(\s*(?:[-*•]\s+)?)\[\s*\]\s+/, '$1⬜ ');
+
+    // Маркированный список (- пункт -> • пункт)
+    line = line.replace(/^(\s*)-\s+/, '$1• ');
+
+    processedLines.push(line);
   }
-  flushQuote();
+  flushQuotes();
   text = processedLines.join('\n');
 
-  // 6. Спойлер ||текст||
+  // 7. Надстрочный ^{текст} и подстрочный ~{текст}
+  text = text.replace(/\^\{([^}\n]+)\}/g, (_, inner) => toUnicodeSuperscript(inner));
+  text = text.replace(/~\{([^}\n]+)\}/g, (_, inner) => toUnicodeSubscript(inner));
+
+  // 8. Мелкий шрифт ~small~ или [--текст--]
+  text = text.replace(/\[--([^\n\]]+)--\]/g, '<i>$1</i>');
+
+  // 9. Выделенный текст ==текст== (в Telegram HTML рендерится плашкой <code>)
+  text = text.replace(/==([^\n=]+)==/g, '<code>$1</code>');
+
+  // 10. Спойлер ||текст||
   text = text.replace(/\|\|([^\n|]+)\|\|/g, '<tg-spoiler>$1</tg-spoiler>');
 
-  // 7. Зачёркнутый ~~текст~~
+  // 11. Зачёркнутый ~~текст~~
   text = text.replace(/~~([^\n~]+)~~/g, '<s>$1</s>');
 
-  // 8. Жирный **текст** и подчёркнутый __текст__
+  // 12. Жирный **текст** и подчёркнутый __текст__
   text = text.replace(/\*\*([^\n*]+)\*\*/g, '<b>$1</b>');
   text = text.replace(/__([^\n_]+)__/g, '<u>$1</u>');
 
-  // 9. Одинарный *жирный* и _курсив_
-  text = text.replace(/(^|[\s(>«"'])\*([^\n*]+)\*(?=$|[\s).,!?:;»"'<])/gm, '$1<b>$2</b>');
-  text = text.replace(/(^|[\s(>«"'])_([^\n_]+)_(?=$|[\s).,!?:;»"'<])/gm, '$1<i>$2</i>');
+  // 13. Одинарный *жирный* и _курсив_
+  text = text.replace(/(^|[\s(>«"'—–-])\*([^\n*]+)\*(?=$|[\s).,!?:;»"'<—–-])/gm, '$1<b>$2</b>');
+  text = text.replace(/(^|[\s(>«"'—–-])_([^\n_]+)_(?=$|[\s).,!?:;»"'<—–-])/gm, '$1<i>$2</i>');
 
-  // 10. Возвращаем инлайн-код, блоки кода и значения переменных
+  // 14. Возвращаем инлайн-код, блоки кода и значения переменных
   text = text.replace(/ZXVINLINECODE(\d+)VXZ/g, (_, idx) => inlineCodes[Number(idx)] || '');
   text = text.replace(/ZXVCODEBLOCK(\d+)VXZ/g, (_, idx) => codeBlocks[Number(idx)] || '');
   text = text.replace(/ZXVVARTOKEN(\d+)VXZ/g, (_, idx) => varTokens[Number(idx)] || '');
@@ -393,14 +578,23 @@ function renderTelegramPlainText(markdownText, variables = {}) {
   const plain = interpolated
     .replace(/```([\s\S]*?)```/g, '$1')
     .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/:::collapse\s*\n?([\s\S]*?)\n?:::/gi, '$1')
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1 ($2)')
+    .replace(/^\s*(?:---+|───+|\*\*\*+)\s*$/gm, '──────────────────')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^(\s*(?:[-*•]\s+)?)\[\s*[xXхХ✓✔]\s*\]\s+/gm, '$1☑️ ')
+    .replace(/^(\s*(?:[-*•]\s+)?)\[\s*\]\s+/gm, '$1⬜ ')
+    .replace(/\^\{([^}\n]+)\}/g, (_, inner) => toUnicodeSuperscript(inner))
+    .replace(/~\{([^}\n]+)\}/g, (_, inner) => toUnicodeSubscript(inner))
+    .replace(/\[--([^\n\]]+)--\]/g, '$1')
+    .replace(/==([^\n=]+)==/g, '$1')
     .replace(/\|\|([^\n|]+)\|\|/g, '$1')
     .replace(/~~([^\n~]+)~~/g, '$1')
     .replace(/\*\*([^\n*]+)\*\*/g, '$1')
     .replace(/__([^\n_]+)__/g, '$1')
     .replace(/(^|[\s(>«"'])\*([^\n*]+)\*(?=$|[\s).,!?:;»"'<])/gm, '$1$2')
     .replace(/(^|[\s(>«"'])_([^\n_]+)_(?=$|[\s).,!?:;»"'<])/gm, '$1$2')
-    .replace(/^>\s?/gm, '');
+    .replace(/^(?:\*\*>|>>|>)\s?/gm, '');
   return cleanInterpolatedLines(plain);
 }
 
@@ -502,29 +696,157 @@ function loadFirebaseCloudConfig() {
   return null;
 }
 
+const DEFAULT_RSREU_ANCHORS = [
+  { id: 'r_106a', label: 'Аудитория 106а (правое крыло, 1 эт.)', roomId: 'C_auditori_106a', building: 'C', floor: 1, lat: 54.614420, lon: 39.724645, lng: 39.724645, x: 2065, y: 599, svgX: 2065, svgY: 599 },
+  { id: 'r_wardrobe_r', label: 'Вход и гардероб правого крыла', roomId: 'C_wardrobe_f1_r', building: 'C', floor: 1, lat: 54.614309, lon: 39.724223, lng: 39.724223, x: 1844, y: 683, svgX: 1844, svgY: 683 },
+  { id: 'r_102m', label: 'Край правого крыла (лаб. 102м)', roomId: 'C_spec_iibmt_lab_102m', building: 'C', floor: 1, lat: 54.614678, lon: 39.724924, lng: 39.724924, x: 2371, y: 711, svgX: 2371, svgY: 711 },
+  { id: 'c_main_entrance', label: 'Главный вход (центральный двор)', roomId: 'C_spec_ohrana', building: 'C', floor: 1, lat: 54.613595, lon: 39.723980, lng: 39.723980, x: 1229, y: 238, svgX: 1229, svgY: 238 },
+  { id: 'l_wardrobe_l', label: 'Вход и гардероб левого крыла', roomId: 'C_wardrobe_f1_l', building: 'C', floor: 1, lat: 54.613639, lon: 39.722954, lng: 39.722954, x: 806, y: 657, svgX: 806, svgY: 657 },
+  { id: 'l_130', label: 'Аудитория 130 (левое крыло, 1 эт.)', roomId: 'C_auditori_130', building: 'C', floor: 1, lat: 54.613410, lon: 39.722760, lng: 39.722760, x: 546, y: 583, svgX: 546, svgY: 583 },
+  { id: 'l_gym', label: 'Край левого крыла (Спортзал)', roomId: 'C_gym_main', building: 'C', floor: 1, lat: 54.613136, lon: 39.722043, lng: 39.722043, x: 20, y: 634, svgX: 20, svgY: 634 },
+  { id: 'b_sw_153b', label: 'Юго-восточный фасад (левая часть, 153б)', roomId: 'C_spec_153b', building: 'C', floor: 1, lat: 54.613074, lon: 39.723438, lng: 39.723438, x: 606, y: 12, svgX: 606, svgY: 12 },
+  { id: 'b_ne_125a', label: 'Юго-восточный фасад (правая часть, 125а)', roomId: 'C_auditori_125a', building: 'C', floor: 1, lat: 54.613860, lon: 39.724908, lng: 39.724908, x: 1790, y: 12, svgX: 1790, svgY: 12 }
+];
+
 const DEFAULT_GPS_CONFIG = {
+  version: 2,
   building: 'C',
   buildingName: 'Главный корпус РГРТУ (ул. Гагарина, 59/1)',
-  centerLat: 54.61432,
-  centerLng: 39.71925,
-  rotationDeg: -18,
-  metersPerSvgUnit: 0.098,
-  corridorSnapRadiusSvg: 65,
-  smoothingFactor: 0.38,
+  centerLat: 54.613783,
+  centerLon: 39.723850,
+  centerLng: 39.723850,
+  rotationDeg: 42.72,
+  scaleMetersPerSvgUnit: 0.1065,
+  metersPerSvgUnit: 0.1065,
+  corridorSnapRadiusSvg: 85,
+  campusRadiusMeters: 160,
+  smoothingFactor: 0.35,
   enableStepDeadReckoning: true,
   enableWifiBleHint: true,
-  anchors: [
-    { id: 'nw', label: 'Северо-западное крыло (ул. Гагарина)', lat: 54.61482, lng: 39.71805, svgX: 120, svgY: 160 },
-    { id: 'ne', label: 'Северо-восточное крыло', lat: 54.61458, lng: 39.72045, svgX: 880, svgY: 160 },
-    { id: 'sw', label: 'Юго-западный угол (Главный вход)', lat: 54.61382, lng: 39.71815, svgX: 120, svgY: 840 },
-    { id: 'se', label: 'Юго-восточное крыло (во двор)', lat: 54.61360, lng: 39.72035, svgX: 880, svgY: 840 }
-  ],
+  anchors: DEFAULT_RSREU_ANCHORS,
+  buildings: {
+    C: {
+      centerLat: 54.613783,
+      centerLon: 39.723850,
+      rotationDeg: 42.72,
+      scaleMetersPerSvgUnit: 0.1065,
+      anchors: DEFAULT_RSREU_ANCHORS
+    }
+  },
   wifiAnchors: [
-    { id: 'wifi_main_1', ssid: 'RSREU-Free', bssid: '', building: 'C', floor: 1, svgX: 500, svgY: 720, label: 'Холл 1 этажа (Главный вход)' },
-    { id: 'wifi_main_2', ssid: 'RSREU-Staff', bssid: '', building: 'C', floor: 2, svgX: 500, svgY: 500, label: 'Центральный коридор 2 этажа' },
-    { id: 'wifi_main_3', ssid: 'RSREU-Student', bssid: '', building: 'C', floor: 3, svgX: 500, svgY: 500, label: 'Центральный коридор 3 этажа' }
+    { id: 'wifi_main_1', ssid: 'RSREU-Free', bssid: '', building: 'C', floor: 1, svgX: 1229, svgY: 238, label: 'Холл 1 этажа (Главный вход)' },
+    { id: 'wifi_main_2', ssid: 'RSREU-Staff', bssid: '', building: 'C', floor: 1, svgX: 2065, svgY: 599, label: 'Правое крыло 1 этажа (ауд. 106а)' },
+    { id: 'wifi_main_3', ssid: 'RSREU-Student', bssid: '', building: 'C', floor: 2, svgX: 1200, svgY: 350, label: 'Центральный коридор 2 этажа' }
   ]
 };
+
+function normalizeGpsAnchor(a, idx = 0) {
+  if (!a || typeof a !== 'object') return null;
+  const lat = Number(a.lat);
+  const lon = Number(a.lon ?? a.lng);
+  const x = Number(a.x ?? a.svgX);
+  const y = Number(a.y ?? a.svgY);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+  // Отсеиваем старые ошибочные координаты (< 39.7210 — это на 300–1000 м западнее корпуса РГРТУ)
+  if (lon < 39.7210 || lon > 39.7300 || lat < 54.6100 || lat > 54.6180) return null;
+  return {
+    id: String(a.id || `anchor_${idx + 1}`),
+    label: String(a.label || `Репер ${idx + 1}`),
+    roomId: String(a.roomId || ''),
+    building: String(a.building || 'C'),
+    floor: Number.isFinite(Number(a.floor)) ? Number(a.floor) : 1,
+    lat: Number(lat.toFixed(6)),
+    lon: Number(lon.toFixed(6)),
+    lng: Number(lon.toFixed(6)),
+    x: Math.round(x * 10) / 10,
+    y: Math.round(y * 10) / 10,
+    svgX: Math.round(x * 10) / 10,
+    svgY: Math.round(y * 10) / 10
+  };
+}
+
+function normalizeGpsConfig(raw = {}) {
+  const src = (raw && typeof raw === 'object') ? raw : {};
+  const bC = (src.buildings && src.buildings.C && typeof src.buildings.C === 'object') ? src.buildings.C : {};
+
+  let centerLat = Number(bC.centerLat ?? src.centerLat ?? DEFAULT_GPS_CONFIG.centerLat);
+  let centerLon = Number(bC.centerLon ?? bC.centerLng ?? src.centerLon ?? src.centerLng ?? DEFAULT_GPS_CONFIG.centerLon);
+  let rotationDeg = Number(bC.rotationDeg ?? src.rotationDeg ?? DEFAULT_GPS_CONFIG.rotationDeg);
+  let scale = Number(bC.scaleMetersPerSvgUnit ?? src.scaleMetersPerSvgUnit ?? src.metersPerSvgUnit ?? DEFAULT_GPS_CONFIG.scaleMetersPerSvgUnit);
+
+  // Автоматическая миграция старых ошибочных значений (version < 2, 39.70825 / 39.71925 или угол -18)
+  const isLegacyConfig = Number(src.version) < 2 || Math.abs(centerLat - 54.61432) < 0.0001 || Math.abs(centerLat - 54.61435) < 0.0001;
+  if (isLegacyConfig || !Number.isFinite(centerLat) || centerLat < 54.6110 || centerLat > 54.6170) {
+    centerLat = DEFAULT_GPS_CONFIG.centerLat;
+  }
+  if (isLegacyConfig || !Number.isFinite(centerLon) || centerLon < 39.7215 || centerLon > 39.7275) {
+    centerLon = DEFAULT_GPS_CONFIG.centerLon;
+  }
+  if (isLegacyConfig || !Number.isFinite(rotationDeg) || Math.abs(rotationDeg - (-18)) < 1) {
+    rotationDeg = DEFAULT_GPS_CONFIG.rotationDeg;
+  }
+  if (isLegacyConfig || !Number.isFinite(scale) || scale < 0.02 || scale > 0.5) {
+    scale = DEFAULT_GPS_CONFIG.scaleMetersPerSvgUnit;
+  }
+
+  const rawAnchors = [
+    ...(Array.isArray(bC.anchors) ? bC.anchors : []),
+    ...(Array.isArray(src.anchors) ? src.anchors : [])
+  ];
+
+  const validMap = new Map();
+  // Сначала закладываем эталонные реперы корпуса РГРТУ
+  if (!src.replaceDefaultAnchors) {
+    for (const defA of DEFAULT_RSREU_ANCHORS) {
+      validMap.set(defA.id, { ...defA });
+    }
+  }
+  // Затем накладываем валидные пользовательские/админские реперы
+  rawAnchors.forEach((item, idx) => {
+    const norm = normalizeGpsAnchor(item, idx);
+    if (!norm) return;
+    validMap.set(norm.id, norm);
+  });
+
+  const anchors = Array.from(validMap.values());
+  if (anchors.length === 0) {
+    for (const defA of DEFAULT_RSREU_ANCHORS) {
+      anchors.push({ ...defA });
+    }
+  }
+
+  const normalized = {
+    ...DEFAULT_GPS_CONFIG,
+    ...src,
+    version: 2,
+    building: 'C',
+    centerLat,
+    centerLon,
+    centerLng: centerLon,
+    rotationDeg,
+    scaleMetersPerSvgUnit: scale,
+    metersPerSvgUnit: scale,
+    anchors,
+    buildings: {
+      ...(src.buildings || {}),
+      C: {
+        centerLat,
+        centerLon,
+        centerLng: centerLon,
+        rotationDeg,
+        scaleMetersPerSvgUnit: scale,
+        metersPerSvgUnit: scale,
+        anchors
+      }
+    },
+    wifiAnchors: Array.isArray(src.wifiAnchors) && src.wifiAnchors.length > 0
+      ? src.wifiAnchors
+      : DEFAULT_GPS_CONFIG.wifiAnchors,
+    updatedAt: Number(src.updatedAt) || Date.now()
+  };
+  delete normalized.replaceDefaultAnchors;
+  return normalized;
+}
 
 const DEFAULT_COMMUNITY_MARKERS = [
   {
@@ -588,7 +910,7 @@ function mergeUserRecords(existing, incoming) {
     ...(Array.isArray(newer.notifiedSlots) ? newer.notifiedSlots : []),
     older.lastNotifiedSlot,
     newer.lastNotifiedSlot
-  ].filter(Boolean))).slice(-30);
+  ].filter(Boolean))).slice(-80);
 
   const mergedFavorites = (Array.isArray(newer.favorites) && newer.favorites.length > 0)
     ? newer.favorites
@@ -628,14 +950,30 @@ function mergeUserRecords(existing, incoming) {
   };
 }
 
+function sanitizeTemplateButtons(buttons) {
+  if (!Array.isArray(buttons)) return null;
+  const cleaned = [];
+  for (const b of buttons) {
+    if (!b || typeof b !== 'object') continue;
+    const text = String(b.text || '').trim().slice(0, 120);
+    if (!text) continue;
+    const rawType = String(b.type || 'webapp').trim().toLowerCase();
+    const type = ['webapp', 'url', 'callback', 'reply'].includes(rawType) ? rawType : 'webapp';
+    const value = String(b.value || '').trim().slice(0, 500);
+    cleaned.push({ text, type, value });
+  }
+  return cleaned;
+}
+
 class UserStore {
   constructor(filePath = DEFAULT_USERS_FILE, options = {}) {
     this.filePath = filePath;
     this.data = {
-      users: {},        // userId -> userRecord
-      authCodes: {},    // 6-digit code -> { telegramId, firstName, username, expiresAt }
-      authSessions: {}, // sessionToken -> { status: 'pending'|'verified', userId, expiresAt }
-      botTemplates: {}, // templateId -> custom markdown string
+      users: {},              // userId -> userRecord
+      authCodes: {},          // 6-digit code -> { telegramId, firstName, username, expiresAt }
+      authSessions: {},       // sessionToken -> { status: 'pending'|'verified', userId, expiresAt }
+      botTemplates: {},       // templateId -> custom markdown string
+      botTemplateConfigs: {}, // templateId -> { enabled?: boolean, buttons?: Array<{text, type, value}> }
       mapMarkers: [...DEFAULT_COMMUNITY_MARKERS],
       roomReviews: [],
       descriptionSuggestions: [],
@@ -727,6 +1065,7 @@ class UserStore {
       let cloudCodes = {};
       let cloudSessions = {};
       let cloudBotTemplates = null;
+      let cloudBotTemplateConfigs = null;
       let cloudMapMarkers = null;
       let cloudRoomReviews = null;
       let cloudDescriptionSuggestions = null;
@@ -754,6 +1093,9 @@ class UserStore {
         }
         if (f.botTemplatesJson && f.botTemplatesJson.stringValue) {
           try { cloudBotTemplates = JSON.parse(f.botTemplatesJson.stringValue) || {}; } catch (e) {}
+        }
+        if (f.botTemplateConfigsJson && f.botTemplateConfigsJson.stringValue) {
+          try { cloudBotTemplateConfigs = JSON.parse(f.botTemplateConfigsJson.stringValue) || {}; } catch (e) {}
         }
         if (f.mapMarkersJson && f.mapMarkersJson.stringValue) {
           try { cloudMapMarkers = JSON.parse(f.mapMarkersJson.stringValue); } catch (e) {}
@@ -844,6 +1186,18 @@ class UserStore {
         }
       }
 
+      if (cloudBotTemplateConfigs && typeof cloudBotTemplateConfigs === 'object') {
+        if (!this.data.botTemplateConfigs || typeof this.data.botTemplateConfigs !== 'object') {
+          this.data.botTemplateConfigs = {};
+        }
+        for (const [tplId, cfgVal] of Object.entries(cloudBotTemplateConfigs)) {
+          if (DEFAULT_BOT_TEMPLATES[tplId] && cfgVal && typeof cfgVal === 'object' && this.data.botTemplateConfigs[tplId] === undefined) {
+            this.data.botTemplateConfigs[tplId] = cfgVal;
+            changedLocally = true;
+          }
+        }
+      }
+
       if (Array.isArray(cloudMapMarkers) && cloudMapMarkers.length > 0) {
         this.data.mapMarkers = cloudMapMarkers;
         changedLocally = true;
@@ -857,7 +1211,7 @@ class UserStore {
         changedLocally = true;
       }
       if (cloudGpsConfig && typeof cloudGpsConfig === 'object') {
-        this.data.gpsConfig = { ...DEFAULT_GPS_CONFIG, ...cloudGpsConfig };
+        this.data.gpsConfig = normalizeGpsConfig(cloudGpsConfig);
         changedLocally = true;
       }
 
@@ -911,6 +1265,7 @@ class UserStore {
           authCodesJson: { stringValue: JSON.stringify(this.data.authCodes || {}) },
           authSessionsJson: { stringValue: JSON.stringify(this.data.authSessions || {}) },
           botTemplatesJson: { stringValue: JSON.stringify(this.data.botTemplates || {}) },
+          botTemplateConfigsJson: { stringValue: JSON.stringify(this.data.botTemplateConfigs || {}) },
           mapMarkersJson: { stringValue: JSON.stringify(this.data.mapMarkers || []) },
           roomReviewsJson: { stringValue: JSON.stringify(this.data.roomReviews || []) },
           descriptionSuggestionsJson: { stringValue: JSON.stringify(this.data.descriptionSuggestions || []) },
@@ -986,6 +1341,7 @@ class UserStore {
           const diskCodes = parsed.authCodes || {};
           const diskSessions = parsed.authSessions || {};
           const diskTemplates = parsed.botTemplates || {};
+          const diskTemplateConfigs = parsed.botTemplateConfigs || {};
 
           for (const [uid, u] of Object.entries(diskUsers)) {
             if (!uid || !u || typeof u !== 'object') continue;
@@ -1012,6 +1368,17 @@ class UserStore {
               this.data.botTemplates[tplId] = tplText;
             }
           }
+          if (!this.data.botTemplateConfigs || typeof this.data.botTemplateConfigs !== 'object') {
+            this.data.botTemplateConfigs = {};
+          }
+          for (const [tplId, cfg] of Object.entries(diskTemplateConfigs)) {
+            if (DEFAULT_BOT_TEMPLATES[tplId] && cfg && typeof cfg === 'object') {
+              this.data.botTemplateConfigs[tplId] = {
+                enabled: cfg.enabled !== false,
+                buttons: Array.isArray(cfg.buttons) ? sanitizeTemplateButtons(cfg.buttons) : undefined
+              };
+            }
+          }
           if (Array.isArray(parsed.mapMarkers)) {
             this.data.mapMarkers = parsed.mapMarkers;
           }
@@ -1022,7 +1389,9 @@ class UserStore {
             this.data.descriptionSuggestions = parsed.descriptionSuggestions;
           }
           if (parsed.gpsConfig && typeof parsed.gpsConfig === 'object') {
-            this.data.gpsConfig = { ...DEFAULT_GPS_CONFIG, ...parsed.gpsConfig };
+            this.data.gpsConfig = normalizeGpsConfig(parsed.gpsConfig);
+          } else {
+            this.data.gpsConfig = normalizeGpsConfig(DEFAULT_GPS_CONFIG);
           }
           this._lastMtime = stat.mtimeMs;
         }
@@ -1112,10 +1481,50 @@ class UserStore {
     return (typeof custom === 'string' && custom.trim()) ? custom : meta.defaultText;
   }
 
+  isBotTemplateEnabled(templateId) {
+    this.reloadIfChanged();
+    if (!DEFAULT_BOT_TEMPLATES[templateId]) return false;
+    const cfg = this.data.botTemplateConfigs && this.data.botTemplateConfigs[templateId];
+    if (cfg && cfg.enabled === false) return false;
+    return true;
+  }
+
+  getBotTemplateButtons(templateId) {
+    this.reloadIfChanged();
+    const meta = DEFAULT_BOT_TEMPLATES[templateId];
+    if (!meta) return [];
+    const cfg = this.data.botTemplateConfigs && this.data.botTemplateConfigs[templateId];
+    if (cfg && Array.isArray(cfg.buttons)) {
+      return cfg.buttons.map(b => ({ ...b }));
+    }
+    return Array.isArray(meta.defaultButtons) ? meta.defaultButtons.map(b => ({ ...b })) : [];
+  }
+
+  renderBotTemplateButtons(templateId, variables = {}) {
+    const buttons = this.getBotTemplateButtons(templateId);
+    const interpolate = (str) => String(str || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => {
+      return Object.prototype.hasOwnProperty.call(variables, key)
+        ? String(variables[key] == null ? '' : variables[key])
+        : '';
+    }).trim();
+
+    return buttons
+      .map(b => ({
+        text: interpolate(b.text),
+        type: b.type || 'webapp',
+        value: interpolate(b.value)
+      }))
+      .filter(b => b.text && b.value);
+  }
+
   renderBotMessage(templateId, variables = {}) {
     const rawTemplate = this.getBotTemplateRaw(templateId);
+    const enabled = this.isBotTemplateEnabled(templateId);
+    const buttons = this.renderBotTemplateButtons(templateId, variables);
     return {
+      enabled,
       rawTemplate,
+      buttons,
       html: renderTelegramMarkdownToHtml(rawTemplate, variables),
       text: renderTelegramPlainText(rawTemplate, variables)
     };
@@ -1124,9 +1533,17 @@ class UserStore {
   getBotTemplatesCatalog() {
     this.reloadIfChanged();
     const customMap = this.data.botTemplates || {};
+    const cfgMap = this.data.botTemplateConfigs || {};
     return Object.values(DEFAULT_BOT_TEMPLATES).map(meta => {
-      const hasCustom = typeof customMap[meta.id] === 'string' && customMap[meta.id].trim().length > 0 && customMap[meta.id] !== meta.defaultText;
-      const currentText = hasCustom ? customMap[meta.id] : meta.defaultText;
+      const hasCustomText = typeof customMap[meta.id] === 'string' && customMap[meta.id].trim().length > 0 && customMap[meta.id] !== meta.defaultText;
+      const currentText = hasCustomText ? customMap[meta.id] : meta.defaultText;
+      const cfg = cfgMap[meta.id] || {};
+      const enabled = cfg.enabled !== false;
+      const defaultButtons = Array.isArray(meta.defaultButtons) ? meta.defaultButtons : [];
+      const currentButtons = Array.isArray(cfg.buttons) ? cfg.buttons : defaultButtons;
+      const hasCustomButtons = Array.isArray(cfg.buttons) && JSON.stringify(cfg.buttons) !== JSON.stringify(defaultButtons);
+      const isModified = hasCustomText || !enabled || hasCustomButtons;
+
       return {
         id: meta.id,
         title: meta.title,
@@ -1136,12 +1553,15 @@ class UserStore {
         variables: meta.variables,
         defaultText: meta.defaultText,
         text: currentText,
-        isModified: hasCustom
+        enabled,
+        defaultButtons,
+        buttons: currentButtons,
+        isModified
       };
     });
   }
 
-  saveBotTemplate(templateId, text) {
+  saveBotTemplate(templateId, text, options = {}) {
     if (!DEFAULT_BOT_TEMPLATES[templateId]) {
       throw new Error(`Неизвестный шаблон: ${templateId}`);
     }
@@ -1149,12 +1569,44 @@ class UserStore {
     if (!this.data.botTemplates || typeof this.data.botTemplates !== 'object') {
       this.data.botTemplates = {};
     }
-    const cleaned = String(text == null ? '' : text).replace(/\r\n/g, '\n').trim();
-    if (!cleaned || cleaned === DEFAULT_BOT_TEMPLATES[templateId].defaultText) {
-      delete this.data.botTemplates[templateId];
-    } else {
-      this.data.botTemplates[templateId] = cleaned.slice(0, 8000);
+    if (!this.data.botTemplateConfigs || typeof this.data.botTemplateConfigs !== 'object') {
+      this.data.botTemplateConfigs = {};
     }
+
+    const meta = DEFAULT_BOT_TEMPLATES[templateId];
+    if (text !== undefined && text !== null) {
+      const cleaned = String(text).replace(/\r\n/g, '\n').trim();
+      if (!cleaned || cleaned === meta.defaultText) {
+        delete this.data.botTemplates[templateId];
+      } else {
+        this.data.botTemplates[templateId] = cleaned.slice(0, 8000);
+      }
+    }
+
+    if (options && typeof options === 'object') {
+      const prevCfg = this.data.botTemplateConfigs[templateId] || {};
+      const nextCfg = { ...prevCfg };
+
+      if (options.enabled !== undefined) {
+        nextCfg.enabled = Boolean(options.enabled);
+      }
+      if (Array.isArray(options.buttons)) {
+        const cleanBtns = sanitizeTemplateButtons(options.buttons);
+        const defaultBtns = Array.isArray(meta.defaultButtons) ? meta.defaultButtons : [];
+        if (JSON.stringify(cleanBtns) === JSON.stringify(defaultBtns)) {
+          delete nextCfg.buttons;
+        } else {
+          nextCfg.buttons = cleanBtns;
+        }
+      }
+
+      if (nextCfg.enabled !== false && nextCfg.buttons === undefined) {
+        delete this.data.botTemplateConfigs[templateId];
+      } else {
+        this.data.botTemplateConfigs[templateId] = nextCfg;
+      }
+    }
+
     this.save(true);
     return this.getBotTemplatesCatalog().find(t => t.id === templateId);
   }
@@ -1167,6 +1619,9 @@ class UserStore {
     if (this.data.botTemplates) {
       delete this.data.botTemplates[templateId];
     }
+    if (this.data.botTemplateConfigs) {
+      delete this.data.botTemplateConfigs[templateId];
+    }
     this.save(true);
     return this.getBotTemplatesCatalog().find(t => t.id === templateId);
   }
@@ -1174,6 +1629,7 @@ class UserStore {
   resetAllBotTemplates() {
     this.reloadIfChanged();
     this.data.botTemplates = {};
+    this.data.botTemplateConfigs = {};
     this.save(true);
     return this.getBotTemplatesCatalog();
   }
@@ -1208,22 +1664,55 @@ class UserStore {
 
   getGpsConfig() {
     this.reloadIfChanged();
-    if (!this.data.gpsConfig || typeof this.data.gpsConfig !== 'object') {
-      this.data.gpsConfig = JSON.parse(JSON.stringify(DEFAULT_GPS_CONFIG));
-    }
+    this.data.gpsConfig = normalizeGpsConfig(this.data.gpsConfig);
     return this.data.gpsConfig;
   }
 
   saveGpsConfig(patch = {}) {
     this.reloadIfChanged();
     const cur = this.getGpsConfig();
-    this.data.gpsConfig = {
+    if (patch && patch.resetToDefault) {
+      this.data.gpsConfig = normalizeGpsConfig(DEFAULT_GPS_CONFIG);
+      this.save(true);
+      return this.data.gpsConfig;
+    }
+    if (patch && patch.upsertAnchor && typeof patch.upsertAnchor === 'object') {
+      const normA = normalizeGpsAnchor(patch.upsertAnchor, cur.anchors.length);
+      if (normA) {
+        const nextAnchors = cur.anchors.filter(a => a.id !== normA.id && (!normA.roomId || a.roomId !== normA.roomId));
+        nextAnchors.push(normA);
+        this.data.gpsConfig = normalizeGpsConfig({
+          ...cur,
+          anchors: nextAnchors,
+          replaceDefaultAnchors: true,
+          updatedAt: Date.now()
+        });
+        this.save(true);
+      }
+      return this.data.gpsConfig;
+    }
+    if (patch && patch.deleteAnchorId) {
+      const delId = String(patch.deleteAnchorId);
+      const nextAnchors = cur.anchors.filter(a => a.id !== delId);
+      this.data.gpsConfig = normalizeGpsConfig({
+        ...cur,
+        anchors: nextAnchors,
+        replaceDefaultAnchors: true,
+        updatedAt: Date.now()
+      });
+      this.save(true);
+      return this.data.gpsConfig;
+    }
+    const merged = {
       ...cur,
       ...patch,
-      anchors: Array.isArray(patch.anchors) ? patch.anchors : (cur.anchors || DEFAULT_GPS_CONFIG.anchors),
-      wifiAnchors: Array.isArray(patch.wifiAnchors) ? patch.wifiAnchors : (cur.wifiAnchors || DEFAULT_GPS_CONFIG.wifiAnchors),
+      buildings: {
+        ...(cur.buildings || {}),
+        ...(patch.buildings || {})
+      },
       updatedAt: Date.now()
     };
+    this.data.gpsConfig = normalizeGpsConfig(merged);
     this.save(true);
     return this.data.gpsConfig;
   }
@@ -1708,7 +2197,7 @@ class UserStore {
       this.data.descriptionSuggestions = payload.descriptionSuggestions;
     }
     if (payload.gpsConfig && typeof payload.gpsConfig === 'object') {
-      this.data.gpsConfig = { ...DEFAULT_GPS_CONFIG, ...payload.gpsConfig };
+      this.data.gpsConfig = normalizeGpsConfig(payload.gpsConfig);
     }
 
     this.cleanupExpired();

@@ -16,7 +16,7 @@ let currentFloorGroup = null;
 
 let graph = { nodes: {}, edges: [] };
 let editorMarkers = [];
-let editorGpsConfig = { buildings: { C: { centerLat: 54.61435, centerLon: 39.70825, rotationDeg: -18, scaleMetersPerSvgUnit: 0.10, anchors: [] } } };
+let editorGpsConfig = { buildings: { C: { centerLat: 54.613783, centerLon: 39.723850, rotationDeg: 42.72, scaleMetersPerSvgUnit: 0.1065, anchors: [] } } };
 
 let currentTool = null; // По умолчанию режим не выбран
 let selectedNodeId = null;
@@ -569,7 +569,7 @@ function showPoiMarkerInfo(m) {
 }
 
 function showAddGpsAnchorModalEditor(x, y) {
-  const bCfg = editorGpsConfig?.buildings?.[currentBuilding] || { centerLat: 54.61435, centerLon: 39.70825 };
+  const bCfg = editorGpsConfig?.buildings?.[currentBuilding] || { centerLat: 54.613783, centerLon: 39.723850 };
   const html = `
     <div class="form-group">
       <label for="modal-gps-label">Название ориентира (репера)</label>
@@ -577,11 +577,11 @@ function showAddGpsAnchorModalEditor(x, y) {
     </div>
     <div class="form-group">
       <label for="modal-gps-lat">Широта (Latitude WGS84)</label>
-      <input type="text" id="modal-gps-lat" value="${bCfg.centerLat || 54.61435}">
+      <input type="text" id="modal-gps-lat" value="${bCfg.centerLat || 54.613783}">
     </div>
     <div class="form-group">
       <label for="modal-gps-lon">Долгота (Longitude WGS84)</label>
-      <input type="text" id="modal-gps-lon" value="${bCfg.centerLon || 39.70825}">
+      <input type="text" id="modal-gps-lon" value="${bCfg.centerLon || 39.723850}">
     </div>
     <button type="button" class="btn-secondary" id="modal-gps-take-current" style="margin-top:4px">📍 Взять мои текущие GPS-координаты</button>
   `;
@@ -601,8 +601,8 @@ function showAddGpsAnchorModalEditor(x, y) {
         editorGpsConfig.buildings[currentBuilding] = {
           centerLat: lat,
           centerLon: lon,
-          rotationDeg: -18,
-          scaleMetersPerSvgUnit: 0.10,
+          rotationDeg: 42.72,
+          scaleMetersPerSvgUnit: 0.1065,
           anchors: []
         };
       }

@@ -4,96 +4,77 @@
   <meta charset="UTF-8">
   <script>
     try {
-      document.documentElement.dataset.theme = localStorage.getItem('theme') || 'dark';
+      const savedPref = localStorage.getItem('theme') || 'dark';
+      const resolved = savedPref === 'system'
+        ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        : (savedPref === 'light' ? 'light' : 'dark');
+      document.documentElement.dataset.theme = resolved;
     } catch (e) {
       document.documentElement.dataset.theme = 'dark';
     }
+    // Очистка старого кэша Service Worker, чтобы админ-панель всегда загружала актуальные стили и скрипты
+    try {
+      if ('caches' in window) {
+        caches.keys().then(function (keys) {
+          keys.forEach(function (k) {
+            caches.delete(k);
+          });
+        });
+      }
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          regs.forEach(function (r) { r.update(); });
+        });
+      }
+    } catch (e) {}
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Карта РГРТУ — Админ-панель базы данных</title>
   <meta name="description" content="Панель управления облачной базой данных, профилями пользователей, Telegram-ботом, справочником аудиторий и кэшем расписания РГРТУ.">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="stylesheet" href="css/editor.css">
-  <link rel="stylesheet" href="css/admin.css">
+  <link rel="stylesheet" href="vendor/mdi/css/materialdesignicons.min.css">
+  <link rel="stylesheet" href="css/style-v2.css?v=1.5.1">
+  <link rel="stylesheet" href="css/editor-v2.css?v=1.5.1">
+  <link rel="stylesheet" href="css/admin-v2.css?v=1.5.1">
 </head>
 <body class="admin-body">
-  <header id="topbar" class="admin-topbar">
-    <div class="topbar-brand">
-      <span class="topbar-title">Карта РГРТУ · Админ-панель</span>
-    </div>
-    <nav class="admin-top-nav" id="admin-top-tabs" aria-label="Разделы управления">
-      <button type="button" class="admin-nav-link active" data-tab="users">Пользователи</button>
-      <button type="button" class="admin-nav-link" data-tab="bot">Telegram-бот и рассылки</button>
-      <button type="button" class="admin-nav-link" data-tab="moderation">Модерация и GPS</button>
-      <button type="button" class="admin-nav-link" data-tab="cloud">Облачная БД и сессии</button>
-      <button type="button" class="admin-nav-link" data-tab="rooms">Аудитории (rooms.json)</button>
-      <button type="button" class="admin-nav-link" data-tab="cache">Кэш расписания</button>
-    </nav>
-    <div class="topbar-actions">
-      <button type="button" class="action-btn admin-refresh-btn" id="btn-admin-refresh" title="Обновить данные с сервера">
-        <i class="mdi mdi-refresh"></i>
-        <span class="hide-sm">Обновить</span>
-      </button>
-      <a class="action-btn admin-link-btn" href="editor.html" title="Перейти в редактор графа маршрутов">
+  <!-- Плавающие островки справа сверху: Редактор графа + На карту и кнопка Смены темы -->
+  <div class="admin-floating-top-right">
+    <div class="admin-floating-links" role="group" aria-label="Быстрые переходы">
+      <a class="action-btn admin-island-btn" href="editor.html" title="Редактор графа маршрутов" aria-label="Редактор графа маршрутов">
         <i class="mdi mdi-vector-polyline-edit"></i>
-        <span class="hide-sm">Редактор графа</span>
       </a>
-      <a class="action-btn admin-link-btn" href="index.html" title="Вернуться на карту">
+      <a class="action-btn admin-island-btn" href="index.html" title="На карту" aria-label="На карту">
         <i class="mdi mdi-map-outline"></i>
-        <span class="hide-sm">На карту</span>
       </a>
-      <button type="button" class="action-btn" id="btn-theme-toggle" title="Переключить тему" aria-label="Переключить тему">
-        <i class="mdi mdi-weather-night"></i>
-      </button>
     </div>
-  </header>
+    <button type="button" class="action-btn admin-theme-island-btn" id="btn-theme-toggle" title="Смена темы" aria-label="Смена темы">
+      <i class="mdi mdi-weather-night"></i>
+    </button>
+  </div>
+
+  <!-- Вертикальный плавающий островок разделов слева по центру -->
+  <nav class="admin-floating-nav" aria-label="Разделы админ-панели">
+    <button type="button" class="admin-nav-icon-btn active" data-tab="users" title="Пользователи и профили" aria-label="Пользователи и профили">
+      <i class="mdi mdi-account-group-outline"></i>
+    </button>
+    <button type="button" class="admin-nav-icon-btn" data-tab="bot" title="Telegram-бот и рассылки" aria-label="Telegram-бот и рассылки">
+      <i class="mdi mdi-robot-outline"></i>
+    </button>
+    <button type="button" class="admin-nav-icon-btn" data-tab="moderation" title="Модерация и GPS" aria-label="Модерация и GPS">
+      <i class="mdi mdi-gavel"></i>
+    </button>
+    <button type="button" class="admin-nav-icon-btn" data-tab="cloud" title="Облачная БД и коды" aria-label="Облачная БД и коды">
+      <i class="mdi mdi-cloud-sync-outline"></i>
+    </button>
+    <button type="button" class="admin-nav-icon-btn" data-tab="rooms" title="Справочник помещений" aria-label="Справочник помещений">
+      <i class="mdi mdi-door-open"></i>
+    </button>
+    <button type="button" class="admin-nav-icon-btn" data-tab="cache" title="Кэш расписания" aria-label="Кэш расписания">
+      <i class="mdi mdi-calendar-sync-outline"></i>
+    </button>
+  </nav>
 
   <div class="admin-layout">
-    <aside class="admin-sidebar" aria-label="Боковая навигация">
-      <div class="admin-sidebar-group">
-        <div class="admin-sidebar-label">Управление данными</div>
-        <button type="button" class="admin-side-btn active" data-tab="users">
-          <i class="mdi mdi-account-group-outline"></i>
-          <span>Пользователи и профили</span>
-          <span class="admin-side-count tabular-nums" id="nav-count-users">0</span>
-        </button>
-        <button type="button" class="admin-side-btn" data-tab="bot">
-          <i class="mdi mdi-send-outline"></i>
-          <span>Telegram-бот и рассылки</span>
-        </button>
-        <button type="button" class="admin-side-btn" data-tab="moderation">
-          <i class="mdi mdi-shield-check-outline"></i>
-          <span>Модерация и GPS</span>
-          <span class="admin-side-count tabular-nums" id="nav-count-moderation">0</span>
-        </button>
-        <button type="button" class="admin-side-btn" data-tab="cloud">
-          <i class="mdi mdi-cloud-sync-outline"></i>
-          <span>Облачная БД и коды</span>
-          <span class="admin-side-count tabular-nums" id="nav-count-codes">0</span>
-        </button>
-        <button type="button" class="admin-side-btn" data-tab="rooms">
-          <i class="mdi mdi-door-open"></i>
-          <span>Справочник помещений</span>
-          <span class="admin-side-count tabular-nums" id="nav-count-rooms">0</span>
-        </button>
-        <button type="button" class="admin-side-btn" data-tab="cache">
-          <i class="mdi mdi-calendar-sync-outline"></i>
-          <span>Кэш расписания</span>
-        </button>
-      </div>
-
-      <div class="admin-sidebar-footer">
-        <div class="admin-cloud-mini" id="sidebar-cloud-summary">
-          <div class="admin-cloud-mini-title">Firebase Firestore</div>
-          <div class="admin-cloud-mini-sub" id="sidebar-cloud-status">Проверка подключения…</div>
-        </div>
-        <button type="button" class="admin-logout-btn" id="btn-admin-logout">
-          <i class="mdi mdi-logout"></i> Выйти из админ-сессии
-        </button>
-      </div>
-    </aside>
-
     <main class="admin-main">
       <!-- ==================== ВКЛАДКА 1: ПОЛЬЗОВАТЕЛИ ==================== -->
       <section class="admin-panel active" id="tab-users">
@@ -103,35 +84,8 @@
             <p class="admin-subtitle">Управление аккаунтами студентов и преподавателей, привязкой Telegram, избранным и уведомлениями о парах</p>
           </div>
           <div class="admin-header-actions">
-            <button type="button" class="btn-secondary" id="btn-users-sync-cloud">
-              <i class="mdi mdi-cloud-upload-outline"></i> Синхронизировать с БД
-            </button>
-            <button type="button" class="btn-primary" id="btn-add-user">
-              <i class="mdi mdi-account-plus-outline"></i> Добавить пользователя
-            </button>
-          </div>
-        </div>
-
-        <div class="admin-kpi-grid">
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Всего профилей в БД</span>
-            <strong class="admin-kpi-val tabular-nums" id="kpi-users-total">0</strong>
-            <span class="admin-kpi-meta" id="kpi-users-cloud-meta">Локально + Firestore</span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Привязаны к Telegram</span>
-            <strong class="admin-kpi-val tabular-nums" id="kpi-users-tg">0</strong>
-            <span class="admin-kpi-meta">Доступны для уведомлений бота</span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Студенты · Преподаватели</span>
-            <strong class="admin-kpi-val tabular-nums" id="kpi-users-roles">0 / 0</strong>
-            <span class="admin-kpi-meta">С выбранным расписанием: <span id="kpi-users-with-target" class="tabular-nums">0</span></span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Уведомления за 15 мин</span>
-            <strong class="admin-kpi-val tabular-nums" id="kpi-users-notif">0</strong>
-            <span class="admin-kpi-meta">Активные получатели напоминаний</span>
+            <button type="button" class="btn-secondary" id="btn-users-sync-cloud">Синхронизировать с БД</button>
+            <button type="button" class="btn-primary" id="btn-add-user">Добавить пользователя</button>
           </div>
         </div>
 
@@ -149,6 +103,10 @@
           </div>
         </div>
 
+        <div class="admin-table-meta-bar">
+          <span class="admin-table-count tabular-nums" id="users-count-caption">Выведено записей: 0</span>
+        </div>
+
         <div class="admin-table-wrap">
           <table class="admin-table">
             <thead>
@@ -159,12 +117,11 @@
                 <th>Уведомления</th>
                 <th>Избранное · История</th>
                 <th>Обновлён</th>
-                <th class="text-right">Действия</th>
               </tr>
             </thead>
             <tbody id="users-table-body">
               <tr>
-                <td colspan="7" class="admin-empty-cell">Загрузка списка пользователей…</td>
+                <td colspan="6" class="admin-empty-cell">Загрузка списка пользователей…</td>
               </tr>
             </tbody>
           </table>
@@ -176,117 +133,173 @@
         <div class="admin-page-header">
           <div>
             <h1>Telegram-бот, шаблоны сообщений и рассылки</h1>
-            <p class="admin-subtitle">Настройка текста каждого сообщения бота с переменными и Markdown, тестирование 15-минутных напоминаний и рассылки</p>
-          </div>
-          <div class="admin-header-actions">
-            <button type="button" class="btn-secondary" id="btn-bot-reset-all-templates" title="Вернуть все сообщения бота к заводским шаблонам">
-              <i class="mdi mdi-restore"></i> Сбросить все шаблоны
-            </button>
-            <button type="button" class="btn-secondary" id="btn-bot-check-now">
-              <i class="mdi mdi-bell-ring-outline"></i> Проверить ближайшие пары сейчас
-            </button>
-          </div>
-        </div>
-
-        <div class="admin-kpi-grid">
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Статус Telegram-бота</span>
-            <strong class="admin-kpi-val" id="bot-kpi-status">Проверка…</strong>
-            <span class="admin-kpi-meta" id="bot-kpi-username">@rgrtu_map_bot</span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Шаблонов сообщений бота</span>
-            <strong class="admin-kpi-val tabular-nums" id="bot-kpi-templates">16</strong>
-            <span class="admin-kpi-meta" id="bot-kpi-templates-modified">Изменено: 0</span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Подписчиков на пары (15 мин)</span>
-            <strong class="admin-kpi-val tabular-nums" id="bot-kpi-notif-active">0</strong>
-            <span class="admin-kpi-meta">Всего с Telegram ID: <span id="bot-kpi-linked" class="tabular-nums">0</span></span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Текущая учебная неделя</span>
-            <strong class="admin-kpi-val tabular-nums" id="bot-kpi-week">—</strong>
-            <span class="admin-kpi-meta" id="bot-kpi-clock">Время МСК</span>
+            <p class="admin-subtitle">Настройка текста каждого сообщения бота с переменными и Markdown, тестирование напоминаний и рассылки</p>
           </div>
         </div>
 
         <!-- КОНСТРУКТОР ШАБЛОНОВ СООБЩЕНИЙ БОТА -->
-        <div class="admin-surface-block" style="margin-bottom:22px">
-          <div class="admin-section-title-row" style="margin-bottom:14px">
-            <div>
-              <h2>Конструктор шаблонов сообщений Telegram-бота</h2>
-              <p class="admin-block-desc" style="margin-bottom:0">Выберите любое сообщение бота слева, вставляйте переменные в один клик и оформляйте текст красивым Markdown с мгновенным превью.</p>
-            </div>
-            <div class="admin-search-box" style="max-width:280px;min-width:200px">
-              <i class="mdi mdi-magnify"></i>
-              <input type="text" id="bot-tpl-search" placeholder="Поиск шаблона или команды…">
-            </div>
-          </div>
-
-          <div class="admin-tpl-studio">
-            <div class="admin-tpl-list" id="bot-tpl-list" role="listbox" aria-label="Список шаблонов бота">
-              <!-- Заполняется из js/admin.js -->
-            </div>
-
-            <div class="admin-tpl-editor-pane">
-              <div class="admin-tpl-header">
-                <div>
-                  <h3 id="bot-tpl-title">Загрузка шаблона…</h3>
-                  <div class="admin-tpl-trigger" id="bot-tpl-trigger">—</div>
+        <div class="admin-surface-block" style="margin-bottom:28px">
+          <div class="admin-tpl-editor-pane">
+            <div class="admin-tpl-top-bar">
+              <div class="admin-tpl-title-group">
+                <div class="admin-tpl-picker-wrap" id="bot-tpl-picker-wrap">
+                  <div class="admin-search-box admin-tpl-search-box">
+                    <i class="mdi mdi-magnify"></i>
+                    <input type="text" id="bot-tpl-search" placeholder="Выбрать или найти шаблон сообщения…" autocomplete="off">
+                    <button type="button" class="admin-tpl-picker-chevron" id="btn-bot-tpl-picker-toggle" title="Открыть список шаблонов">
+                      <i class="mdi mdi-chevron-down"></i>
+                    </button>
+                  </div>
+                  <div class="admin-tpl-dropdown-menu" id="bot-tpl-dropdown-menu" role="listbox" aria-label="Список шаблонов бота">
+                    <!-- Заполняется из js/admin.js -->
+                  </div>
                 </div>
-                <span class="admin-tpl-state-text" id="bot-tpl-state-badge">Стандартный шаблон</span>
-              </div>
-
-              <p class="admin-tpl-desc" id="bot-tpl-desc"></p>
-
-              <!-- Панель переменных для быстрой вставки -->
-              <div class="admin-vars-section">
-                <div class="admin-vars-label">Доступные переменные (нажмите, чтобы вставить в текст):</div>
-                <div class="admin-vars-grid" id="bot-tpl-vars"></div>
-              </div>
-
-              <!-- Панель инструментов Markdown -->
-              <div class="admin-md-toolbar" data-target-textarea="bot-tpl-textarea">
-                <span class="admin-md-toolbar-label">Markdown:</span>
-                <button type="button" class="admin-md-btn" data-md="bold" title="Жирный текст (*жирный*)"><strong>B</strong></button>
-                <button type="button" class="admin-md-btn" data-md="italic" title="Курсив (_курсив_)"><em>I</em></button>
-                <button type="button" class="admin-md-btn" data-md="underline" title="Подчёркнутый (__подчёркнутый__)"><u>U</u></button>
-                <button type="button" class="admin-md-btn" data-md="strike" title="Зачёркнутый (~~зачёркнутый~~)"><s>S</s></button>
-                <button type="button" class="admin-md-btn" data-md="code" title="Моноширинный код (`код`)"><i class="mdi mdi-code-tags"></i> Код</button>
-                <button type="button" class="admin-md-btn" data-md="pre" title="Блок кода (```блок```)"><i class="mdi mdi-code-braces"></i> Блок</button>
-                <button type="button" class="admin-md-btn" data-md="spoiler" title="Скрытый текст / спойлер (||спойлер||)"><i class="mdi mdi-eye-off-outline"></i> Спойлер</button>
-                <button type="button" class="admin-md-btn" data-md="quote" title="Цитата (> текст)"><i class="mdi mdi-format-quote-close"></i> Цитата</button>
-                <button type="button" class="admin-md-btn" data-md="link" title="Ссылка ([текст](https://...))"><i class="mdi mdi-link-variant"></i> Ссылка</button>
-              </div>
-
-              <div class="admin-tpl-work-grid">
-                <div class="admin-tpl-input-col">
-                  <label class="admin-sub-label" for="bot-tpl-textarea">Шаблон сообщения (Markdown + переменные)</label>
-                  <textarea id="bot-tpl-textarea" class="admin-textarea admin-tpl-textarea" rows="10" placeholder="Текст шаблона сообщения…"></textarea>
+                <div class="admin-tpl-current-meta">
+                  <h2 id="bot-tpl-title">Загрузка шаблона…</h2>
+                  <p class="admin-tpl-desc" id="bot-tpl-desc"></p>
                 </div>
-                <div class="admin-tpl-preview-col">
-                  <div class="admin-sub-label">Живое превью в Telegram (с подстановкой переменных)</div>
-                  <div class="admin-tg-preview-card">
+              </div>
+
+              <div class="admin-tpl-header-controls">
+                <label class="admin-tpl-enable-switch" title="Включить или отключить отправку этого сообщения ботом">
+                  <input type="checkbox" id="bot-tpl-enabled-toggle" checked>
+                  <span class="admin-tpl-enable-label" id="bot-tpl-enabled-label">Включён</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Расширенная панель инструментов Telegram Markdown + кнопка переменных {{ }} -->
+            <div class="admin-md-toolbar admin-md-toolbar-full" data-target-textarea="bot-tpl-textarea">
+              <!-- Выпадающее меню Переменных {{ }} -->
+              <div class="admin-md-dropdown" id="bot-tpl-vars-dropdown">
+                <button type="button" class="admin-md-btn admin-md-dropdown-trigger admin-vars-trigger-btn" title="Вставить переменную шаблона">
+                  <strong>{{ }}</strong> <i class="mdi mdi-chevron-down"></i>
+                </button>
+                <div class="admin-md-dropdown-menu admin-vars-dropdown-menu" id="bot-tpl-vars">
+                  <!-- Заполняется из js/admin.js -->
+                </div>
+              </div>
+
+              <span class="admin-md-sep" aria-hidden="true"></span>
+
+              <!-- Выпадающее меню Aa (Заголовки H1-H6, Текст, Цитата, Выносная цитата, Код, Мелкий шрифт, Разделитель) -->
+              <div class="admin-md-dropdown">
+                <button type="button" class="admin-md-btn admin-md-dropdown-trigger" title="Абзац и заголовки (Aa)">
+                  <strong>Aa</strong> <i class="mdi mdi-chevron-down"></i>
+                </button>
+                <div class="admin-md-dropdown-menu">
+                  <div class="admin-md-dropdown-group-label">Заголовки</div>
+                  <button type="button" class="admin-md-menu-item" data-md="h1"><span class="md-ico">H₁</span> Заголовок 1 <kbd>#</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="h2"><span class="md-ico">H₂</span> Заголовок 2 <kbd>##</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="h3"><span class="md-ico">H₃</span> Заголовок 3 <kbd>###</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="h4"><span class="md-ico">H₄</span> Заголовок 4 <kbd>####</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="h5"><span class="md-ico">H₅</span> Заголовок 5 <kbd>#####</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="h6"><span class="md-ico">H₆</span> Заголовок 6 <kbd>######</kbd></button>
+                  <div class="admin-md-dropdown-divider"></div>
+                  <button type="button" class="admin-md-menu-item" data-md="plain"><span class="md-ico">T</span> Обычный текст</button>
+                  <button type="button" class="admin-md-menu-item" data-md="quote"><span class="md-ico">❝</span> Цитата <kbd>&gt;</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="pullquote"><span class="md-ico">❞</span> Выносная цитата <kbd>**&gt;</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="code"><span class="md-ico">&lt;/&gt;</span> Код <kbd>код</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="pre"><span class="md-ico">{ }</span> Блок кода <kbd>блок</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="small"><span class="md-ico">≡</span> Мелкий шрифт <kbd>[--…--]</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="hr"><span class="md-ico">―</span> Разделитель <kbd>---</kbd></button>
+                </div>
+              </div>
+
+              <!-- Выпадающее меню B (Жирный, Курсив, Подчёркнутый, Зачёркнутый, Скрытый, Подстрочный, Надстрочный, Выделенный) -->
+              <div class="admin-md-dropdown">
+                <button type="button" class="admin-md-btn admin-md-dropdown-trigger" title="Начертание и выделение текста (B)">
+                  <strong>B</strong> <i class="mdi mdi-chevron-down"></i>
+                </button>
+                <div class="admin-md-dropdown-menu">
+                  <button type="button" class="admin-md-menu-item" data-md="bold"><span class="md-ico"><strong>B</strong></span> Жирный <kbd>*…*</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="italic"><span class="md-ico"><em>I</em></span> Курсив <kbd>_…_</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="underline"><span class="md-ico"><u>U</u></span> Подчёркнутый <kbd>__…__</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="strike"><span class="md-ico"><s>S</s></span> Зачёркнутый <kbd>~~…~~</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="spoiler"><span class="md-ico">▒▒</span> Скрытый (спойлер) <kbd>||…||</kbd></button>
+                  <div class="admin-md-dropdown-divider"></div>
+                  <button type="button" class="admin-md-menu-item" data-md="sub"><span class="md-ico">X₂</span> Подстрочный <kbd>~{…}</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="sup"><span class="md-ico">X²</span> Надстрочный <kbd>^{…}</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="mark"><span class="md-ico">🖍</span> Выделенный <kbd>==…==</kbd></button>
+                </div>
+              </div>
+
+              <!-- Выпадающее меню Списки и блоки -->
+              <div class="admin-md-dropdown">
+                <button type="button" class="admin-md-btn admin-md-dropdown-trigger" title="Списки и сворачиваемые блоки">
+                  <i class="mdi mdi-format-list-bulleted"></i> <i class="mdi mdi-chevron-down"></i>
+                </button>
+                <div class="admin-md-dropdown-menu">
+                  <button type="button" class="admin-md-menu-item" data-md="ol"><span class="md-ico">1.</span> Нумерованный список</button>
+                  <button type="button" class="admin-md-menu-item" data-md="ul"><span class="md-ico">•</span> Маркированный список</button>
+                  <button type="button" class="admin-md-menu-item" data-md="checklist"><span class="md-ico">☑</span> Контрольный список <kbd>- [ ]</kbd></button>
+                  <button type="button" class="admin-md-menu-item" data-md="collapse"><span class="md-ico">▾</span> Сворачиваемый блок <kbd>:::collapse</kbd></button>
+                </div>
+              </div>
+
+              <span class="admin-md-sep" aria-hidden="true"></span>
+
+              <!-- Быстрые кнопки в один клик -->
+              <button type="button" class="admin-md-btn" data-md="h1" title="Заголовок 1 (# )"><strong>H1</strong></button>
+              <button type="button" class="admin-md-btn" data-md="h2" title="Заголовок 2 (## )"><strong>H2</strong></button>
+              <button type="button" class="admin-md-btn" data-md="bold" title="Жирный (*жирный*)"><strong>B</strong></button>
+              <button type="button" class="admin-md-btn" data-md="italic" title="Курсив (_курсив_)"><em>I</em></button>
+              <button type="button" class="admin-md-btn" data-md="underline" title="Подчёркнутый (__подчёркнутый__)"><u>U</u></button>
+              <button type="button" class="admin-md-btn" data-md="strike" title="Зачёркнутый (~~зачёркнутый~~)"><s>S</s></button>
+              <button type="button" class="admin-md-btn" data-md="spoiler" title="Скрытый / спойлер (||скрытый||)"><i class="mdi mdi-eye-off-outline"></i></button>
+              <button type="button" class="admin-md-btn" data-md="sub" title="Подстрочный (~{текст})">X₂</button>
+              <button type="button" class="admin-md-btn" data-md="sup" title="Надстрочный (^{текст})">X²</button>
+              <button type="button" class="admin-md-btn" data-md="mark" title="Выделенный маркером (==текст==)"><i class="mdi mdi-marker"></i></button>
+              <button type="button" class="admin-md-btn" data-md="code" title="Моноширинный код"><i class="mdi mdi-code-tags"></i></button>
+              <button type="button" class="admin-md-btn" data-md="pre" title="Блок кода"><i class="mdi mdi-code-braces"></i></button>
+              <button type="button" class="admin-md-btn" data-md="quote" title="Цитата (> текст)"><i class="mdi mdi-format-quote-close"></i></button>
+              <button type="button" class="admin-md-btn" data-md="pullquote" title="Выносная / сворачиваемая цитата (**> текст)"><i class="mdi mdi-comment-quote-outline"></i></button>
+              <button type="button" class="admin-md-btn" data-md="ol" title="Нумерованный список (1. )"><i class="mdi mdi-format-list-numbered"></i></button>
+              <button type="button" class="admin-md-btn" data-md="ul" title="Маркированный список (• )"><i class="mdi mdi-format-list-bulleted"></i></button>
+              <button type="button" class="admin-md-btn" data-md="checklist" title="Контрольный список (- [ ] )"><i class="mdi mdi-format-list-checks"></i></button>
+              <button type="button" class="admin-md-btn" data-md="collapse" title="Сворачиваемый блок (:::collapse ... :::)"><i class="mdi mdi-arrow-collapse-vertical"></i></button>
+              <button type="button" class="admin-md-btn" data-md="hr" title="Разделитель (---)"><i class="mdi mdi-minus"></i></button>
+              <button type="button" class="admin-md-btn" data-md="link" title="Ссылка ([текст](https://...))"><i class="mdi mdi-link-variant"></i></button>
+            </div>
+
+            <div class="admin-tpl-work-grid">
+              <div class="admin-tpl-input-col">
+                <label class="admin-sub-label" for="bot-tpl-textarea">Шаблон сообщения (Telegram Markdown + переменные)</label>
+                <textarea id="bot-tpl-textarea" class="admin-textarea admin-tpl-textarea" rows="10" placeholder="Текст шаблона сообщения…"></textarea>
+              </div>
+              <div class="admin-tpl-preview-col">
+                <div class="admin-sub-label">Живое превью в Telegram (с подстановкой переменных и кнопок)</div>
+                <div class="admin-tg-preview-card">
+                  <div>
                     <div class="admin-tg-preview-sender" id="bot-tpl-preview-sender">Карта РГРТУ · Бот</div>
                     <div class="admin-tg-preview-body" id="bot-tpl-preview-body"></div>
+                  </div>
+                  <div>
                     <div class="admin-tg-preview-time tabular-nums" id="bot-tpl-preview-time">12:00</div>
+                    <div class="admin-tg-preview-buttons" id="bot-tpl-preview-buttons"></div>
                   </div>
                 </div>
               </div>
+            </div>
 
-              <div class="admin-tpl-actions">
-                <button type="button" class="btn-secondary" id="btn-bot-tpl-reset">
-                  <i class="mdi mdi-restore"></i> Сбросить к стандартному
-                </button>
-                <button type="button" class="btn-secondary" id="btn-bot-tpl-test-send" title="Отправить этот шаблон выбранному ниже получателю в Telegram">
-                  <i class="mdi mdi-send-check-outline"></i> Отправить тест в Telegram
-                </button>
-                <div style="flex:1"></div>
-                <button type="button" class="btn-primary" id="btn-bot-tpl-save">
-                  <i class="mdi mdi-content-save-outline"></i> Сохранить шаблон в БД
-                </button>
+            <!-- Редактор кнопок шаблона -->
+            <div class="admin-tpl-buttons-editor" id="bot-tpl-buttons-section">
+              <div class="admin-tpl-buttons-header">
+                <div>
+                  <span class="admin-sub-label" style="margin-bottom:2px">Кнопки сообщения (Inline / WebApp / Reply)</span>
+                  <span class="admin-tpl-buttons-hint">Поддерживаются переменные <code>{{webappUrl}}</code>, <code>{{scheduleUrl}}</code>, <code>{{roomUrl}}</code>, а также callback-команды бота (<code>my_profile</code>, <code>login_code</code>, <code>toggle_notif</code>, <code>free_now</code>).</span>
+                </div>
+                <div class="admin-inline-actions">
+                  <button type="button" class="btn-secondary btn-sm" id="btn-bot-tpl-add-button">Добавить кнопку</button>
+                </div>
               </div>
+              <div class="admin-tpl-buttons-list" id="bot-tpl-buttons-list"></div>
+            </div>
+
+            <div class="admin-tpl-actions">
+              <button type="button" class="btn-secondary" id="btn-bot-tpl-reset">Сбросить</button>
+              <div style="flex:1"></div>
+              <button type="button" class="btn-primary" id="btn-bot-tpl-save">Сохранить</button>
             </div>
           </div>
         </div>
@@ -294,18 +307,13 @@
         <div class="admin-two-col">
           <div class="admin-surface-block">
             <h2>Личное сообщение или тест уведомления о паре</h2>
-            <p class="admin-block-desc">Поддерживает Markdown (`*жирный*`, `_курсив_`, `` `код` ``, `[ссылка](url)`) и переменные профиля (`{{name}}`, `{{target}}`, `{{role}}`).</p>
+            <p class="admin-block-desc">Поддерживает форматирование Markdown (жирный, курсив, код, ссылки) и переменные профиля ({{name}}, {{target}}, {{role}}).</p>
 
             <div class="admin-form-group">
               <label for="bot-direct-user-select">Получатель из базы</label>
               <select id="bot-direct-user-select" class="admin-select">
                 <option value="">— Выберите пользователя —</option>
               </select>
-            </div>
-
-            <div class="admin-form-group">
-              <label for="bot-direct-tgid">Числовой Telegram ID</label>
-              <input type="text" id="bot-direct-tgid" class="admin-input tabular-nums" placeholder="Например: 1252333122">
             </div>
 
             <div class="admin-form-group">
@@ -321,16 +329,12 @@
                 <button type="button" class="admin-md-btn" data-insert-var="{{name}}" title="Вставить имя получателя">+ {{name}}</button>
                 <button type="button" class="admin-md-btn" data-insert-var="{{target}}" title="Вставить группу/ФИО">+ {{target}}</button>
               </div>
-              <textarea id="bot-direct-text" class="admin-textarea" rows="4" placeholder="Например: Привет, *{{name}}*! Проверь расписание группы `{{target}}`."></textarea>
+              <textarea id="bot-direct-text" class="admin-textarea" rows="4" placeholder="Например: Привет, *{{name}}*! Проверь расписание группы {{target}}."></textarea>
             </div>
 
             <div class="admin-inline-actions">
-              <button type="button" class="btn-secondary" id="btn-bot-send-test-lesson">
-                <i class="mdi mdi-school-outline"></i> Отправить тест уведомления о паре
-              </button>
-              <button type="button" class="btn-primary" id="btn-bot-send-direct">
-                <i class="mdi mdi-send"></i> Отправить сообщение
-              </button>
+              <button type="button" class="btn-secondary" id="btn-bot-send-test-lesson">Отправить тест уведомления о паре</button>
+              <button type="button" class="btn-primary" id="btn-bot-send-direct">Отправить сообщение</button>
             </div>
 
             <div id="bot-direct-result" class="admin-result-box hidden"></div>
@@ -338,15 +342,15 @@
 
           <div class="admin-surface-block">
             <h2>Массовая рассылка объявления</h2>
-            <p class="admin-block-desc">Отправка новости всем пользователям или группе с поддержкой Markdown и персональных переменных (`{{name}}`, `{{target}}`, `{{role}}`).</p>
+            <p class="admin-block-desc">Отправка новости всем пользователям или группе с поддержкой Markdown и персональных переменных ({{name}}, {{target}}, {{role}}).</p>
 
             <div class="admin-form-group">
               <label for="bot-broadcast-audience">Аудитория рассылки</label>
               <select id="bot-broadcast-audience" class="admin-select">
-                <option value="all">Всем пользователям с привязанным Telegram</option>
-                <option value="student">Только студентам</option>
-                <option value="lecturer">Только преподавателям</option>
-                <option value="group">Конкретной учебной группе</option>
+                <option value="all">Всем</option>
+                <option value="student">Всем группам</option>
+                <option value="lecturer">Всем преподам</option>
+                <option value="group">Группе</option>
               </select>
             </div>
 
@@ -372,9 +376,7 @@
             </div>
 
             <div class="admin-inline-actions">
-              <button type="button" class="btn-primary" id="btn-bot-send-broadcast">
-                <i class="mdi mdi-bullhorn-outline"></i> Запустить рассылку
-              </button>
+              <button type="button" class="btn-primary" id="btn-bot-send-broadcast">Запустить рассылку</button>
             </div>
 
             <div id="bot-broadcast-result" class="admin-result-box hidden"></div>
@@ -387,62 +389,18 @@
         <div class="admin-page-header">
           <div>
             <h1>Облачная база данных Firebase Firestore и сессии</h1>
-            <p class="admin-subtitle">Управление синхронизацией с Google Cloud Firestore, резервными копиями JSON, 6-значными кодами входа и браузерными сессиями</p>
+            <p class="admin-subtitle" id="cloud-status-line">Управление синхронизацией с Google Cloud Firestore, резервными копиями JSON, 6-значными кодами входа и браузерными сессиями</p>
           </div>
           <div class="admin-header-actions">
-            <button type="button" class="btn-secondary" id="btn-cloud-pull">
-              <i class="mdi mdi-cloud-download-outline"></i> Загрузить из облака (Pull)
-            </button>
-            <button type="button" class="btn-primary" id="btn-cloud-push">
-              <i class="mdi mdi-cloud-upload-outline"></i> Выгрузить в облако (Push)
-            </button>
-          </div>
-        </div>
-
-        <div class="admin-surface-block" style="margin-bottom:24px">
-          <div class="admin-cloud-header-row">
-            <div>
-              <h2>Подключение к Google Cloud / Firebase Firestore</h2>
-              <p class="admin-block-desc" id="cloud-status-line">Проект: xerotic-diorama-16tvw</p>
-            </div>
-            <div class="admin-inline-actions">
-              <a href="#" target="_blank" rel="noopener" class="btn-secondary" id="link-firebase-console" style="text-decoration:none">
-                <i class="mdi mdi-open-in-new"></i> Открыть Firebase Console
-              </a>
-              <a href="#" target="_blank" rel="noopener" class="btn-secondary" id="link-gcp-console" style="text-decoration:none">
-                <i class="mdi mdi-google-cloud"></i> Google Cloud Console
-              </a>
-            </div>
-          </div>
-
-          <div class="admin-kpi-grid" style="margin-top:16px;margin-bottom:16px">
-            <div class="admin-kpi-card">
-              <span class="admin-kpi-label">Проект Google Cloud</span>
-              <strong class="admin-kpi-val tabular-nums" id="cloud-project-id" style="font-size:16px">—</strong>
-              <span class="admin-kpi-meta" id="cloud-db-id">—</span>
-            </div>
-            <div class="admin-kpi-card">
-              <span class="admin-kpi-label">Последняя загрузка (Pull)</span>
-              <strong class="admin-kpi-val tabular-nums" id="cloud-last-pull" style="font-size:16px">—</strong>
-              <span class="admin-kpi-meta">Автосинхронизация каждые 25 сек</span>
-            </div>
-            <div class="admin-kpi-card">
-              <span class="admin-kpi-label">Последняя запись (Push)</span>
-              <strong class="admin-kpi-val tabular-nums" id="cloud-last-push" style="font-size:16px">—</strong>
-              <span class="admin-kpi-meta" id="cloud-last-error">Ошибок нет</span>
-            </div>
-            <div class="admin-kpi-card">
-              <span class="admin-kpi-label">Резервная копия JSON</span>
-              <div class="admin-inline-actions" style="margin-top:8px">
-                <button type="button" class="btn-secondary btn-sm" id="btn-export-users-json">
-                  <i class="mdi mdi-download"></i> Скачать JSON
-                </button>
-                <label class="btn-secondary btn-sm" style="cursor:pointer;margin:0">
-                  <i class="mdi mdi-upload"></i> Импорт JSON
-                  <input type="file" id="input-import-users-json" accept=".json,application/json" style="display:none">
-                </label>
-              </div>
-            </div>
+            <button type="button" class="btn-secondary" id="btn-export-users-json">Скачать JSON</button>
+            <label class="btn-secondary" style="cursor:pointer;margin:0;display:inline-flex;align-items:center">
+              Импорт JSON
+              <input type="file" id="input-import-users-json" accept=".json,application/json" style="display:none">
+            </label>
+            <a href="#" target="_blank" rel="noopener" class="btn-secondary" id="link-firebase-console" style="text-decoration:none;display:inline-flex;align-items:center">Firebase Console</a>
+            <a href="#" target="_blank" rel="noopener" class="btn-secondary" id="link-gcp-console" style="text-decoration:none;display:inline-flex;align-items:center">Google Cloud</a>
+            <button type="button" class="btn-secondary" id="btn-cloud-pull">Загрузить из облака (Pull)</button>
+            <button type="button" class="btn-primary" id="btn-cloud-push">Выгрузить в облако (Push)</button>
           </div>
         </div>
 
@@ -450,7 +408,7 @@
           <div class="admin-surface-block">
             <div class="admin-section-title-row">
               <div>
-                <h2>Активные 6-значные коды входа (`authCodes`)</h2>
+                <h2>Активные 6-значные коды входа (authCodes)</h2>
                 <p class="admin-block-desc">Одноразовые коды для привязки Telegram на сайте (действуют 10 минут).</p>
               </div>
               <button type="button" class="btn-secondary btn-sm" id="btn-clear-codes">Очистить все</button>
@@ -482,7 +440,7 @@
           <div class="admin-surface-block">
             <div class="admin-section-title-row">
               <div>
-                <h2>Браузерные сессии входа (`authSessions`)</h2>
+                <h2>Браузерные сессии входа (authSessions)</h2>
                 <p class="admin-block-desc">Сессии автоматического входа по кнопке «Войти через Telegram».</p>
               </div>
               <button type="button" class="btn-secondary btn-sm" id="btn-clear-sessions">Очистить все</button>
@@ -512,16 +470,12 @@
       <section class="admin-panel" id="tab-rooms">
         <div class="admin-page-header">
           <div>
-            <h1>Справочник аудиторий и помещений (`rooms.json`)</h1>
+            <h1>Справочник аудиторий и помещений (rooms.json)</h1>
             <p class="admin-subtitle">Редактирование названий, номеров на карте, привязки к расписанию РГРТУ, этажей, типов и описаний помещений</p>
           </div>
           <div class="admin-header-actions">
-            <button type="button" class="btn-secondary" id="btn-export-rooms-json">
-              <i class="mdi mdi-download"></i> Скачать rooms.json
-            </button>
-            <button type="button" class="btn-primary" id="btn-add-room">
-              <i class="mdi mdi-plus"></i> Добавить помещение
-            </button>
+            <button type="button" class="btn-secondary" id="btn-export-rooms-json">Скачать rooms.json</button>
+            <button type="button" class="btn-primary" id="btn-add-room">Добавить помещение</button>
           </div>
         </div>
 
@@ -552,6 +506,10 @@
           </select>
         </div>
 
+        <div class="admin-table-meta-bar">
+          <span class="admin-table-count tabular-nums" id="rooms-count-caption">Выведено помещений: 0</span>
+        </div>
+
         <div class="admin-table-wrap">
           <table class="admin-table">
             <thead>
@@ -561,7 +519,7 @@
                 <th>Полное название</th>
                 <th>Этаж</th>
                 <th>Тип</th>
-                <th>Код расписания (`classroom`)</th>
+                <th>Код расписания</th>
                 <th>Описание</th>
                 <th class="text-right">Действия</th>
               </tr>
@@ -578,41 +536,12 @@
         <div class="admin-page-header">
           <div>
             <h1>Кэш расписания и диагностика</h1>
-            <p class="admin-subtitle">Управление локальным кэшем расписания `rasp.rsreu.ru`, поисковым индексом и проверка расписания любой группы или преподавателя</p>
+            <p class="admin-subtitle tabular-nums" id="cache-status-line">Управление локальным кэшем расписания rasp.rsreu.ru, поисковым индексом и проверка расписания любой группы или преподавателя</p>
           </div>
           <div class="admin-header-actions">
-            <button type="button" class="btn-secondary" id="btn-cache-clear-entities">
-              <i class="mdi mdi-broom"></i> Очистить кэш групп/преподавателей
-            </button>
-            <button type="button" class="btn-secondary" id="btn-cache-rebuild-index">
-              <i class="mdi mdi-database-refresh-outline"></i> Пересобрать индекс
-            </button>
-            <button type="button" class="btn-primary" id="btn-cache-warmup">
-              <i class="mdi mdi-sync"></i> Обновить кэш аудиторий
-            </button>
-          </div>
-        </div>
-
-        <div class="admin-kpi-grid">
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Статус кэша аудиторий</span>
-            <strong class="admin-kpi-val" id="cache-kpi-status">—</strong>
-            <span class="admin-kpi-meta" id="cache-kpi-updated">—</span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Аудиторий в кэше</span>
-            <strong class="admin-kpi-val tabular-nums" id="cache-kpi-rooms">0</strong>
-            <span class="admin-kpi-meta">Кэш групп/преп.: <span id="cache-kpi-entities" class="tabular-nums">0</span></span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Групп в индексе</span>
-            <strong class="admin-kpi-val tabular-nums" id="cache-kpi-groups">0</strong>
-            <span class="admin-kpi-meta">Кафедр: <span id="cache-kpi-depts" class="tabular-nums">0</span></span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Преподавателей в индексе</span>
-            <strong class="admin-kpi-val tabular-nums" id="cache-kpi-lecturers">0</strong>
-            <span class="admin-kpi-meta">Доступно недель: <span id="cache-kpi-weeks" class="tabular-nums">0</span></span>
+            <button type="button" class="btn-secondary" id="btn-cache-clear-entities">Очистить кэш групп/преподавателей</button>
+            <button type="button" class="btn-secondary" id="btn-cache-rebuild-index">Пересобрать индекс</button>
+            <button type="button" class="btn-primary" id="btn-cache-warmup">Обновить кэш аудиторий</button>
           </div>
         </div>
 
@@ -626,9 +555,7 @@
               <option value="lecturer">Преподаватель</option>
             </select>
             <input type="text" id="inspector-name" class="admin-input" placeholder="Например: 546М или Скворцов С.В." value="546М">
-            <button type="button" class="btn-primary" id="btn-inspector-load">
-              <i class="mdi mdi-magnify"></i> Проверить расписание
-            </button>
+            <button type="button" class="btn-primary" id="btn-inspector-load">Проверить расписание</button>
           </div>
 
           <div id="inspector-result" class="admin-inspector-result"></div>
@@ -642,35 +569,18 @@
             <h1>Премодерация контента и калибровка гибридного GPS</h1>
             <p class="admin-subtitle">Проверка предложенных студентами меток на карте (розетки, кофе, Wi-Fi), отзывов о столовых/буфетах, описаний кабинетов и настройка привязки GPS к схеме корпуса</p>
           </div>
-        </div>
-
-        <div class="admin-kpi-grid">
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Ожидают проверки</span>
-            <strong class="admin-kpi-val tabular-nums" id="mod-kpi-pending">0</strong>
-            <span class="admin-kpi-meta">Новые предложения от студентов</span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Метки POI на карте</span>
-            <strong class="admin-kpi-val tabular-nums" id="mod-kpi-markers">0</strong>
-            <span class="admin-kpi-meta">Опубликовано / всего</span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Отзывы о буфетах</span>
-            <strong class="admin-kpi-val tabular-nums" id="mod-kpi-reviews">0</strong>
-            <span class="admin-kpi-meta">Опубликовано / всего</span>
-          </div>
-          <div class="admin-kpi-card">
-            <span class="admin-kpi-label">Предложения описаний</span>
-            <strong class="admin-kpi-val tabular-nums" id="mod-kpi-descriptions">0</strong>
-            <span class="admin-kpi-meta">При одобрении обновляют rooms.json</span>
+          <div class="admin-segmented" id="moderation-filter-bar">
+            <button type="button" class="admin-seg-btn active" data-mod-filter="all">Все</button>
+            <button type="button" class="admin-seg-btn" data-mod-filter="pending">Ожидают</button>
+            <button type="button" class="admin-seg-btn" data-mod-filter="approved">Одобренные</button>
+            <button type="button" class="admin-seg-btn" data-mod-filter="rejected">Отклонённые</button>
           </div>
         </div>
 
         <!-- ОЧЕРЕДЬ 1: ПРЕДЛОЖЕННЫЕ ОПИСАНИЯ КАБИНЕТОВ -->
-        <div class="admin-surface-block" style="margin-bottom:22px">
+        <div class="admin-surface-block" style="margin-bottom:24px">
           <h2>Предложенные описания кабинетов и аудиторий</h2>
-          <p class="admin-block-desc">При нажатии «Одобрить и записать» текст автоматически сохраняется в `rooms.json` для выбранного кабинета и сразу отображается на карте.</p>
+          <p class="admin-block-desc">При нажатии «Одобрить и записать» текст автоматически сохраняется в rooms.json для выбранного кабинета и сразу отображается на карте.</p>
           <div class="admin-table-wrap">
             <table class="admin-table">
               <thead>
@@ -691,7 +601,7 @@
         </div>
 
         <!-- ОЧЕРЕДЬ 2: ОТЗЫВЫ И ОЦЕНКИ БУФЕТОВ И СТОЛОВЫХ -->
-        <div class="admin-surface-block" style="margin-bottom:22px">
+        <div class="admin-surface-block" style="margin-bottom:24px">
           <h2>Отзывы и оценки столовых и буфетов</h2>
           <p class="admin-block-desc">Одобренные отзывы отображаются в карточке буфета/столовой и формируют средний рейтинг.</p>
           <div class="admin-table-wrap">
@@ -714,9 +624,9 @@
         </div>
 
         <!-- ОЧЕРЕДЬ 3: МЕТКИ НА КАРТЕ (РОЗЕТКИ, КОФЕ, WI-FI, ПРОХОДЫ) -->
-        <div class="admin-surface-block" style="margin-bottom:22px">
-          <h2>Пользовательские метки на карте (`mapMarkers`)</h2>
-          <p class="admin-block-desc">Розетки, кофемашины, точки Wi-Fi и перекрытые проходы. Админ также может ставить метки сразу на карте через `/editor.html` (инструмент «Метка POI»).</p>
+        <div class="admin-surface-block" style="margin-bottom:24px">
+          <h2>Пользовательские метки на карте (mapMarkers)</h2>
+          <p class="admin-block-desc">Розетки, кофемашины, точки Wi-Fi и перекрытые проходы. Админ также может ставить метки сразу на карте через Редактор графа (инструмент «Метка POI»).</p>
           <div class="admin-table-wrap">
             <table class="admin-table">
               <thead>
@@ -738,121 +648,93 @@
 
         <!-- КАЛИБРОВКА ГИБРИДНОГО GPS И ПРИВЯЗКИ К КОРИДОРАМ -->
         <div class="admin-surface-block">
-          <h2>Калибровка гибридного GPS + Wi-Fi/BLE для Главного корпуса</h2>
-          <p class="admin-block-desc">Настройка географического центра здания, угла поворота схемы относительно севера и масштаба (метров на 1 единицу SVG). Опорные точки (реперы) также можно кликать прямо на плане в `/editor.html` (режим «Калибровка GPS»).</p>
+          <h2>Калибровка гибридного GPS + Wi-Fi/Cell для Главного корпуса (ул. Гагарина, 59/1)</h2>
+          <p class="admin-block-desc">Аффинная МНК-трансформация + интерполяция невязок (IDW) по опорным точкам корпуса. Опорные точки также можно калибровать прямо с телефона на карте (кнопка «Диагностика» → «Я здесь») или в Редакторе графа.</p>
           <div class="admin-form-grid" style="margin-top:12px">
             <div class="admin-form-group">
-              <label for="gps-cfg-lat">Центр корпуса — Широта (`centerLat`)</label>
-              <input type="text" id="gps-cfg-lat" class="admin-input tabular-nums" value="54.61435">
+              <label for="gps-cfg-lat">Центр корпуса — Широта (centerLat)</label>
+              <input type="text" id="gps-cfg-lat" class="admin-input tabular-nums" value="54.613783">
             </div>
             <div class="admin-form-group">
-              <label for="gps-cfg-lon">Центр корпуса — Долгота (`centerLon`)</label>
-              <input type="text" id="gps-cfg-lon" class="admin-input tabular-nums" value="39.70825">
+              <label for="gps-cfg-lon">Центр корпуса — Долгота (centerLon)</label>
+              <input type="text" id="gps-cfg-lon" class="admin-input tabular-nums" value="39.723850">
             </div>
             <div class="admin-form-group">
-              <label for="gps-cfg-rot">Поворот схемы от севера в градусах (`rotationDeg`)</label>
-              <input type="text" id="gps-cfg-rot" class="admin-input tabular-nums" value="-18">
+              <label for="gps-cfg-rot">Азимут оси X схемы в градусах (rotationDeg)</label>
+              <input type="text" id="gps-cfg-rot" class="admin-input tabular-nums" value="42.72">
             </div>
             <div class="admin-form-group">
-              <label for="gps-cfg-scale">Масштаб: метров в 1 ед. SVG (`scaleMetersPerSvgUnit`)</label>
-              <input type="text" id="gps-cfg-scale" class="admin-input tabular-nums" value="0.10">
+              <label for="gps-cfg-scale">Масштаб: метров в 1 ед. SVG (scaleMetersPerSvgUnit)</label>
+              <input type="text" id="gps-cfg-scale" class="admin-input tabular-nums" value="0.1065">
             </div>
           </div>
-          <div class="admin-inline-actions" style="margin-top:14px">
-            <button type="button" class="btn-primary" id="btn-save-gps-cfg">
-              <i class="mdi mdi-content-save-outline"></i> Сохранить параметры GPS
-            </button>
+          <div class="admin-inline-actions" style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+            <button type="button" class="btn-primary" id="btn-save-gps-cfg">Сохранить параметры GPS</button>
+            <button type="button" class="btn-secondary" id="btn-reset-gps-cfg">Сбросить к эталону РГРТУ (9 реперов)</button>
+          </div>
+
+          <div class="admin-table-caption" id="gps-anchors-caption" style="margin-top:20px">Опорных точек (реперов): 0</div>
+          <div class="admin-table-wrap">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Ориентир / Аудитория</th>
+                  <th>Этаж</th>
+                  <th>Координаты SVG (X, Y)</th>
+                  <th>Координаты WGS84 (Lat, Lon)</th>
+                  <th class="text-right">Действие</th>
+                </tr>
+              </thead>
+              <tbody id="gps-anchors-tbody">
+                <tr><td colspan="5" class="admin-empty-cell">Загрузка опорных точек…</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
     </main>
   </div>
 
-  <!-- Модальное окно редактирования пользователя -->
+  <!-- Модальное окно добавления/редактирования пользователя (в одну колонку) -->
   <div id="user-modal-backdrop" class="modal-backdrop">
-    <div class="modal-window admin-modal-lg">
+    <div class="modal-window admin-modal-sm">
       <div class="modal-header admin-modal-header">
-        <h2 id="user-modal-title">Редактирование пользователя</h2>
+        <h2 id="user-modal-title">Добавление пользователя</h2>
         <button type="button" class="admin-modal-close" id="user-modal-close" aria-label="Закрыть">
           <i class="mdi mdi-close"></i>
         </button>
       </div>
       <div class="modal-body admin-modal-body">
-        <div class="admin-form-grid">
+        <input type="hidden" id="edit-user-id">
+        <div class="admin-form-single-col">
           <div class="admin-form-group">
-            <label for="edit-user-id">ID профиля (`userId`)</label>
-            <input type="text" id="edit-user-id" class="admin-input tabular-nums" placeholder="Например: tg_1252333122">
-          </div>
-          <div class="admin-form-group">
-            <label for="edit-user-tgid">Telegram ID (числовой)</label>
+            <label for="edit-user-tgid">ID</label>
             <input type="text" id="edit-user-tgid" class="admin-input tabular-nums" placeholder="Например: 1252333122">
           </div>
           <div class="admin-form-group">
-            <label for="edit-user-firstname">Имя (`firstName`)</label>
-            <input type="text" id="edit-user-firstname" class="admin-input" placeholder="Имя пользователя">
-          </div>
-          <div class="admin-form-group">
-            <label for="edit-user-username">Telegram `@username`</label>
+            <label for="edit-user-username">username</label>
             <input type="text" id="edit-user-username" class="admin-input" placeholder="Без символа @">
           </div>
           <div class="admin-form-group">
-            <label for="edit-user-role">Статус (роль)</label>
+            <label for="edit-user-role">Статус</label>
             <select id="edit-user-role" class="admin-select">
               <option value="student">Студент</option>
               <option value="lecturer">Преподаватель</option>
             </select>
           </div>
-          <div class="admin-form-group">
-            <label for="edit-user-target">Группа или ФИО преподавателя (`targetName`)</label>
-            <input type="text" id="edit-user-target" class="admin-input" list="admin-target-datalist" placeholder="Например: 546М или доц. Нелюхин С.А.">
-            <datalist id="admin-target-datalist"></datalist>
-          </div>
-          <div class="admin-form-group">
-            <label for="edit-user-theme">Тема оформления</label>
-            <select id="edit-user-theme" class="admin-select">
-              <option value="system">Системная (system)</option>
-              <option value="light">Светлая (light)</option>
-              <option value="dark">Тёмная (dark)</option>
-            </select>
-          </div>
-          <div class="admin-form-group">
-            <label>Уведомления за 15 минут до пары</label>
+          <div class="admin-form-group" style="margin-bottom:0">
             <label class="admin-checkbox-row">
               <input type="checkbox" id="edit-user-notif" checked>
-              <span>Включить отправку напоминаний в Telegram</span>
+              <span>Отправка уведомлений</span>
             </label>
           </div>
-        </div>
-
-        <div class="admin-form-group" style="margin-top:14px">
-          <label for="edit-user-favorites">Избранные помещения (`favorites`, через запятую)</label>
-          <input type="text" id="edit-user-favorites" class="admin-input" placeholder="Например: C_auditori_337, C_buffet_1">
-        </div>
-
-        <div class="admin-form-group" style="margin-top:14px">
-          <div class="admin-section-title-row">
-            <label style="margin:0">Отправленные уведомления (`notifiedSlots`)</label>
-            <label class="admin-checkbox-row" style="font-size:12px">
-              <input type="checkbox" id="edit-user-reset-slots">
-              <span>Сбросить историю отправленных уведомлений при сохранении</span>
-            </label>
-          </div>
-          <div id="edit-user-slots-info" class="admin-meta-box tabular-nums">Нет отправленных уведомлений</div>
-        </div>
-
-        <div class="admin-form-group" style="margin-top:14px">
-          <div class="admin-section-title-row">
-            <label style="margin:0">Недавние просмотры (`recentViews`)</label>
-            <button type="button" class="btn-secondary btn-sm" id="btn-edit-user-clear-recent">Очистить историю</button>
-          </div>
-          <div id="edit-user-recent-info" class="admin-meta-box tabular-nums">Пусто</div>
         </div>
       </div>
       <div class="modal-footer admin-modal-footer">
         <button type="button" class="btn-danger" id="btn-user-modal-delete">Удалить профиль</button>
         <div style="flex:1"></div>
         <button type="button" class="btn-secondary" id="btn-user-modal-cancel">Отмена</button>
-        <button type="button" class="btn-primary" id="btn-user-modal-save">Сохранить в БД</button>
+        <button type="button" class="btn-primary" id="btn-user-modal-save">Сохранить</button>
       </div>
     </div>
   </div>
@@ -869,19 +751,19 @@
       <div class="modal-body admin-modal-body">
         <div class="admin-form-grid">
           <div class="admin-form-group">
-            <label for="edit-room-id">ID помещения на карте (`roomId`)</label>
+            <label for="edit-room-id">ID помещения на карте (roomId)</label>
             <input type="text" id="edit-room-id" class="admin-input tabular-nums" placeholder="Например: C_auditori_337">
           </div>
           <div class="admin-form-group">
-            <label for="edit-room-short">Короткий номер на карте (`shortName`)</label>
+            <label for="edit-room-short">Короткий номер на карте (shortName)</label>
             <input type="text" id="edit-room-short" class="admin-input" placeholder="Например: 337">
           </div>
           <div class="admin-form-group" style="grid-column: 1 / -1">
-            <label for="edit-room-name">Полное название помещения (`name`)</label>
+            <label for="edit-room-name">Полное название помещения (name)</label>
             <input type="text" id="edit-room-name" class="admin-input" placeholder="Например: Аудитория 337">
           </div>
           <div class="admin-form-group">
-            <label for="edit-room-floor">Этаж (`floor`)</label>
+            <label for="edit-room-floor">Этаж (floor)</label>
             <select id="edit-room-floor" class="admin-select">
               <option value="0">0 этаж (цоколь)</option>
               <option value="1">1 этаж</option>
@@ -891,7 +773,7 @@
             </select>
           </div>
           <div class="admin-form-group">
-            <label for="edit-room-type">Тип помещения (`type`)</label>
+            <label for="edit-room-type">Тип помещения (type)</label>
             <input type="text" id="edit-room-type" class="admin-input" list="room-types-datalist" placeholder="Например: classroom">
             <datalist id="room-types-datalist">
               <option value="classroom">Учебная аудитория</option>
@@ -907,15 +789,15 @@
             </datalist>
           </div>
           <div class="admin-form-group">
-            <label for="edit-room-classroom">Код в расписании rasp.rsreu.ru (`classroom`)</label>
+            <label for="edit-room-classroom">Код в расписании rasp.rsreu.ru (classroom)</label>
             <input type="text" id="edit-room-classroom" class="admin-input tabular-nums" placeholder="Оставьте пустым, если нет расписания">
           </div>
           <div class="admin-form-group">
-            <label for="edit-room-building">Корпус (`building`)</label>
+            <label for="edit-room-building">Корпус (building)</label>
             <input type="text" id="edit-room-building" class="admin-input" value="C" placeholder="C">
           </div>
           <div class="admin-form-group" style="grid-column: 1 / -1">
-            <label for="edit-room-desc">Описание / дополнительная информация (`description`)</label>
+            <label for="edit-room-desc">Описание / дополнительная информация (description)</label>
             <textarea id="edit-room-desc" class="admin-textarea" rows="3" placeholder="Дополнительное описание, часы работы или ориентиры…"></textarea>
           </div>
         </div>
@@ -950,6 +832,9 @@
     </div>
   </div>
 
-  <script src="js/admin.js"></script>
+  <!-- Контекстное поп-ап меню для таблицы пользователей (ПКМ по строке) -->
+  <div id="users-context-menu" class="admin-context-menu" role="menu" aria-hidden="true"></div>
+
+  <script src="js/admin-v2.js?v=1.5.1"></script>
 </body>
 </html>

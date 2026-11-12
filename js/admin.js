@@ -21,12 +21,14 @@ const state = {
   directory: { groups: [], lecturers: [] },
   userFilter: 'all',
   userSearch: '',
+  moderationFilter: 'all',
   roomFloorFilter: 'all',
   roomTypeFilter: 'all',
   roomSearch: '',
   editingUserId: null,
-  editingUserRecentViews: {},
-  editingRoomId: null
+  editingRoomId: null,
+  editingTemplateButtons: [],
+  loadedButtonsTplId: ''
 };
 
 const ROOM_TYPE_LABELS = {
@@ -50,6 +52,44 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+const SUBSCRIPT_MAP_PREVIEW = {
+  '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+  '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
+  'a': 'ₐ', 'e': 'ₑ', 'h': 'ₕ', 'i': 'ᵢ', 'j': 'ⱼ', 'k': 'ₖ', 'l': 'ₗ', 'm': 'ₘ', 'n': 'ₙ', 'o': 'ₒ', 'p': 'ₚ', 'r': 'ᵣ', 's': 'ₛ', 't': 'ₜ', 'u': 'ᵤ', 'v': 'ᵥ', 'x': 'ₓ'
+};
+
+const SUPERSCRIPT_MAP_PREVIEW = {
+  '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+  '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾', 'n': 'ⁿ', 'i': 'ⁱ', 'x': 'ˣ', 'y': 'ʸ'
+};
+
+function toSubscriptPreview(str) {
+  return String(str || '').split('').map(ch => SUBSCRIPT_MAP_PREVIEW[ch] || SUBSCRIPT_MAP_PREVIEW[ch.toLowerCase()] || ch).join('');
+}
+
+function toSuperscriptPreview(str) {
+  return String(str || '').split('').map(ch => SUPERSCRIPT_MAP_PREVIEW[ch] || SUPERSCRIPT_MAP_PREVIEW[ch.toLowerCase()] || ch).join('');
+}
+
+function formatVariablePreviewMarkdown(escapedVal) {
+  let v = String(escapedVal || '');
+  if (!v) return '';
+  const codes = [];
+  v = v.replace(/`([^`\n]+)`/g, (_, c) => {
+    const idx = codes.length;
+    codes.push(`<code>${c}</code>`);
+    return `ZXVVARCODE${idx}VXZ`;
+  });
+  v = v.replace(/\*\*([^\n*]+)\*\*/g, '<b>$1</b>');
+  v = v.replace(/__([^\n_]+)__/g, '<u>$1</u>');
+  v = v.replace(/~~([^\n~]+)~~/g, '<s>$1</s>');
+  v = v.replace(/\|\|([^\n|]+)\|\|/g, '<tg-spoiler title="Наведите курсор, чтобы раскрыть спойлер">$1</tg-spoiler>');
+  v = v.replace(/(^|[\s(>«"'—–-])\*([^\n*]+)\*(?=$|[\s).,!?:;»"'<—–-])/gm, '$1<b>$2</b>');
+  v = v.replace(/(^|[\s(>«"'—–-])_([^\n_]+)_(?=$|[\s).,!?:;»"'<—–-])/gm, '$1<i>$2</i>');
+  v = v.replace(/ZXVVARCODE(\d+)VXZ/g, (_, idx) => codes[Number(idx)] || '');
+  return v;
+}
+
 /**
  * Клиентский рендерер Markdown -> Telegram HTML для живого превью в админ-панели.
  */
@@ -57,13 +97,15 @@ function renderTelegramMarkdownPreview(markdownText, variables = {}) {
   const raw = String(markdownText == null ? '' : markdownText);
   if (!raw) return '<span style="color:var(--text-dim)">Пустой шаблон…</span>';
 
+  const richMarkdownKeys = new Set(['lessonsList', 'roomsList']);
   const varTokens = [];
   const withVarTokens = raw.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => {
     const val = Object.prototype.hasOwnProperty.call(variables, key)
       ? String(variables[key] == null ? '' : variables[key])
       : `{{${key}}}`;
     const idx = varTokens.length;
-    varTokens.push(escapeHtml(val));
+    const escaped = escapeHtml(val);
+    varTokens.push(richMarkdownKeys.has(key) ? formatVariablePreviewMarkdown(escaped) : escaped);
     return `ZXVVARTOKEN${idx}VXZ`;
   });
 
@@ -83,6 +125,13 @@ function renderTelegramMarkdownPreview(markdownText, variables = {}) {
     return `ZXVINLINECODE${idx}VXZ`;
   });
 
+  // Сворачиваемые блоки :::collapse Заголовок\nТекст\n:::
+  text = text.replace(/:::collapse(?:\s+([^\n]*))?\n([\s\S]*?):::/g, (_, title, body) => {
+    const cleanBody = String(body || '').replace(/^\n+|\n+$/g, '');
+    const header = title && title.trim() ? `<b>${title.trim()}</b>\n` : '';
+    return `<blockquote expandable class="tg-expandable-quote">${header}${cleanBody}</blockquote>`;
+  });
+
   text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => {
     return `<a href="${url}" target="_blank" rel="noopener">${label}</a>`;
   });
@@ -90,29 +139,70 @@ function renderTelegramMarkdownPreview(markdownText, variables = {}) {
   const lines = text.split('\n');
   const processedLines = [];
   let quoteBuffer = [];
+  let expandableQuoteBuffer = [];
+
   const flushQuote = () => {
     if (quoteBuffer.length > 0) {
       processedLines.push(`<blockquote>${quoteBuffer.join('\n')}</blockquote>`);
       quoteBuffer = [];
     }
   };
+  const flushExpandableQuote = () => {
+    if (expandableQuoteBuffer.length > 0) {
+      processedLines.push(`<blockquote expandable class="tg-expandable-quote">${expandableQuoteBuffer.join('\n')}</blockquote>`);
+      expandableQuoteBuffer = [];
+    }
+  };
+
   for (const line of lines) {
-    if (/^&gt;\s?(.*)$/.test(line)) {
+    if (/^(?:\*\*&gt;|&gt;&gt;)\s?(.*)$/.test(line)) {
+      flushQuote();
+      expandableQuoteBuffer.push(line.replace(/^(?:\*\*&gt;|&gt;&gt;)\s?/, ''));
+    } else if (/^&gt;\s?(.*)$/.test(line)) {
+      flushExpandableQuote();
       quoteBuffer.push(line.replace(/^&gt;\s?/, ''));
     } else {
       flushQuote();
-      processedLines.push(line);
+      flushExpandableQuote();
+      if (/^\s*(?:---|___|\*\*\*)\s*$/.test(line)) {
+        processedLines.push('<span class="tg-hr-line">────────────────────</span>');
+      } else if (/^######\s+(.+)$/.test(line)) {
+        processedLines.push(line.replace(/^######\s+(.+)$/, '<b><i><u>$1</u></i></b>'));
+      } else if (/^#####\s+(.+)$/.test(line)) {
+        processedLines.push(line.replace(/^#####\s+(.+)$/, '<b><i>$1</i></b>'));
+      } else if (/^####\s+(.+)$/.test(line)) {
+        processedLines.push(line.replace(/^####\s+(.+)$/, '<b>$1</b>'));
+      } else if (/^###\s+(.+)$/.test(line)) {
+        processedLines.push(line.replace(/^###\s+(.+)$/, '<span class="tg-h3"><b>$1</b></span>'));
+      } else if (/^##\s+(.+)$/.test(line)) {
+        processedLines.push(line.replace(/^##\s+(.+)$/, '<span class="tg-h2"><b><u>$1</u></b></span>'));
+      } else if (/^#\s+(.+)$/.test(line)) {
+        processedLines.push(line.replace(/^#\s+(.+)$/, '<span class="tg-h1"><b><u>$1</u></b></span>'));
+      } else if (/^\s*[-*•]\s+\[(?:x|X|✓|✔)\]\s+(.+)$/.test(line)) {
+        processedLines.push(line.replace(/^\s*[-*•]\s+\[(?:x|X|✓|✔)\]\s+(.+)$/, '☑️ <s>$1</s>'));
+      } else if (/^\s*[-*•]\s+\[\s?\]\s+(.+)$/.test(line)) {
+        processedLines.push(line.replace(/^\s*[-*•]\s+\[\s?\]\s+(.+)$/, '⬜ $1'));
+      } else if (/^\s*[-*]\s+(.+)$/.test(line)) {
+        processedLines.push(line.replace(/^\s*[-*]\s+(.+)$/, '• $1'));
+      } else {
+        processedLines.push(line);
+      }
     }
   }
   flushQuote();
+  flushExpandableQuote();
   text = processedLines.join('\n');
 
+  text = text.replace(/~\{([^}\n]+)\}/g, (_, subText) => `<sub class="tg-sub">${toSubscriptPreview(subText)}</sub>`);
+  text = text.replace(/\^\{([^}\n]+)\}/g, (_, supText) => `<sup class="tg-sup">${toSuperscriptPreview(supText)}</sup>`);
+  text = text.replace(/\[--([^\]\n]+)--\]/g, '<span class="tg-small"><i>$1</i></span>');
+  text = text.replace(/==([^\n=]+)==/g, '<mark class="tg-mark"><b><u>$1</u></b></mark>');
   text = text.replace(/\|\|([^\n|]+)\|\|/g, '<tg-spoiler title="Наведите курсор, чтобы раскрыть спойлер">$1</tg-spoiler>');
   text = text.replace(/~~([^\n~]+)~~/g, '<s>$1</s>');
   text = text.replace(/\*\*([^\n*]+)\*\*/g, '<b>$1</b>');
   text = text.replace(/__([^\n_]+)__/g, '<u>$1</u>');
-  text = text.replace(/(^|[\s(>«"'])\*([^\n*]+)\*(?=$|[\s).,!?:;»"'<])/gm, '$1<b>$2</b>');
-  text = text.replace(/(^|[\s(>«"'])_([^\n_]+)_(?=$|[\s).,!?:;»"'<])/gm, '$1<i>$2</i>');
+  text = text.replace(/(^|[\s(>«"'—–-])\*([^\n*]+)\*(?=$|[\s).,!?:;»"'<—–-])/gm, '$1<b>$2</b>');
+  text = text.replace(/(^|[\s(>«"'—–-])_([^\n_]+)_(?=$|[\s).,!?:;»"'<—–-])/gm, '$1<i>$2</i>');
 
   text = text.replace(/ZXVINLINECODE(\d+)VXZ/g, (_, idx) => inlineCodes[Number(idx)] || '');
   text = text.replace(/ZXVCODEBLOCK(\d+)VXZ/g, (_, idx) => codeBlocks[Number(idx)] || '');
@@ -142,11 +232,54 @@ function applyMarkdownActionToTextarea(textarea, action) {
   const before = textarea.value.slice(0, start);
   const after = textarea.value.slice(end);
 
+  const applyLinePrefix = (linePrefix, fallbackText) => {
+    const content = selected || fallbackText;
+    const formatted = content
+      .split('\n')
+      .map((line, idx) => {
+        const prefixStr = typeof linePrefix === 'function' ? linePrefix(idx, line) : linePrefix;
+        return line.startsWith(prefixStr) ? line : `${prefixStr}${line}`;
+      })
+      .join('\n');
+    const needNewlineBefore = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
+    const replacement = `${needNewlineBefore}${formatted}`;
+    textarea.value = before + replacement + after;
+    textarea.focus();
+    textarea.setSelectionRange(start + needNewlineBefore.length, start + replacement.length);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+
   let prefix = '';
   let suffix = '';
   let fallback = 'текст';
 
   switch (action) {
+    case 'h1':
+      return applyLinePrefix('# ', 'Заголовок 1');
+    case 'h2':
+      return applyLinePrefix('## ', 'Заголовок 2');
+    case 'h3':
+      return applyLinePrefix('### ', 'Заголовок 3');
+    case 'h4':
+      return applyLinePrefix('#### ', 'Заголовок 4');
+    case 'h5':
+      return applyLinePrefix('##### ', 'Заголовок 5');
+    case 'h6':
+      return applyLinePrefix('###### ', 'Заголовок 6');
+    case 'plain': {
+      if (!selected) return;
+      const cleaned = selected
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/^(?:\*\*>|>>|>)\s?/gm, '')
+        .replace(/(\*\*|\*|__|_|~~|\|\||==)/g, '')
+        .replace(/\[--([^\]\n]+)--\]/g, '$1')
+        .replace(/[~^]\{([^}\n]+)\}/g, '$1');
+      textarea.value = before + cleaned + after;
+      textarea.focus();
+      textarea.setSelectionRange(start, start + cleaned.length);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
     case 'bold':
       prefix = '*';
       suffix = '*';
@@ -175,30 +308,66 @@ function applyMarkdownActionToTextarea(textarea, action) {
     case 'pre':
       prefix = '```\n';
       suffix = '\n```';
-      fallback = 'блок текста';
+      fallback = 'блок кода';
       break;
     case 'spoiler':
       prefix = '||';
       suffix = '||';
       fallback = 'скрытый текст';
       break;
-    case 'quote': {
-      const content = selected || 'текст цитаты';
-      const quoted = content
-        .split('\n')
-        .map(line => (line.startsWith('> ') ? line : `> ${line}`))
-        .join('\n');
-      const needNewlineBefore = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
-      const replacement = `${needNewlineBefore}${quoted}`;
+    case 'sub':
+      prefix = '~{';
+      suffix = '}';
+      fallback = '2';
+      break;
+    case 'sup':
+      prefix = '^{';
+      suffix = '}';
+      fallback = '2';
+      break;
+    case 'mark':
+      prefix = '==';
+      suffix = '==';
+      fallback = 'выделенный текст';
+      break;
+    case 'small':
+      prefix = '[--';
+      suffix = '--]';
+      fallback = 'мелкий шрифт';
+      break;
+    case 'quote':
+      return applyLinePrefix('> ', 'текст цитаты');
+    case 'pullquote':
+      return applyLinePrefix('**> ', 'выносная (сворачиваемая) цитата');
+    case 'ol':
+      return applyLinePrefix((idx) => `${idx + 1}. `, 'Элемент списка');
+    case 'ul':
+      return applyLinePrefix('• ', 'Элемент списка');
+    case 'checklist':
+      return applyLinePrefix('- [ ] ', 'Пункт проверки');
+    case 'collapse': {
+      const innerText = selected || 'Скрытые подробности блока…';
+      const needNL = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
+      const replacement = `${needNL}:::collapse Подробнее\n${innerText}\n:::`;
       textarea.value = before + replacement + after;
       textarea.focus();
-      textarea.setSelectionRange(start + needNewlineBefore.length, start + replacement.length);
+      textarea.setSelectionRange(start + needNL.length, start + replacement.length);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+    case 'hr': {
+      const needNL = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
+      const replacement = `${needNL}---\n`;
+      textarea.value = before + replacement + after;
+      textarea.focus();
+      const pos = start + replacement.length;
+      textarea.setSelectionRange(pos, pos);
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       return;
     }
     case 'link': {
       const label = selected || 'Карта РГРТУ';
-      const url = 'https://radikmap.ai.studio/';
+      const url = '{{webappUrl}}';
       const replacement = `[${label}](${url})`;
       textarea.value = before + replacement + after;
       textarea.focus();
@@ -373,14 +542,6 @@ function setupAuthForm() {
       }
     }
   });
-
-  const logoutBtn = document.getElementById('btn-admin-logout');
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', () => {
-      setStoredEditorToken('');
-      showAuthGate('Вы вышли из админ-сессии');
-    });
-  }
 }
 
 // ================ НАВИГАЦИЯ ПО РАЗДЕЛАМ ================
@@ -399,14 +560,6 @@ function setupNavigation() {
   document.querySelectorAll('[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
-
-  const refreshBtn = document.getElementById('btn-admin-refresh');
-  if (refreshBtn) {
-    refreshBtn.addEventListener('click', async () => {
-      await loadAllAdminData();
-      showToast('Данные обновлены');
-    });
-  }
 }
 
 // ================ ЗАГРУЗКА ДАННЫХ ================
@@ -440,42 +593,15 @@ async function loadAllAdminData() {
       state.selectedTemplateId = state.botTemplates[0].id;
     }
 
-    renderSidebarCounters();
     renderUsersTab();
     renderBotTab();
     renderModerationTab();
     renderCloudTab();
     renderRoomsTab();
     renderCacheTab();
-    updateTargetDatalist();
   } catch (e) {
     if (!String(e.message).includes('Требуется авторизация')) {
       showToast(e.message || 'Не удалось загрузить данные');
-    }
-  }
-}
-
-function renderSidebarCounters() {
-  const elUsers = document.getElementById('nav-count-users');
-  const elCodes = document.getElementById('nav-count-codes');
-  const elRooms = document.getElementById('nav-count-rooms');
-  const elMod = document.getElementById('nav-count-moderation');
-  const elCloudSub = document.getElementById('sidebar-cloud-status');
-
-  const pendingModCount =
-    state.mapMarkers.filter(m => m.status === 'pending').length +
-    state.roomReviews.filter(r => r.status === 'pending').length +
-    state.descriptionSuggestions.filter(d => d.status === 'pending').length;
-
-  if (elUsers) elUsers.textContent = String(state.users.length);
-  if (elCodes) elCodes.textContent = String(state.authCodes.length + state.authSessions.length);
-  if (elRooms) elRooms.textContent = String(Object.keys(state.rooms).length);
-  if (elMod) elMod.textContent = String(pendingModCount);
-  if (elCloudSub) {
-    if (state.cloud.enabled) {
-      elCloudSub.textContent = `Активна · ${state.cloud.projectId}`;
-    } else {
-      elCloudSub.textContent = 'Локальный режим (users.json)';
     }
   }
 }
@@ -484,21 +610,6 @@ function renderSidebarCounters() {
 
 function renderUsersTab() {
   const total = state.users.length;
-  const tgLinked = state.users.filter(u => u.telegramId).length;
-  const students = state.users.filter(u => (u.role || 'student') === 'student').length;
-  const lecturers = state.users.filter(u => u.role === 'lecturer').length;
-  const withTarget = state.users.filter(u => u.targetName).length;
-  const notifActive = state.users.filter(u => u.telegramId && u.targetName && u.notificationsEnabled !== false).length;
-
-  document.getElementById('kpi-users-total').textContent = String(total);
-  document.getElementById('kpi-users-tg').textContent = String(tgLinked);
-  document.getElementById('kpi-users-roles').textContent = `${students} / ${lecturers}`;
-  document.getElementById('kpi-users-with-target').textContent = String(withTarget);
-  document.getElementById('kpi-users-notif').textContent = String(notifActive);
-  document.getElementById('kpi-users-cloud-meta').textContent = state.cloud.enabled
-    ? `Firestore (${state.cloud.projectId})`
-    : 'Локальный файл users.json';
-
   const q = state.userSearch.toLowerCase().replace(/ё/g, 'е').trim();
   const filtered = state.users.filter(u => {
     if (state.userFilter === 'telegram' && !u.telegramId) return false;
@@ -513,13 +624,23 @@ function renderUsersTab() {
     return hay.includes(q);
   });
 
+  const countCaption = document.getElementById('users-count-caption');
+  if (countCaption) {
+    countCaption.textContent = filtered.length === total
+      ? `Выведено записей: ${filtered.length}`
+      : `Выведено записей: ${filtered.length} из ${total}`;
+  }
+
   const tbody = document.getElementById('users-table-body');
   if (!tbody) return;
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="admin-empty-cell">Пользователи по выбранному фильтру не найдены</td></tr>`;
+    closeUserContextMenu();
+    tbody.innerHTML = `<tr><td colspan="6" class="admin-empty-cell">Пользователи по выбранному фильтру не найдены</td></tr>`;
     return;
   }
+
+  closeUserContextMenu();
 
   tbody.innerHTML = filtered.map(u => {
     const displayName = u.firstName || (u.username ? `@${u.username}` : 'Без имени');
@@ -538,7 +659,7 @@ function renderUsersTab() {
     const recentCount = u.recentViews && typeof u.recentViews === 'object' ? Object.keys(u.recentViews).length : 0;
 
     return `
-      <tr>
+      <tr class="admin-user-row" data-uid="${escapeHtml(u.id)}" title="Нажмите правой кнопкой мыши для вызова меню действий">
         <td>
           <div class="admin-row-title">${escapeHtml(displayName)}</div>
           <div class="admin-row-sub tabular-nums">${escapeHtml(u.id)} · тема: ${escapeHtml(u.theme || 'system')}</div>
@@ -554,68 +675,91 @@ function renderUsersTab() {
         </td>
         <td class="tabular-nums">${favCount} избр. · ${recentCount} просм.</td>
         <td class="tabular-nums">${escapeHtml(formatDateTime(u.updatedAt))}</td>
-        <td class="text-right">
-          <div class="admin-row-actions">
-            ${u.telegramId ? `
-              <button type="button" class="admin-icon-btn" data-action="test-user-lesson" data-uid="${escapeHtml(u.id)}" title="Отправить тест уведомления о паре в Telegram">
-                <i class="mdi mdi-bell-ring-outline"></i> Тест пары
-              </button>
-              <button type="button" class="admin-icon-btn" data-action="msg-user-tg" data-uid="${escapeHtml(u.id)}" title="Написать сообщение в Telegram">
-                <i class="mdi mdi-send-outline"></i>
-              </button>
-            ` : ''}
-            <button type="button" class="admin-icon-btn" data-action="edit-user" data-uid="${escapeHtml(u.id)}">
-              <i class="mdi mdi-pencil-outline"></i> Изменить
-            </button>
-            <button type="button" class="admin-icon-btn danger" data-action="delete-user" data-uid="${escapeHtml(u.id)}" title="Удалить профиль">
-              <i class="mdi mdi-delete-outline"></i>
-            </button>
-          </div>
-        </td>
       </tr>
     `;
   }).join('');
 
-  tbody.querySelectorAll('[data-action="edit-user"]').forEach(btn => {
-    btn.addEventListener('click', () => openUserModal(btn.dataset.uid));
-  });
-
-  tbody.querySelectorAll('[data-action="delete-user"]').forEach(btn => {
-    btn.addEventListener('click', () => confirmDeleteUser(btn.dataset.uid));
-  });
-
-  tbody.querySelectorAll('[data-action="test-user-lesson"]').forEach(btn => {
-    btn.addEventListener('click', () => sendTestLessonToUser(btn.dataset.uid));
-  });
-
-  tbody.querySelectorAll('[data-action="msg-user-tg"]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const u = state.users.find(x => x.id === btn.dataset.uid);
-      if (!u || !u.telegramId) return;
-      switchTab('bot');
-      const sel = document.getElementById('bot-direct-user-select');
-      const tgInput = document.getElementById('bot-direct-tgid');
-      if (sel) sel.value = u.id;
-      if (tgInput) tgInput.value = String(u.telegramId);
-      document.getElementById('bot-direct-text')?.focus();
+  tbody.querySelectorAll('tr.admin-user-row').forEach(row => {
+    row.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const uid = row.dataset.uid;
+      if (!uid) return;
+      openUserContextMenu(uid, e.clientX, e.clientY, row);
     });
   });
 }
 
-function updateTargetDatalist() {
-  const roleSel = document.getElementById('edit-user-role');
-  const datalist = document.getElementById('admin-target-datalist');
-  if (!datalist || !roleSel) return;
-  const role = roleSel.value;
-  if (role === 'lecturer') {
-    datalist.innerHTML = state.directory.lecturers
-      .map(l => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.fullName || l.name)}</option>`)
-      .join('');
-  } else {
-    datalist.innerHTML = state.directory.groups
-      .map(g => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.faculty || '')}</option>`)
-      .join('');
+function closeUserContextMenu() {
+  const menu = document.getElementById('users-context-menu');
+  if (menu) {
+    menu.classList.remove('open');
+    menu.setAttribute('aria-hidden', 'true');
   }
+  document.querySelectorAll('tr.admin-user-row.context-active').forEach(r => r.classList.remove('context-active'));
+}
+
+function openUserContextMenu(userId, clientX, clientY, rowEl) {
+  const menu = document.getElementById('users-context-menu');
+  const u = state.users.find(x => x.id === userId);
+  if (!menu || !u) return;
+
+  document.querySelectorAll('tr.admin-user-row.context-active').forEach(r => r.classList.remove('context-active'));
+  if (rowEl) rowEl.classList.add('context-active');
+
+  const displayName = u.firstName || (u.username ? `@${u.username}` : u.id);
+
+  menu.innerHTML = `
+    <div class="admin-context-menu-header">${escapeHtml(displayName)}</div>
+    ${u.telegramId ? `
+      <button type="button" class="admin-context-item" role="menuitem" data-ctx-action="test-user-lesson" data-uid="${escapeHtml(u.id)}">Тест пары</button>
+      <button type="button" class="admin-context-item" role="menuitem" data-ctx-action="msg-user-tg" data-uid="${escapeHtml(u.id)}">Сообщение</button>
+    ` : ''}
+    <button type="button" class="admin-context-item" role="menuitem" data-ctx-action="edit-user" data-uid="${escapeHtml(u.id)}">Изменить</button>
+    <button type="button" class="admin-context-item danger" role="menuitem" data-ctx-action="delete-user" data-uid="${escapeHtml(u.id)}">Удалить</button>
+  `;
+
+  menu.classList.add('open');
+  menu.setAttribute('aria-hidden', 'false');
+
+  // Позиционирование в пределах вьюпорта
+  menu.style.left = `${clientX}px`;
+  menu.style.top = `${clientY}px`;
+  const rect = menu.getBoundingClientRect();
+  const pad = 10;
+  let nextLeft = clientX;
+  let nextTop = clientY;
+  if (clientX + rect.width + pad > window.innerWidth) {
+    nextLeft = Math.max(pad, window.innerWidth - rect.width - pad);
+  }
+  if (clientY + rect.height + pad > window.innerHeight) {
+    nextTop = Math.max(pad, window.innerHeight - rect.height - pad);
+  }
+  menu.style.left = `${nextLeft}px`;
+  menu.style.top = `${nextTop}px`;
+
+  menu.querySelectorAll('[data-ctx-action]').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const action = btn.dataset.ctxAction;
+      const uid = btn.dataset.uid;
+      closeUserContextMenu();
+      if (action === 'edit-user') {
+        openUserModal(uid);
+      } else if (action === 'delete-user') {
+        confirmDeleteUser(uid);
+      } else if (action === 'test-user-lesson') {
+        sendTestLessonToUser(uid);
+      } else if (action === 'msg-user-tg') {
+        const targetUser = state.users.find(x => x.id === uid);
+        if (!targetUser || !targetUser.telegramId) return;
+        switchTab('bot');
+        const sel = document.getElementById('bot-direct-user-select');
+        if (sel) sel.value = targetUser.id;
+        document.getElementById('bot-direct-text')?.focus();
+      }
+    });
+  });
 }
 
 function openUserModal(userId = null) {
@@ -623,45 +767,20 @@ function openUserModal(userId = null) {
   const titleEl = document.getElementById('user-modal-title');
   const idInput = document.getElementById('edit-user-id');
   const tgInput = document.getElementById('edit-user-tgid');
-  const fnInput = document.getElementById('edit-user-firstname');
   const unInput = document.getElementById('edit-user-username');
   const roleSel = document.getElementById('edit-user-role');
-  const targetInput = document.getElementById('edit-user-target');
-  const themeSel = document.getElementById('edit-user-theme');
   const notifCheck = document.getElementById('edit-user-notif');
-  const favInput = document.getElementById('edit-user-favorites');
-  const resetSlotsCheck = document.getElementById('edit-user-reset-slots');
-  const slotsInfo = document.getElementById('edit-user-slots-info');
-  const recentInfo = document.getElementById('edit-user-recent-info');
   const deleteBtn = document.getElementById('btn-user-modal-delete');
 
   const existing = userId ? state.users.find(u => u.id === userId) : null;
   state.editingUserId = existing ? existing.id : null;
-  state.editingUserRecentViews = existing && existing.recentViews ? { ...existing.recentViews } : {};
 
-  titleEl.textContent = existing ? `Профиль: ${existing.firstName || existing.id}` : 'Новый пользователь';
-  idInput.value = existing ? existing.id : '';
-  idInput.readOnly = Boolean(existing);
-  tgInput.value = existing && existing.telegramId ? String(existing.telegramId) : '';
-  fnInput.value = existing ? (existing.firstName || '') : '';
-  unInput.value = existing ? (existing.username || '') : '';
-  roleSel.value = existing && existing.role === 'lecturer' ? 'lecturer' : 'student';
-  updateTargetDatalist();
-  targetInput.value = existing ? (existing.targetName || '') : '';
-  themeSel.value = existing ? (existing.theme || 'system') : 'system';
-  notifCheck.checked = existing ? existing.notificationsEnabled !== false : true;
-  favInput.value = existing && Array.isArray(existing.favorites) ? existing.favorites.join(', ') : '';
-  resetSlotsCheck.checked = false;
-
-  const slots = existing && Array.isArray(existing.notifiedSlots) ? existing.notifiedSlots : [];
-  if (slots.length > 0 || (existing && existing.lastNotifiedSlot)) {
-    const list = slots.length > 0 ? slots : [existing.lastNotifiedSlot];
-    slotsInfo.textContent = list.join('\n');
-  } else {
-    slotsInfo.textContent = 'Нет отправленных уведомлений';
-  }
-
-  renderEditingUserRecentInfo(recentInfo);
+  titleEl.textContent = existing ? `Профиль: ${existing.firstName || existing.username || existing.id}` : 'Новый пользователь';
+  if (idInput) idInput.value = existing ? existing.id : '';
+  if (tgInput) tgInput.value = existing && existing.telegramId ? String(existing.telegramId) : '';
+  if (unInput) unInput.value = existing ? (existing.username || '') : '';
+  if (roleSel) roleSel.value = existing && existing.role === 'lecturer' ? 'lecturer' : 'student';
+  if (notifCheck) notifCheck.checked = existing ? existing.notificationsEnabled !== false : true;
 
   if (deleteBtn) {
     deleteBtn.style.display = existing ? 'inline-flex' : 'none';
@@ -670,39 +789,19 @@ function openUserModal(userId = null) {
   modal.classList.add('open');
 }
 
-function renderEditingUserRecentInfo(container) {
-  if (!container) return;
-  const entries = Object.entries(state.editingUserRecentViews || {});
-  if (entries.length === 0) {
-    container.textContent = 'Пусто';
-    return;
-  }
-  container.textContent = entries
-    .map(([key, val]) => `${key} — просмотров: ${val.count || 1} (${formatDateTime(val.lastViewedAt)})`)
-    .join('\n');
-}
-
 function closeUserModal() {
   const modal = document.getElementById('user-modal-backdrop');
   if (modal) modal.classList.remove('open');
 }
 
 async function saveUserFromModal() {
-  const idVal = document.getElementById('edit-user-id').value.trim();
-  const tgVal = document.getElementById('edit-user-tgid').value.trim();
-  const fnVal = document.getElementById('edit-user-firstname').value.trim();
-  const unVal = document.getElementById('edit-user-username').value.replace(/^@/, '').trim();
-  const roleVal = document.getElementById('edit-user-role').value;
-  const targetVal = document.getElementById('edit-user-target').value.trim();
-  const themeVal = document.getElementById('edit-user-theme').value;
-  const notifVal = document.getElementById('edit-user-notif').checked;
-  const favRaw = document.getElementById('edit-user-favorites').value;
-  const resetSlots = document.getElementById('edit-user-reset-slots').checked;
+  const idVal = document.getElementById('edit-user-id')?.value.trim() || '';
+  const tgVal = document.getElementById('edit-user-tgid')?.value.trim() || '';
+  const unVal = (document.getElementById('edit-user-username')?.value || '').replace(/^@/, '').trim();
+  const roleVal = document.getElementById('edit-user-role')?.value || 'student';
+  const notifVal = Boolean(document.getElementById('edit-user-notif')?.checked);
 
-  const favorites = favRaw
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+  const existing = state.editingUserId ? state.users.find(u => u.id === state.editingUserId) : null;
 
   try {
     await adminFetch('/api/admin/user/save', {
@@ -710,15 +809,15 @@ async function saveUserFromModal() {
       body: JSON.stringify({
         userId: idVal || (tgVal ? `tg_${tgVal}` : ''),
         telegramId: tgVal ? Number(tgVal) : null,
-        firstName: fnVal,
+        firstName: existing ? (existing.firstName || unVal || '') : (unVal || ''),
         username: unVal,
         role: roleVal,
-        targetName: targetVal,
-        theme: themeVal,
+        targetName: existing ? (existing.targetName || '') : '',
+        theme: existing ? (existing.theme || 'system') : 'system',
         notificationsEnabled: notifVal,
-        favorites,
-        recentViews: state.editingUserRecentViews,
-        resetNotifiedSlots: resetSlots
+        favorites: existing && Array.isArray(existing.favorites) ? existing.favorites : [],
+        recentViews: existing && existing.recentViews ? existing.recentViews : {},
+        resetNotifiedSlots: false
       })
     });
     closeUserModal();
@@ -769,33 +868,7 @@ async function sendTestLessonToUser(userId, telegramId = null) {
 // ================ ВКЛАДКА 2: TELEGRAM-БОТ, ШАБЛОНЫ И РАССЫЛКИ ================
 
 function renderBotTab() {
-  const statusEl = document.getElementById('bot-kpi-status');
-  const unameEl = document.getElementById('bot-kpi-username');
-  const tplCountEl = document.getElementById('bot-kpi-templates');
-  const tplModEl = document.getElementById('bot-kpi-templates-modified');
-  const linkedEl = document.getElementById('bot-kpi-linked');
-  const notifEl = document.getElementById('bot-kpi-notif-active');
-  const weekEl = document.getElementById('bot-kpi-week');
-  const clockEl = document.getElementById('bot-kpi-clock');
-
   const linkedUsers = state.users.filter(u => u.telegramId);
-  const activeNotifUsers = linkedUsers.filter(u => u.targetName && u.notificationsEnabled !== false);
-  const modifiedTemplatesCount = state.botTemplates.filter(t => t.isModified).length;
-
-  if (statusEl) statusEl.textContent = state.bot.configured ? 'Активен' : 'Токен не задан';
-  if (unameEl) unameEl.textContent = state.bot.username ? `@${state.bot.username}` : '@rgrtu_map_bot';
-  if (tplCountEl) tplCountEl.textContent = String(state.botTemplates.length || 16);
-  if (tplModEl) tplModEl.textContent = `Изменено пользователем: ${modifiedTemplatesCount}`;
-  if (linkedEl) linkedEl.textContent = String(linkedUsers.length);
-  if (notifEl) notifEl.textContent = String(activeNotifUsers.length);
-  if (weekEl) weekEl.textContent = state.cache.defaultWeek || 'Текущая';
-  if (clockEl && state.cache.moscowClock) {
-    const mc = state.cache.moscowClock;
-    const hh = String(Math.floor((mc.nowMin || 0) / 60)).padStart(2, '0');
-    const mm = String((mc.nowMin || 0) % 60).padStart(2, '0');
-    clockEl.textContent = `${mc.todayDayName || ''} · ${mc.todayISO || ''} · ${hh}:${mm} МСК`;
-  }
-
   const sel = document.getElementById('bot-direct-user-select');
   if (sel) {
     const currentVal = sel.value;
@@ -812,55 +885,59 @@ function renderBotTab() {
 }
 
 function renderBotTemplateStudio() {
-  const listEl = document.getElementById('bot-tpl-list');
-  if (!listEl) return;
+  const menuEl = document.getElementById('bot-tpl-dropdown-menu');
+  if (menuEl) {
+    const q = state.templateSearch.toLowerCase().replace(/ё/g, 'е').trim();
+    const filtered = state.botTemplates.filter(tpl => {
+      if (!q) return true;
+      const hay = `${tpl.id} ${tpl.title} ${tpl.category} ${tpl.trigger} ${tpl.description}`
+        .toLowerCase()
+        .replace(/ё/g, 'е');
+      return hay.includes(q);
+    });
 
-  const q = state.templateSearch.toLowerCase().replace(/ё/g, 'е').trim();
-  const filtered = state.botTemplates.filter(tpl => {
-    if (!q) return true;
-    const hay = `${tpl.id} ${tpl.title} ${tpl.category} ${tpl.trigger} ${tpl.description}`
-      .toLowerCase()
-      .replace(/ё/g, 'е');
-    return hay.includes(q);
-  });
+    if (filtered.length === 0) {
+      menuEl.innerHTML = `<div class="admin-empty-cell" style="padding:14px">Шаблоны не найдены</div>`;
+    } else {
+      const byCategory = new Map();
+      for (const tpl of filtered) {
+        const cat = tpl.category || 'Сообщения';
+        if (!byCategory.has(cat)) byCategory.set(cat, []);
+        byCategory.get(cat).push(tpl);
+      }
 
-  if (filtered.length === 0) {
-    listEl.innerHTML = `<div class="admin-empty-cell">Шаблоны не найдены</div>`;
-    return;
-  }
+      let html = '';
+      for (const [cat, items] of byCategory.entries()) {
+        html += `<div class="admin-tpl-cat-header">${escapeHtml(cat)}</div>`;
+        for (const tpl of items) {
+          const isActive = tpl.id === state.selectedTemplateId;
+          const isEnabled = tpl.enabled !== false;
+          html += `
+            <button type="button" class="admin-tpl-item ${isActive ? 'active' : ''} ${!isEnabled ? 'disabled-tpl' : ''}" data-tpl-id="${escapeHtml(tpl.id)}">
+              <div class="admin-tpl-item-top">
+                <span class="admin-tpl-item-title">${escapeHtml(tpl.title)}</span>
+                ${!isEnabled ? '<span class="admin-tpl-item-badges"><span class="admin-tpl-item-off">Отключён</span></span>' : ''}
+              </div>
+              <div class="admin-tpl-item-sub">${escapeHtml(tpl.trigger)}</div>
+            </button>
+          `;
+        }
+      }
+      menuEl.innerHTML = html;
 
-  // Группируем по категориям
-  const byCategory = new Map();
-  for (const tpl of filtered) {
-    const cat = tpl.category || 'Сообщения';
-    if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat).push(tpl);
-  }
-
-  let html = '';
-  for (const [cat, items] of byCategory.entries()) {
-    html += `<div class="admin-tpl-cat-header">${escapeHtml(cat)}</div>`;
-    for (const tpl of items) {
-      const isActive = tpl.id === state.selectedTemplateId;
-      html += `
-        <button type="button" class="admin-tpl-item ${isActive ? 'active' : ''}" data-tpl-id="${escapeHtml(tpl.id)}">
-          <div class="admin-tpl-item-top">
-            <span class="admin-tpl-item-title">${escapeHtml(tpl.title)}</span>
-            ${tpl.isModified ? '<span class="admin-tpl-item-mod">Изменён</span>' : ''}
-          </div>
-          <div class="admin-tpl-item-sub">${escapeHtml(tpl.trigger)}</div>
-        </button>
-      `;
+      menuEl.querySelectorAll('[data-tpl-id]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          state.selectedTemplateId = btn.dataset.tplId;
+          state.templateSearch = '';
+          const searchInp = document.getElementById('bot-tpl-search');
+          if (searchInp) searchInp.value = '';
+          document.getElementById('bot-tpl-picker-wrap')?.classList.remove('open');
+          renderBotTemplateStudio();
+        });
+      });
     }
   }
-  listEl.innerHTML = html;
-
-  listEl.querySelectorAll('[data-tpl-id]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.selectedTemplateId = btn.dataset.tplId;
-      renderBotTemplateStudio();
-    });
-  });
 
   renderSelectedTemplateEditor();
 }
@@ -874,18 +951,19 @@ function renderSelectedTemplateEditor() {
   if (!tpl) return;
 
   const titleEl = document.getElementById('bot-tpl-title');
-  const triggerEl = document.getElementById('bot-tpl-trigger');
-  const badgeEl = document.getElementById('bot-tpl-state-badge');
+  const enabledToggle = document.getElementById('bot-tpl-enabled-toggle');
+  const enabledLabel = document.getElementById('bot-tpl-enabled-label');
   const descEl = document.getElementById('bot-tpl-desc');
   const varsEl = document.getElementById('bot-tpl-vars');
   const textarea = document.getElementById('bot-tpl-textarea');
   const senderEl = document.getElementById('bot-tpl-preview-sender');
 
+  const isEnabled = tpl.enabled !== false;
   if (titleEl) titleEl.textContent = tpl.title;
-  if (triggerEl) triggerEl.textContent = `Триггер: ${tpl.trigger} · ID: ${tpl.id}`;
-  if (badgeEl) {
-    badgeEl.textContent = tpl.isModified ? 'Пользовательский шаблон' : 'Стандартный шаблон';
-    badgeEl.classList.toggle('modified', Boolean(tpl.isModified));
+  if (enabledToggle) enabledToggle.checked = isEnabled;
+  if (enabledLabel) {
+    enabledLabel.textContent = isEnabled ? 'Включён' : 'Отключён';
+    enabledLabel.classList.toggle('is-off', !isEnabled);
   }
   if (descEl) descEl.textContent = tpl.description || '';
   if (senderEl) {
@@ -894,22 +972,30 @@ function renderSelectedTemplateEditor() {
 
   if (varsEl) {
     const vars = Array.isArray(tpl.variables) ? tpl.variables : [];
-    if (vars.length === 0) {
-      varsEl.innerHTML = `<span style="font-size:12px;color:var(--text-dim)">В этом сообщении нет динамических переменных</span>`;
-    } else {
-      varsEl.innerHTML = vars.map(v => `
-        <button type="button" class="admin-var-btn" data-var-insert="{{${escapeHtml(v.key)}}}" title="Пример значения: ${escapeHtml(v.sample || '')}">
-          <code>{{${escapeHtml(v.key)}}}</code>
-          <span>${escapeHtml(v.label)}</span>
+    const extraVars = [
+      { key: 'webappUrl', label: 'Ссылка на Карту', sample: 'https://ais-pre-irnfdqzemrx7nu7xzzdevi-814881682897.us-east1.run.app/' },
+      { key: 'scheduleUrl', label: 'Ссылка на Расписание', sample: 'https://ais-pre-irnfdqzemrx7nu7xzzdevi-814881682897.us-east1.run.app/?view=schedule' }
+    ];
+    const allVars = [...vars];
+    for (const ev of extraVars) {
+      if (!allVars.some(v => v.key === ev.key)) allVars.push(ev);
+    }
+
+    varsEl.innerHTML = `<div class="admin-md-dropdown-group-label">Переменные шаблона</div>` +
+      allVars.map(v => `
+        <button type="button" class="admin-md-menu-item admin-var-menu-item" data-var-insert="{{${escapeHtml(v.key)}}}" title="Пример: ${escapeHtml(v.sample || '')}">
+          <code class="admin-var-code">{{${escapeHtml(v.key)}}}</code>
+          <span class="admin-var-desc">${escapeHtml(v.label)}</span>
         </button>
       `).join('');
 
-      varsEl.querySelectorAll('[data-var-insert]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          insertAtTextareaCursor(textarea, btn.dataset.varInsert);
-        });
+    varsEl.querySelectorAll('[data-var-insert]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        insertAtTextareaCursor(textarea, btn.dataset.varInsert);
+        document.querySelectorAll('.admin-md-dropdown.open').forEach(d => d.classList.remove('open'));
       });
-    }
+    });
   }
 
   if (textarea && textarea.dataset.loadedTplId !== tpl.id) {
@@ -917,7 +1003,84 @@ function renderSelectedTemplateEditor() {
     textarea.dataset.loadedTplId = tpl.id;
   }
 
+  if (state.loadedButtonsTplId !== tpl.id) {
+    const sourceButtons = Array.isArray(tpl.buttons) ? tpl.buttons : (Array.isArray(tpl.defaultButtons) ? tpl.defaultButtons : []);
+    state.editingTemplateButtons = sourceButtons.map(b => ({
+      text: String(b.text || ''),
+      type: String(b.type || 'callback'),
+      value: String(b.value || '')
+    }));
+    state.loadedButtonsTplId = tpl.id;
+  }
+
+  renderTemplateButtonsEditor();
   updateLiveTemplatePreview();
+}
+
+function renderTemplateButtonsEditor() {
+  const listEl = document.getElementById('bot-tpl-buttons-list');
+  if (!listEl) return;
+
+  const buttons = Array.isArray(state.editingTemplateButtons) ? state.editingTemplateButtons : [];
+  if (buttons.length === 0) {
+    listEl.innerHTML = `<div class="admin-tpl-buttons-empty">У этого шаблона сейчас нет прикреплённых кнопок. Нажмите «Добавить кнопку», чтобы прикрепить WebApp, ссылку или команду.</div>`;
+    return;
+  }
+
+  listEl.innerHTML = buttons.map((btn, idx) => `
+    <div class="admin-tpl-button-row" data-btn-idx="${idx}">
+      <input type="text" class="admin-input tpl-btn-text-input" data-btn-idx="${idx}" value="${escapeHtml(btn.text)}" placeholder="Текст на кнопке (напр. 🗺 Карта)">
+      <select class="admin-select tpl-btn-type-select" data-btn-idx="${idx}">
+        <option value="webapp" ${btn.type === 'webapp' ? 'selected' : ''}>WebApp (мини-приложение)</option>
+        <option value="url" ${btn.type === 'url' ? 'selected' : ''}>URL (внешняя ссылка)</option>
+        <option value="callback" ${btn.type === 'callback' ? 'selected' : ''}>Callback (команда боту)</option>
+        <option value="reply" ${btn.type === 'reply' ? 'selected' : ''}>Reply (нижняя кнопка)</option>
+      </select>
+      <input type="text" class="admin-input tpl-btn-val-input tabular-nums" data-btn-idx="${idx}" value="${escapeHtml(btn.value)}" placeholder="URL или callback (напр. {{webappUrl}} или my_profile)">
+      <button type="button" class="admin-icon-btn danger tpl-btn-remove" data-btn-idx="${idx}" title="Удалить кнопку">
+        <i class="mdi mdi-delete-outline"></i>
+      </button>
+    </div>
+  `).join('');
+
+  listEl.querySelectorAll('.tpl-btn-text-input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const idx = Number(inp.dataset.btnIdx);
+      if (state.editingTemplateButtons[idx]) {
+        state.editingTemplateButtons[idx].text = inp.value;
+        updateLiveTemplatePreview();
+      }
+    });
+  });
+
+  listEl.querySelectorAll('.tpl-btn-type-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const idx = Number(sel.dataset.btnIdx);
+      if (state.editingTemplateButtons[idx]) {
+        state.editingTemplateButtons[idx].type = sel.value;
+        updateLiveTemplatePreview();
+      }
+    });
+  });
+
+  listEl.querySelectorAll('.tpl-btn-val-input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const idx = Number(inp.dataset.btnIdx);
+      if (state.editingTemplateButtons[idx]) {
+        state.editingTemplateButtons[idx].value = inp.value;
+        updateLiveTemplatePreview();
+      }
+    });
+  });
+
+  listEl.querySelectorAll('.tpl-btn-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.dataset.btnIdx);
+      state.editingTemplateButtons.splice(idx, 1);
+      renderTemplateButtonsEditor();
+      updateLiveTemplatePreview();
+    });
+  });
 }
 
 function updateLiveTemplatePreview() {
@@ -925,9 +1088,14 @@ function updateLiveTemplatePreview() {
   const textarea = document.getElementById('bot-tpl-textarea');
   const previewBody = document.getElementById('bot-tpl-preview-body');
   const previewTime = document.getElementById('bot-tpl-preview-time');
+  const previewBtns = document.getElementById('bot-tpl-preview-buttons');
   if (!tpl || !textarea || !previewBody) return;
 
-  const sampleVars = {};
+  const sampleVars = {
+    webappUrl: 'https://ais-pre-irnfdqzemrx7nu7xzzdevi-814881682897.us-east1.run.app/',
+    scheduleUrl: 'https://ais-pre-irnfdqzemrx7nu7xzzdevi-814881682897.us-east1.run.app/?view=schedule',
+    roomUrl: 'https://ais-pre-irnfdqzemrx7nu7xzzdevi-814881682897.us-east1.run.app/?room=322'
+  };
   for (const v of (tpl.variables || [])) {
     sampleVars[v.key] = v.sample || '';
   }
@@ -936,7 +1104,21 @@ function updateLiveTemplatePreview() {
 
   if (previewTime) {
     const now = new Date();
-    previewTime.textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} · HTML/Markdown`;
+    const statusNote = tpl.enabled === false ? ' · ОТКЛЮЧЁН' : ' · HTML/Markdown';
+    previewTime.textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}${statusNote}`;
+  }
+
+  if (previewBtns) {
+    const buttons = (state.editingTemplateButtons || []).filter(b => b && String(b.text || '').trim());
+    if (buttons.length === 0) {
+      previewBtns.innerHTML = '';
+    } else {
+      previewBtns.innerHTML = buttons.map(b => {
+        const label = String(b.text || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => sampleVars[k] || `{{${k}}}`);
+        const badgeIcon = b.type === 'webapp' ? '🌐' : (b.type === 'url' ? '↗' : (b.type === 'reply' ? '⌨' : '⚡'));
+        return `<div class="admin-tg-preview-btn ${b.type === 'reply' ? 'is-reply' : 'is-inline'}" title="${escapeHtml(b.type)}: ${escapeHtml(b.value)}"><span>${escapeHtml(label)}</span><small>${badgeIcon}</small></div>`;
+      }).join('');
+    }
   }
 }
 
@@ -944,14 +1126,12 @@ function updateLiveTemplatePreview() {
 
 function renderCloudTab() {
   const c = state.cloud || {};
-  document.getElementById('cloud-project-id').textContent = c.projectId || 'Не подключено';
-  document.getElementById('cloud-db-id').textContent = c.databaseId || 'Локальный режим';
-  document.getElementById('cloud-last-pull').textContent = formatDateTime(c.lastPullAt);
-  document.getElementById('cloud-last-push').textContent = formatDateTime(c.lastPushAt);
-  document.getElementById('cloud-last-error').textContent = c.lastError ? `Ошибка: ${c.lastError}` : 'Синхронизация без ошибок';
-  document.getElementById('cloud-status-line').textContent = c.enabled
-    ? `База данных: ${c.databaseId} · Проект: ${c.projectId}`
-    : 'Облачная база не подключена';
+  const statusLine = document.getElementById('cloud-status-line');
+  if (statusLine) {
+    statusLine.textContent = c.enabled
+      ? `Управление синхронизацией с Google Cloud Firestore (${c.projectId}), резервными копиями JSON, 6-значными кодами входа и браузерными сессиями`
+      : 'Локальный режим (users.json) — управление резервными копиями, 6-значными кодами входа и браузерными сессиями';
+  }
 
   const fbLink = document.getElementById('link-firebase-console');
   const gcpLink = document.getElementById('link-gcp-console');
@@ -1054,6 +1234,13 @@ function renderRoomsTab() {
       return collator.compare(a[1].shortName || a[1].name || a[0], b[1].shortName || b[1].name || b[0]);
     });
 
+  const countEl = document.getElementById('rooms-count-caption');
+  if (countEl) {
+    countEl.textContent = filtered.length === entries.length
+      ? `Выведено помещений: ${filtered.length}`
+      : `Выведено помещений: ${filtered.length} из ${entries.length}`;
+  }
+
   const tbody = document.getElementById('rooms-table-body');
   if (!tbody) return;
 
@@ -1075,9 +1262,7 @@ function renderRoomsTab() {
         <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.description || '—')}</td>
         <td class="text-right">
           <div class="admin-row-actions">
-            <button type="button" class="admin-icon-btn" data-edit-room="${escapeHtml(roomId)}">
-              <i class="mdi mdi-pencil-outline"></i> Изменить
-            </button>
+            <button type="button" class="admin-icon-btn" data-edit-room="${escapeHtml(roomId)}">Изменить</button>
           </div>
         </td>
       </tr>
@@ -1105,19 +1290,21 @@ function openRoomModal(roomId = null) {
   const existing = roomId ? state.rooms[roomId] : null;
   state.editingRoomId = existing ? roomId : null;
 
-  titleEl.textContent = existing ? `Помещение: ${existing.name || roomId}` : 'Новое помещение';
-  idInput.value = existing ? roomId : 'C_auditori_';
-  idInput.readOnly = Boolean(existing);
-  shortInput.value = existing ? (existing.shortName || '') : '';
-  nameInput.value = existing ? (existing.name || '') : '';
-  floorSel.value = existing && existing.floor != null ? String(existing.floor) : '1';
-  typeInput.value = existing ? (existing.type || 'classroom') : 'classroom';
-  clsInput.value = existing ? (existing.classroom || '') : '';
-  bldInput.value = existing ? (existing.building || 'C') : 'C';
-  descInput.value = existing ? (existing.description || '') : '';
+  if (titleEl) titleEl.textContent = existing ? `Помещение: ${existing.name || roomId}` : 'Новое помещение';
+  if (idInput) {
+    idInput.value = existing ? roomId : 'C_auditori_';
+    idInput.readOnly = Boolean(existing);
+  }
+  if (shortInput) shortInput.value = existing ? (existing.shortName || '') : '';
+  if (nameInput) nameInput.value = existing ? (existing.name || '') : '';
+  if (floorSel) floorSel.value = existing && existing.floor != null ? String(existing.floor) : '1';
+  if (typeInput) typeInput.value = existing ? (existing.type || 'classroom') : 'classroom';
+  if (clsInput) clsInput.value = existing ? (existing.classroom || '') : '';
+  if (bldInput) bldInput.value = existing ? (existing.building || 'C') : 'C';
+  if (descInput) descInput.value = existing ? (existing.description || '') : '';
 
   if (delBtn) delBtn.style.display = existing ? 'inline-flex' : 'none';
-  modal.classList.add('open');
+  if (modal) modal.classList.add('open');
 }
 
 function closeRoomModal() {
@@ -1126,15 +1313,15 @@ function closeRoomModal() {
 }
 
 async function saveRoomFromModal() {
-  const roomId = document.getElementById('edit-room-id').value.trim();
+  const roomId = document.getElementById('edit-room-id')?.value.trim() || '';
   const room = {
-    shortName: document.getElementById('edit-room-short').value.trim(),
-    name: document.getElementById('edit-room-name').value.trim(),
-    floor: Number(document.getElementById('edit-room-floor').value),
-    type: document.getElementById('edit-room-type').value.trim() || 'classroom',
-    classroom: document.getElementById('edit-room-classroom').value.trim(),
-    building: document.getElementById('edit-room-building').value.trim() || 'C',
-    description: document.getElementById('edit-room-desc').value.trim()
+    shortName: document.getElementById('edit-room-short')?.value.trim() || '',
+    name: document.getElementById('edit-room-name')?.value.trim() || '',
+    floor: Number(document.getElementById('edit-room-floor')?.value || 1),
+    type: document.getElementById('edit-room-type')?.value.trim() || 'classroom',
+    classroom: document.getElementById('edit-room-classroom')?.value.trim() || '',
+    building: document.getElementById('edit-room-building')?.value.trim() || 'C',
+    description: document.getElementById('edit-room-desc')?.value.trim() || ''
   };
 
   try {
@@ -1167,18 +1354,19 @@ async function deleteRoomFromModal() {
 
 // ================ ВКЛАДКА 5: КЭШ РАСПИСАНИЯ И ИНСПЕКТОР ================
 
+let initialInspectorLoaded = false;
+
 function renderCacheTab() {
   const c = state.cache || {};
-  document.getElementById('cache-kpi-status').textContent = c.warming
-    ? `Прогрев (${c.progress || ''})`
-    : (c.ready ? 'Актуален' : 'Ожидание');
-  document.getElementById('cache-kpi-updated').textContent = `Обновлён: ${formatDateTime(c.lastUpdate)}`;
-  document.getElementById('cache-kpi-rooms').textContent = String(c.roomsCachedCount || 0);
-  document.getElementById('cache-kpi-entities').textContent = String(c.entityCachedCount || 0);
-  document.getElementById('cache-kpi-groups').textContent = String(c.groupsCount || 0);
-  document.getElementById('cache-kpi-depts').textContent = String(c.departmentsCount || 0);
-  document.getElementById('cache-kpi-lecturers').textContent = String(c.lecturersCount || 0);
-  document.getElementById('cache-kpi-weeks').textContent = String(Array.isArray(c.availableWeeks) ? c.availableWeeks.length : 0);
+  const statusEl = document.getElementById('cache-status-line');
+  if (statusEl) {
+    const stText = c.warming ? `Прогрев (${c.progress || ''})` : (c.ready ? 'Актуален' : 'Ожидание');
+    statusEl.textContent = `Статус кэша: ${stText} · Аудиторий в кэше: ${c.roomsCachedCount || 0} · Групп: ${c.groupsCount || 0} · Преподавателей: ${c.lecturersCount || 0} · Обновлён: ${formatDateTime(c.lastUpdate)}`;
+  }
+  if (!initialInspectorLoaded) {
+    initialInspectorLoaded = true;
+    runScheduleInspector();
+  }
 }
 
 async function runScheduleInspector() {
@@ -1231,22 +1419,10 @@ async function runScheduleInspector() {
 // ================ ВКЛАДКА 6: МОДЕРАЦИЯ (POI, ОТЗЫВЫ, ОПИСАНИЯ) И GPS ================
 
 function renderModerationTab() {
-  const pendingCount =
-    state.mapMarkers.filter(m => m.status === 'pending').length +
-    state.roomReviews.filter(r => r.status === 'pending').length +
-    state.descriptionSuggestions.filter(d => d.status === 'pending').length;
-
-  const approvedMarkers = state.mapMarkers.filter(m => m.status === 'approved').length;
-  const approvedReviews = state.roomReviews.filter(r => r.status === 'approved').length;
-
-  const elPending = document.getElementById('mod-kpi-pending');
-  const elMarkers = document.getElementById('mod-kpi-markers');
-  const elReviews = document.getElementById('mod-kpi-reviews');
-  const elDescs = document.getElementById('mod-kpi-descriptions');
-  if (elPending) elPending.textContent = String(pendingCount);
-  if (elMarkers) elMarkers.textContent = `${approvedMarkers} / ${state.mapMarkers.length}`;
-  if (elReviews) elReviews.textContent = `${approvedReviews} / ${state.roomReviews.length}`;
-  if (elDescs) elDescs.textContent = String(state.descriptionSuggestions.length);
+  const filterByStatus = (items) => {
+    if (state.moderationFilter === 'all') return items;
+    return items.filter(item => (item.status || 'pending') === state.moderationFilter);
+  };
 
   const statusBadgeHtml = (st) => {
     if (st === 'approved') return `<span style="color:#16a34a;font-weight:700">Одобрено</span>`;
@@ -1257,10 +1433,11 @@ function renderModerationTab() {
   // 1. Описания кабинетов
   const descTbody = document.getElementById('mod-descriptions-tbody');
   if (descTbody) {
-    if (state.descriptionSuggestions.length === 0) {
-      descTbody.innerHTML = `<tr><td colspan="6" class="admin-empty-cell">Предложений описаний кабинетов пока нет</td></tr>`;
+    const filteredDescs = filterByStatus(state.descriptionSuggestions);
+    if (filteredDescs.length === 0) {
+      descTbody.innerHTML = `<tr><td colspan="6" class="admin-empty-cell">Предложений описаний кабинетов нет</td></tr>`;
     } else {
-      descTbody.innerHTML = state.descriptionSuggestions.map(item => {
+      descTbody.innerHTML = filteredDescs.map(item => {
         const roomMeta = state.rooms[item.roomId];
         const roomTitle = roomMeta ? `${roomMeta.name || item.roomId} (${roomMeta.floor ?? ''} эт.)` : item.roomId;
         return `
@@ -1272,9 +1449,9 @@ function renderModerationTab() {
             <td class="tabular-nums">${escapeHtml(formatDateTime(item.createdAt))}</td>
             <td class="text-right">
               <div class="admin-row-actions">
-                ${item.status !== 'approved' ? `<button type="button" class="admin-icon-btn" data-mod-type="description" data-mod-action="approve" data-mod-id="${escapeHtml(item.id)}"><i class="mdi mdi-check"></i> Одобрить и записать</button>` : ''}
+                ${item.status !== 'approved' ? `<button type="button" class="admin-icon-btn" data-mod-type="description" data-mod-action="approve" data-mod-id="${escapeHtml(item.id)}">Одобрить и записать</button>` : ''}
                 ${item.status !== 'rejected' ? `<button type="button" class="admin-icon-btn" data-mod-type="description" data-mod-action="reject" data-mod-id="${escapeHtml(item.id)}">Отклонить</button>` : ''}
-                <button type="button" class="admin-icon-btn danger" data-mod-type="description" data-mod-action="delete" data-mod-id="${escapeHtml(item.id)}"><i class="mdi mdi-delete-outline"></i></button>
+                <button type="button" class="admin-icon-btn danger" data-mod-type="description" data-mod-action="delete" data-mod-id="${escapeHtml(item.id)}" title="Удалить">Удалить</button>
               </div>
             </td>
           </tr>
@@ -1286,24 +1463,25 @@ function renderModerationTab() {
   // 2. Отзывы о буфетах
   const revTbody = document.getElementById('mod-reviews-tbody');
   if (revTbody) {
-    if (state.roomReviews.length === 0) {
-      revTbody.innerHTML = `<tr><td colspan="6" class="admin-empty-cell">Отзывов о буфетах и столовых пока нет</td></tr>`;
+    const filteredRevs = filterByStatus(state.roomReviews);
+    if (filteredRevs.length === 0) {
+      revTbody.innerHTML = `<tr><td colspan="6" class="admin-empty-cell">Отзывов о буфетах и столовых нет</td></tr>`;
     } else {
-      revTbody.innerHTML = state.roomReviews.map(item => {
+      revTbody.innerHTML = filteredRevs.map(item => {
         const roomMeta = state.rooms[item.roomId];
         const roomTitle = roomMeta ? (roomMeta.name || item.roomId) : item.roomId;
         return `
           <tr>
             <td><strong>${escapeHtml(roomTitle)}</strong><div class="admin-row-sub tabular-nums">${escapeHtml(item.roomId)}</div></td>
-            <td style="color:#f59e0b;font-weight:700">${'★'.repeat(Number(item.rating) || 5)} (${escapeHtml(item.rating)})</td>
+            <td style="color:#f59e0b;font-weight:700" class="tabular-nums">${'★'.repeat(Number(item.rating) || 5)} (${escapeHtml(item.rating)})</td>
             <td style="max-width:320px;white-space:pre-wrap">${escapeHtml(item.text || '—')}</td>
             <td>${escapeHtml(item.authorName || 'Студент')}</td>
             <td>${statusBadgeHtml(item.status)}</td>
             <td class="text-right">
               <div class="admin-row-actions">
-                ${item.status !== 'approved' ? `<button type="button" class="admin-icon-btn" data-mod-type="review" data-mod-action="approve" data-mod-id="${escapeHtml(item.id)}"><i class="mdi mdi-check"></i> Опубликовать</button>` : ''}
+                ${item.status !== 'approved' ? `<button type="button" class="admin-icon-btn" data-mod-type="review" data-mod-action="approve" data-mod-id="${escapeHtml(item.id)}">Опубликовать</button>` : ''}
                 ${item.status !== 'rejected' ? `<button type="button" class="admin-icon-btn" data-mod-type="review" data-mod-action="reject" data-mod-id="${escapeHtml(item.id)}">Скрыть</button>` : ''}
-                <button type="button" class="admin-icon-btn danger" data-mod-type="review" data-mod-action="delete" data-mod-id="${escapeHtml(item.id)}"><i class="mdi mdi-delete-outline"></i></button>
+                <button type="button" class="admin-icon-btn danger" data-mod-type="review" data-mod-action="delete" data-mod-id="${escapeHtml(item.id)}" title="Удалить">Удалить</button>
               </div>
             </td>
           </tr>
@@ -1316,10 +1494,11 @@ function renderModerationTab() {
   const catNames = { socket: '🔌 Розетка', coffee: '☕ Кофе/еда', wifi: '📶 Wi-Fi', blocked: '🚧 Проход закрыт', info: 'ℹ️ Ориентир' };
   const markTbody = document.getElementById('mod-markers-tbody');
   if (markTbody) {
-    if (state.mapMarkers.length === 0) {
+    const filteredMarkers = filterByStatus(state.mapMarkers);
+    if (filteredMarkers.length === 0) {
       markTbody.innerHTML = `<tr><td colspan="6" class="admin-empty-cell">Пользовательских меток на карте нет</td></tr>`;
     } else {
-      markTbody.innerHTML = state.mapMarkers.map(item => `
+      markTbody.innerHTML = filteredMarkers.map(item => `
         <tr>
           <td><strong>${escapeHtml(catNames[item.category] || item.category)} · ${escapeHtml(item.title)}</strong></td>
           <td class="tabular-nums">Корпус ${escapeHtml(item.building)} · ${escapeHtml(item.floor)} эт. (${escapeHtml(item.x)}, ${escapeHtml(item.y)})</td>
@@ -1328,9 +1507,9 @@ function renderModerationTab() {
           <td>${statusBadgeHtml(item.status)}</td>
           <td class="text-right">
             <div class="admin-row-actions">
-              ${item.status !== 'approved' ? `<button type="button" class="admin-icon-btn" data-mod-type="marker" data-mod-action="approve" data-mod-id="${escapeHtml(item.id)}"><i class="mdi mdi-check"></i> Одобрить</button>` : ''}
+              ${item.status !== 'approved' ? `<button type="button" class="admin-icon-btn" data-mod-type="marker" data-mod-action="approve" data-mod-id="${escapeHtml(item.id)}">Одобрить</button>` : ''}
               ${item.status !== 'rejected' ? `<button type="button" class="admin-icon-btn" data-mod-type="marker" data-mod-action="reject" data-mod-id="${escapeHtml(item.id)}">Отклонить</button>` : ''}
-              <button type="button" class="admin-icon-btn danger" data-mod-type="marker" data-mod-action="delete" data-mod-id="${escapeHtml(item.id)}"><i class="mdi mdi-delete-outline"></i></button>
+              <button type="button" class="admin-icon-btn danger" data-mod-type="marker" data-mod-action="delete" data-mod-id="${escapeHtml(item.id)}" title="Удалить">Удалить</button>
             </div>
           </td>
         </tr>
@@ -1357,16 +1536,61 @@ function renderModerationTab() {
     });
   });
 
-  // 4. Настройки GPS
-  const bCfg = state.gpsConfig?.buildings?.C || { centerLat: 54.61435, centerLon: 39.70825, rotationDeg: -18, scaleMetersPerSvgUnit: 0.10 };
+  // 4. Настройки GPS и таблица опорных точек
+  const bCfg = state.gpsConfig?.buildings?.C || state.gpsConfig || { centerLat: 54.613783, centerLon: 39.723850, rotationDeg: 42.72, scaleMetersPerSvgUnit: 0.1065, anchors: [] };
   const latIn = document.getElementById('gps-cfg-lat');
   const lonIn = document.getElementById('gps-cfg-lon');
   const rotIn = document.getElementById('gps-cfg-rot');
   const scaleIn = document.getElementById('gps-cfg-scale');
-  if (latIn) latIn.value = String(bCfg.centerLat ?? 54.61435);
-  if (lonIn) lonIn.value = String(bCfg.centerLon ?? 39.70825);
-  if (rotIn) rotIn.value = String(bCfg.rotationDeg ?? -18);
-  if (scaleIn) scaleIn.value = String(bCfg.scaleMetersPerSvgUnit ?? 0.10);
+  if (latIn) latIn.value = String(bCfg.centerLat ?? 54.613783);
+  if (lonIn) lonIn.value = String(bCfg.centerLon ?? bCfg.centerLng ?? 39.723850);
+  if (rotIn) rotIn.value = String(bCfg.rotationDeg ?? 42.72);
+  if (scaleIn) scaleIn.value = String(bCfg.scaleMetersPerSvgUnit ?? bCfg.metersPerSvgUnit ?? 0.1065);
+
+  const anchors = Array.isArray(bCfg.anchors) ? bCfg.anchors : (Array.isArray(state.gpsConfig?.anchors) ? state.gpsConfig.anchors : []);
+  const anchorsCap = document.getElementById('gps-anchors-caption');
+  if (anchorsCap) anchorsCap.textContent = `Опорных точек (реперов): ${anchors.length}`;
+  const anchorsTbody = document.getElementById('gps-anchors-tbody');
+  if (anchorsTbody) {
+    if (!anchors.length) {
+      anchorsTbody.innerHTML = '<tr><td colspan="5" class="admin-empty-cell">Опорные точки не заданы</td></tr>';
+    } else {
+      anchorsTbody.innerHTML = anchors.map(a => {
+        const ax = Math.round(Number(a.x ?? a.svgX ?? 0));
+        const ay = Math.round(Number(a.y ?? a.svgY ?? 0));
+        const alat = Number(a.lat || 0).toFixed(6);
+        const alon = Number(a.lon ?? a.lng ?? 0).toFixed(6);
+        return `
+          <tr>
+            <td><strong>${escapeHtml(a.label || a.id || 'Точка')}</strong></td>
+            <td class="tabular-nums">${escapeHtml(String(a.floor ?? 1))} эт.</td>
+            <td class="tabular-nums">X: ${ax}, Y: ${ay}</td>
+            <td class="tabular-nums">${alat}, ${alon}</td>
+            <td class="text-right">
+              <button type="button" class="admin-icon-btn danger" data-del-gps-anchor="${escapeHtml(a.id || '')}">Удалить</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      anchorsTbody.querySelectorAll('[data-del-gps-anchor]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const anchorId = btn.dataset.delGpsAnchor;
+          if (!anchorId) return;
+          try {
+            await adminFetch('/api/admin/gps/save', {
+              method: 'POST',
+              body: JSON.stringify({ gpsConfig: { deleteAnchorId: anchorId } })
+            });
+            showToast('Опорная точка удалена');
+            await loadAllAdminData();
+          } catch (e) {
+            showToast(e.message);
+          }
+        });
+      });
+    }
+  }
 }
 
 // ================ ОБРАБОТЧИКИ СОБЫТИЙ ================
@@ -1389,6 +1613,15 @@ function setupEventHandlers() {
     });
   });
 
+  // Фильтр статусов в Модерации
+  document.querySelectorAll('#moderation-filter-bar .admin-seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.moderationFilter = btn.dataset.modFilter || 'all';
+      document.querySelectorAll('#moderation-filter-bar .admin-seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+      renderModerationTab();
+    });
+  });
+
   document.getElementById('btn-add-user')?.addEventListener('click', () => openUserModal(null));
   document.getElementById('btn-users-sync-cloud')?.addEventListener('click', async () => {
     await adminFetch('/api/admin/cloud/sync', { method: 'POST', body: JSON.stringify({ mode: 'push' }) });
@@ -1403,18 +1636,32 @@ function setupEventHandlers() {
   document.getElementById('btn-user-modal-delete')?.addEventListener('click', () => {
     if (state.editingUserId) confirmDeleteUser(state.editingUserId);
   });
-  document.getElementById('edit-user-role')?.addEventListener('change', updateTargetDatalist);
-  document.getElementById('btn-edit-user-clear-recent')?.addEventListener('click', () => {
-    state.editingUserRecentViews = {};
-    renderEditingUserRecentInfo(document.getElementById('edit-user-recent-info'));
-  });
 
-  // Конструктор шаблонов сообщений бота и панели инструментов Markdown
+  // Выпадающий список шаблонов поверх конструктора
+  const tplPickerWrap = document.getElementById('bot-tpl-picker-wrap');
   const tplSearch = document.getElementById('bot-tpl-search');
-  if (tplSearch) {
+  const tplPickerToggle = document.getElementById('btn-bot-tpl-picker-toggle');
+
+  if (tplSearch && tplPickerWrap) {
+    tplSearch.addEventListener('focus', () => {
+      tplPickerWrap.classList.add('open');
+      renderBotTemplateStudio();
+    });
+    tplSearch.addEventListener('click', (e) => {
+      e.stopPropagation();
+      tplPickerWrap.classList.add('open');
+    });
     tplSearch.addEventListener('input', () => {
       state.templateSearch = tplSearch.value;
+      tplPickerWrap.classList.add('open');
       renderBotTemplateStudio();
+    });
+  }
+
+  if (tplPickerToggle && tplPickerWrap) {
+    tplPickerToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      tplPickerWrap.classList.toggle('open');
     });
   }
 
@@ -1429,8 +1676,10 @@ function setupEventHandlers() {
     if (!targetTextarea) return;
 
     toolbar.querySelectorAll('[data-md]').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         applyMarkdownActionToTextarea(targetTextarea, btn.dataset.md);
+        document.querySelectorAll('.admin-md-dropdown.open').forEach(d => d.classList.remove('open'));
       });
     });
 
@@ -1441,9 +1690,78 @@ function setupEventHandlers() {
     });
   });
 
+  // Выпадающие меню панели инструментов Markdown ({{ }}, Aa, B, Списки)
+  document.querySelectorAll('.admin-md-dropdown-trigger').forEach(trigger => {
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const parent = trigger.closest('.admin-md-dropdown');
+      if (!parent) return;
+      const wasOpen = parent.classList.contains('open');
+      document.querySelectorAll('.admin-md-dropdown.open').forEach(d => d.classList.remove('open'));
+      if (!wasOpen) parent.classList.add('open');
+    });
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.admin-md-dropdown')) {
+      document.querySelectorAll('.admin-md-dropdown.open').forEach(d => d.classList.remove('open'));
+    }
+    if (!e.target.closest('#bot-tpl-picker-wrap')) {
+      document.getElementById('bot-tpl-picker-wrap')?.classList.remove('open');
+    }
+    if (!e.target.closest('#users-context-menu')) {
+      closeUserContextMenu();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeUserContextMenu();
+    }
+  });
+
+  document.querySelector('.admin-main')?.addEventListener('scroll', () => {
+    closeUserContextMenu();
+  }, { passive: true });
+
+  // Добавление кнопки к шаблону
+  document.getElementById('btn-bot-tpl-add-button')?.addEventListener('click', () => {
+    if (!Array.isArray(state.editingTemplateButtons)) state.editingTemplateButtons = [];
+    state.editingTemplateButtons.push({
+      text: '🗺 Открыть карту',
+      type: 'webapp',
+      value: '{{webappUrl}}'
+    });
+    renderTemplateButtonsEditor();
+    updateLiveTemplatePreview();
+  });
+
+  // Переключатель Включён / Отключён у шаблона
+  document.getElementById('bot-tpl-enabled-toggle')?.addEventListener('change', async (e) => {
+    const tpl = getSelectedTemplateObject();
+    if (!tpl) return;
+    const nextEnabled = Boolean(e.target.checked);
+    try {
+      const res = await adminFetch('/api/admin/bot/templates', {
+        method: 'POST',
+        body: JSON.stringify({
+          mode: 'toggle-enabled',
+          templateId: tpl.id,
+          enabled: nextEnabled
+        })
+      });
+      state.botTemplates = Array.isArray(res.botTemplates) ? res.botTemplates : state.botTemplates;
+      renderBotTab();
+      showToast(nextEnabled ? `Шаблон «${tpl.title}» включён` : `Шаблон «${tpl.title}» отключён`);
+    } catch (err) {
+      showToast(err.message);
+    }
+  });
+
   document.getElementById('btn-bot-tpl-save')?.addEventListener('click', async () => {
     const tpl = getSelectedTemplateObject();
     const textarea = document.getElementById('bot-tpl-textarea');
+    const enabledToggle = document.getElementById('bot-tpl-enabled-toggle');
     if (!tpl || !textarea) return;
     try {
       const res = await adminFetch('/api/admin/bot/templates', {
@@ -1451,13 +1769,16 @@ function setupEventHandlers() {
         body: JSON.stringify({
           mode: 'save',
           templateId: tpl.id,
-          text: textarea.value
+          text: textarea.value,
+          enabled: enabledToggle ? enabledToggle.checked : true,
+          buttons: state.editingTemplateButtons
         })
       });
       state.botTemplates = Array.isArray(res.botTemplates) ? res.botTemplates : state.botTemplates;
       textarea.dataset.loadedTplId = '';
+      state.loadedButtonsTplId = '';
       renderBotTab();
-      showToast(`Шаблон «${tpl.title}» сохранён в БД`);
+      showToast(`Шаблон «${tpl.title}» сохранён`);
     } catch (e) {
       showToast(e.message);
     }
@@ -1477,81 +1798,37 @@ function setupEventHandlers() {
       });
       state.botTemplates = Array.isArray(res.botTemplates) ? res.botTemplates : state.botTemplates;
       if (textarea) textarea.dataset.loadedTplId = '';
+      state.loadedButtonsTplId = '';
       renderBotTab();
-      showToast(`Шаблон «${tpl.title}» сброшен к стандартному`);
+      showToast(`Шаблон «${tpl.title}» сброшен`);
     } catch (e) {
       showToast(e.message);
     }
   });
 
-  document.getElementById('btn-bot-reset-all-templates')?.addEventListener('click', async () => {
-    const textarea = document.getElementById('bot-tpl-textarea');
-    try {
-      const res = await adminFetch('/api/admin/bot/templates', {
-        method: 'POST',
-        body: JSON.stringify({ mode: 'reset-all' })
-      });
-      state.botTemplates = Array.isArray(res.botTemplates) ? res.botTemplates : state.botTemplates;
-      if (textarea) textarea.dataset.loadedTplId = '';
-      renderBotTab();
-      showToast('Все шаблоны бота сброшены к заводским');
-    } catch (e) {
-      showToast(e.message);
-    }
-  });
-
-  document.getElementById('btn-bot-tpl-test-send')?.addEventListener('click', async () => {
-    const tpl = getSelectedTemplateObject();
-    const textarea = document.getElementById('bot-tpl-textarea');
-    const userId = document.getElementById('bot-direct-user-select')?.value || '';
-    const telegramId = document.getElementById('bot-direct-tgid')?.value.trim() || '';
-    if (!tpl || !textarea) return;
-    try {
-      const res = await adminFetch('/api/admin/bot/templates', {
-        method: 'POST',
-        body: JSON.stringify({
-          mode: 'test-send',
-          templateId: tpl.id,
-          text: textarea.value,
-          userId,
-          telegramId
-        })
-      });
-      showToast(`Тест шаблона отправлен в Telegram (ID ${res.telegramId})`);
-    } catch (e) {
-      showToast(e.message);
-    }
-  });
-
-  // Вкладка Telegram-бота (личное сообщение и рассылка)
-  const botUserSelect = document.getElementById('bot-direct-user-select');
-  if (botUserSelect) {
-    botUserSelect.addEventListener('change', () => {
-      const opt = botUserSelect.selectedOptions[0];
-      const tgid = opt ? opt.getAttribute('data-tgid') : '';
-      if (tgid) document.getElementById('bot-direct-tgid').value = tgid;
-    });
-  }
-
-  document.getElementById('btn-bot-check-now')?.addEventListener('click', async () => {
-    const res = await adminFetch('/api/admin/bot/send', {
-      method: 'POST',
-      body: JSON.stringify({ mode: 'run-check-now' })
-    });
-    showToast(`Проверка расписания выполнена (активных подписок: ${res.candidatesCount || 0})`);
-    await loadAllAdminData();
-  });
-
+  // Вкладка Telegram-бота (личное сообщение и рассылка через выбор получателя из списка)
   document.getElementById('btn-bot-send-test-lesson')?.addEventListener('click', () => {
-    const userId = document.getElementById('bot-direct-user-select').value;
-    const tgId = document.getElementById('bot-direct-tgid').value.trim();
+    const sel = document.getElementById('bot-direct-user-select');
+    const userId = sel ? sel.value : '';
+    const opt = sel && sel.selectedOptions ? sel.selectedOptions[0] : null;
+    const tgId = opt ? (opt.getAttribute('data-tgid') || '') : '';
+    if (!userId && !tgId) {
+      showToast('Выберите получателя из выпадающего списка');
+      return;
+    }
     sendTestLessonToUser(userId, tgId);
   });
 
   document.getElementById('btn-bot-send-direct')?.addEventListener('click', async () => {
-    const tgId = document.getElementById('bot-direct-tgid').value.trim();
-    const text = document.getElementById('bot-direct-text').value.trim();
+    const sel = document.getElementById('bot-direct-user-select');
+    const opt = sel && sel.selectedOptions ? sel.selectedOptions[0] : null;
+    const tgId = opt ? (opt.getAttribute('data-tgid') || '').trim() : '';
+    const text = document.getElementById('bot-direct-text')?.value.trim() || '';
     const resBox = document.getElementById('bot-direct-result');
+    if (!tgId) {
+      showToast('Выберите получателя из выпадающего списка');
+      return;
+    }
     try {
       await adminFetch('/api/admin/bot/send', {
         method: 'POST',
@@ -1742,19 +2019,28 @@ function setupEventHandlers() {
   document.getElementById('btn-inspector-load')?.addEventListener('click', runScheduleInspector);
 
   document.getElementById('btn-save-gps-cfg')?.addEventListener('click', async () => {
-    const centerLat = parseFloat(document.getElementById('gps-cfg-lat')?.value || '54.61435');
-    const centerLon = parseFloat(document.getElementById('gps-cfg-lon')?.value || '39.70825');
-    const rotationDeg = parseFloat(document.getElementById('gps-cfg-rot')?.value || '-18');
-    const scaleMetersPerSvgUnit = parseFloat(document.getElementById('gps-cfg-scale')?.value || '0.10');
-    const prevAnchors = state.gpsConfig?.buildings?.C?.anchors || [];
+    const centerLat = parseFloat(document.getElementById('gps-cfg-lat')?.value || '54.613783');
+    const centerLon = parseFloat(document.getElementById('gps-cfg-lon')?.value || '39.723850');
+    const rotationDeg = parseFloat(document.getElementById('gps-cfg-rot')?.value || '42.72');
+    const scaleMetersPerSvgUnit = parseFloat(document.getElementById('gps-cfg-scale')?.value || '0.1065');
+    const prevAnchors = state.gpsConfig?.buildings?.C?.anchors || state.gpsConfig?.anchors || [];
     const nextCfg = {
+      centerLat: Number.isFinite(centerLat) ? centerLat : 54.613783,
+      centerLon: Number.isFinite(centerLon) ? centerLon : 39.723850,
+      centerLng: Number.isFinite(centerLon) ? centerLon : 39.723850,
+      rotationDeg: Number.isFinite(rotationDeg) ? rotationDeg : 42.72,
+      scaleMetersPerSvgUnit: Number.isFinite(scaleMetersPerSvgUnit) ? scaleMetersPerSvgUnit : 0.1065,
+      metersPerSvgUnit: Number.isFinite(scaleMetersPerSvgUnit) ? scaleMetersPerSvgUnit : 0.1065,
+      anchors: prevAnchors,
       buildings: {
         ...(state.gpsConfig?.buildings || {}),
         C: {
-          centerLat: Number.isFinite(centerLat) ? centerLat : 54.61435,
-          centerLon: Number.isFinite(centerLon) ? centerLon : 39.70825,
-          rotationDeg: Number.isFinite(rotationDeg) ? rotationDeg : -18,
-          scaleMetersPerSvgUnit: Number.isFinite(scaleMetersPerSvgUnit) ? scaleMetersPerSvgUnit : 0.10,
+          centerLat: Number.isFinite(centerLat) ? centerLat : 54.613783,
+          centerLon: Number.isFinite(centerLon) ? centerLon : 39.723850,
+          centerLng: Number.isFinite(centerLon) ? centerLon : 39.723850,
+          rotationDeg: Number.isFinite(rotationDeg) ? rotationDeg : 42.72,
+          scaleMetersPerSvgUnit: Number.isFinite(scaleMetersPerSvgUnit) ? scaleMetersPerSvgUnit : 0.1065,
+          metersPerSvgUnit: Number.isFinite(scaleMetersPerSvgUnit) ? scaleMetersPerSvgUnit : 0.1065,
           anchors: prevAnchors
         }
       }
@@ -1765,6 +2051,19 @@ function setupEventHandlers() {
         body: JSON.stringify({ gpsConfig: nextCfg })
       });
       showToast('Настройки калибровки GPS сохранены в БД');
+      await loadAllAdminData();
+    } catch (e) {
+      showToast(e.message);
+    }
+  });
+
+  document.getElementById('btn-reset-gps-cfg')?.addEventListener('click', async () => {
+    try {
+      await adminFetch('/api/admin/gps/save', {
+        method: 'POST',
+        body: JSON.stringify({ gpsConfig: { resetToDefault: true } })
+      });
+      showToast('Восстановлена эталонная сетка GPS Главного корпуса РГРТУ (9 реперов)');
       await loadAllAdminData();
     } catch (e) {
       showToast(e.message);
